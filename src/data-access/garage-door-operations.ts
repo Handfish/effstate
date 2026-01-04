@@ -7,7 +7,7 @@ import {
   effect,
   interpret,
 } from "@/lib/state-machine";
-import { Duration, Effect, Schedule, Stream } from "effect";
+import { Duration, Effect, Match, Schedule, Stream } from "effect";
 
 // ============================================================================
 // Types
@@ -91,11 +91,9 @@ export const garageDoorMachine = createMachine<
         CLICK: { target: "paused-while-opening" },
         TICK: {
           actions: [
-            assign(({ context, event }) => {
-              const tickEvent = event as { type: "TICK"; delta: number };
-              const newPosition = Math.min(100, context.position + tickEvent.delta);
-              return { position: newPosition };
-            }),
+            assign(({ context, event }) => ({
+              position: Math.min(100, context.position + event.delta),
+            })),
           ],
         },
         ANIMATION_COMPLETE: { target: "open" },
@@ -123,11 +121,9 @@ export const garageDoorMachine = createMachine<
         CLICK: { target: "paused-while-closing" },
         TICK: {
           actions: [
-            assign(({ context, event }) => {
-              const tickEvent = event as { type: "TICK"; delta: number };
-              const newPosition = Math.max(0, context.position + tickEvent.delta);
-              return { position: newPosition };
-            }),
+            assign(({ context, event }) => ({
+              position: Math.max(0, context.position + event.delta),
+            })),
           ],
         },
         ANIMATION_COMPLETE: { target: "closed" },
@@ -210,39 +206,31 @@ export const useGarageDoor = (): {
 };
 
 // ============================================================================
-// UI Helpers
+// UI Helpers (using Effect Match for exhaustive pattern matching)
 // ============================================================================
 
-export const getStateLabel = (state: GarageDoorState): string => {
-  switch (state) {
-    case "closed":
-      return "Closed";
-    case "opening":
-      return "Opening...";
-    case "paused-while-opening":
-      return "Paused (was opening)";
-    case "open":
-      return "Open";
-    case "closing":
-      return "Closing...";
-    case "paused-while-closing":
-      return "Paused (was closing)";
-  }
-};
+const StateLabelMatcher = Match.type<GarageDoorState>().pipe(
+  Match.when("closed", () => "Closed"),
+  Match.when("opening", () => "Opening..."),
+  Match.when("paused-while-opening", () => "Paused (was opening)"),
+  Match.when("open", () => "Open"),
+  Match.when("closing", () => "Closing..."),
+  Match.when("paused-while-closing", () => "Paused (was closing)"),
+  Match.exhaustive,
+);
 
-export const getButtonLabel = (state: GarageDoorState): string => {
-  switch (state) {
-    case "closed":
-      return "Open Door";
-    case "opening":
-      return "Pause";
-    case "paused-while-opening":
-      return "Close Door";
-    case "open":
-      return "Close Door";
-    case "closing":
-      return "Pause";
-    case "paused-while-closing":
-      return "Open Door";
-  }
-};
+export const getStateLabel = (state: GarageDoorState): string =>
+  StateLabelMatcher(state);
+
+const ButtonLabelMatcher = Match.type<GarageDoorState>().pipe(
+  Match.when("closed", () => "Open Door"),
+  Match.when("opening", () => "Pause"),
+  Match.when("paused-while-opening", () => "Close Door"),
+  Match.when("open", () => "Close Door"),
+  Match.when("closing", () => "Pause"),
+  Match.when("paused-while-closing", () => "Open Door"),
+  Match.exhaustive,
+);
+
+export const getButtonLabel = (state: GarageDoorState): string =>
+  ButtonLabelMatcher(state);

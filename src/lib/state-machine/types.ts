@@ -145,6 +145,32 @@ export interface ActivityConfig<
 // State Node Config
 // ============================================================================
 
+/**
+ * Extract the specific event type from a union based on its type field.
+ * This enables proper event narrowing in transition handlers.
+ */
+export type EventByType<TEvent extends MachineEvent, TType extends TEvent["type"]> = Extract<
+  TEvent,
+  { type: TType }
+>;
+
+/**
+ * Transition config with properly narrowed event type.
+ * When handling a "TICK" event, the event parameter will be typed as the TICK event specifically.
+ */
+export interface NarrowedTransitionConfig<
+  TStateValue extends string,
+  TContext extends MachineContext,
+  TEvent extends MachineEvent,
+  TEventType extends TEvent["type"],
+  R = never,
+  E = never,
+> {
+  readonly target?: TStateValue;
+  readonly guard?: Guard<TContext, EventByType<TEvent, TEventType>, R, E>;
+  readonly actions?: ReadonlyArray<Action<TContext, EventByType<TEvent, TEventType>, R, E>>;
+}
+
 export interface StateNodeConfig<
   TStateValue extends string,
   TContext extends MachineContext,
@@ -155,7 +181,7 @@ export interface StateNodeConfig<
   readonly entry?: ReadonlyArray<Action<TContext, TEvent, R, E>>;
   readonly exit?: ReadonlyArray<Action<TContext, TEvent, R, E>>;
   readonly on?: {
-    readonly [K in TEvent["type"]]?: TransitionConfig<TStateValue, TContext, TEvent, R, E>;
+    readonly [K in TEvent["type"]]?: NarrowedTransitionConfig<TStateValue, TContext, TEvent, K, R, E>;
   };
   readonly activities?: ReadonlyArray<ActivityConfig<TContext, TEvent, R, E>>;
   /** After delay, auto-transition */

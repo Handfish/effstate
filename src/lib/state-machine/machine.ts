@@ -142,8 +142,14 @@ export const interpret = <
           if (!transitionConfig) return;
 
           // Check guard
+          // Note: Type assertion is safe here because we looked up the transition by event.type,
+          // so the guard/actions are typed for exactly this event type at compile time
           if (transitionConfig.guard) {
-            const allowed = yield* evaluateGuard(transitionConfig.guard, snapshot.context, event);
+            const allowed = yield* evaluateGuard(
+              transitionConfig.guard as Guard<TContext, TEvent, R, E>,
+              snapshot.context,
+              event,
+            );
             if (!allowed) return;
           }
 
@@ -165,7 +171,11 @@ export const interpret = <
 
           // Run transition actions
           if (transitionConfig.actions) {
-            newContext = yield* runActionsWithContext(transitionConfig.actions, newContext, event);
+            newContext = yield* runActionsWithContext(
+              transitionConfig.actions as ReadonlyArray<Action<TContext, TEvent, R, E>>,
+              newContext,
+              event,
+            );
           }
 
           // Run entry actions if transitioning
