@@ -113,16 +113,18 @@ export const interpret = <
   },
 ): Effect.Effect<MachineActor<TStateValue, TContext, TEvent>, never, R> =>
   Effect.gen(function* () {
-    const snapshotRef = yield* SubscriptionRef.make<MachineSnapshot<TStateValue, TContext>>(
-      machine.initialSnapshot,
-    );
+    // Create refs in parallel for better performance
+    const [snapshotRef, commandQueue] = yield* Effect.all([
+      SubscriptionRef.make<MachineSnapshot<TStateValue, TContext>>(machine.initialSnapshot),
+      Queue.unbounded<TEvent>(),
+    ]);
 
-    const commandQueue = yield* Queue.unbounded<TEvent>();
-    const activityFibersRef = yield* Effect.sync(() => new Map<string, Fiber.RuntimeFiber<void, never>>());
-    const delayFibersRef = yield* Effect.sync(() => new Map<string, Fiber.RuntimeFiber<void, never>>());
-    const listenersRef = yield* Effect.sync(() => new Map<string, Set<(event: EmittedEvent) => void>>());
-    const childrenRef = yield* Effect.sync(() => new Map<string, MachineActor<any, any, any>>());
-    const childFibersRef = yield* Effect.sync(() => new Map<string, Fiber.RuntimeFiber<void, never>>());
+    // Plain Maps don't need Effect wrapping - created directly
+    const activityFibersRef = new Map<string, Fiber.RuntimeFiber<void, never>>();
+    const delayFibersRef = new Map<string, Fiber.RuntimeFiber<void, never>>();
+    const listenersRef = new Map<string, Set<(event: EmittedEvent) => void>>();
+    const childrenRef = new Map<string, MachineActor<any, any, any>>();
+    const childFibersRef = new Map<string, Fiber.RuntimeFiber<void, never>>();
     const send = (event: TEvent) => commandQueue.unsafeOffer(event);
     const cancelDelay = (id: string) => {
       const fiber = delayFibersRef.get(id);
@@ -313,9 +315,7 @@ export const interpret = <
               yield* handleAfterTransition(targetStateConfig.after, newSnapshot, commandQueue, delayFibersRef);
             }
 
-            yield* Effect.log(
-              `[${machine.id}] ${snapshot.value} -> ${targetState} ($after)`,
-            );
+            yield* Effect.log(`[${machine.id}] ${snapshot.value} -> ${targetState} ($after)`);
             return;
           }
 
@@ -392,9 +392,7 @@ export const interpret = <
             yield* handleAfterTransition(targetStateConfig.after, newSnapshot, commandQueue, delayFibersRef);
           }
 
-          yield* Effect.log(
-            `[${machine.id}] ${snapshot.value} -> ${targetState} (${event._tag})`,
-          );
+          yield* Effect.log(`[${machine.id}] ${snapshot.value} -> ${targetState} (${event._tag})`);
         }),
       ),
       Effect.forkScoped,
@@ -453,8 +451,9 @@ const runActions = <TContext extends MachineContext, TEvent extends MachineEvent
   context: TContext,
   event: TEvent,
   helpers: ActionRunnerHelpers<TEvent>,
-): Effect.Effect<void, never, any> =>
-  Effect.forEach(actions, (action) => {
+): Effect.Effect<void, never, any> => {
+  if (actions.length === 0) return Effect.void;
+  return Effect.forEach(actions, (action) => {
     switch (action._tag) {
       case "assign":
         return Effect.void;
@@ -525,14 +524,16 @@ const runActions = <TContext extends MachineContext, TEvent extends MachineEvent
       }
     }
   }, { discard: true });
+};
 
 const runActionsWithContext = <TContext extends MachineContext, TEvent extends MachineEvent>(
   actions: ReadonlyArray<Action<TContext, TEvent, any, any>>,
   context: TContext,
   event: TEvent,
   helpers: ActionRunnerHelpers<TEvent>,
-): Effect.Effect<TContext, never, any> =>
-  Effect.reduce(actions, context, (ctx, action) => {
+): Effect.Effect<TContext, never, any> => {
+  if (actions.length === 0) return Effect.succeed(context);
+  return Effect.reduce(actions, context, (ctx, action) => {
     switch (action._tag) {
       case "assign": {
         const updates = action.fn({ context: ctx, event });
@@ -608,6 +609,7 @@ const runActionsWithContext = <TContext extends MachineContext, TEvent extends M
       }
     }
   });
+};
 
 const evaluateGuard = <TContext extends MachineContext, TEvent extends MachineEvent>(
   guard: Guard<TContext, TEvent, any, any>,
@@ -635,8 +637,9 @@ const startActivities = <TContext extends MachineContext, TEvent extends Machine
   event: TEvent,
   send: (event: TEvent) => void,
   fibersRef: Map<string, Fiber.RuntimeFiber<void, never>>,
-): Effect.Effect<void, never, any> =>
-  Effect.forEach(
+): Effect.Effect<void, never, any> => {
+  if (activities.length === 0) return Effect.void;
+  return Effect.forEach(
     activities,
     (activity) =>
       Effect.gen(function* () {
@@ -648,17 +651,20 @@ const startActivities = <TContext extends MachineContext, TEvent extends Machine
       }),
     { discard: true },
   );
+};
 
 const stopAllActivities = (
   fibersRef: Map<string, Fiber.RuntimeFiber<void, never>>,
-): Effect.Effect<void> =>
-  Effect.forEach(
+): Effect.Effect<void> => {
+  if (fibersRef.size === 0) return Effect.void;
+  return Effect.forEach(
     Array.from(fibersRef.values()),
     (fiber) => Fiber.interrupt(fiber).pipe(Effect.catchAll(() => Effect.void)),
     { discard: true },
   ).pipe(
     Effect.tap(() => Effect.sync(() => fibersRef.clear())),
   );
+};
 
 const handleAfterTransition = <
   TStateValue extends string,
