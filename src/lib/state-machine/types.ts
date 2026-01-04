@@ -65,12 +65,27 @@ export interface RaiseAction<TEvent extends MachineEvent> {
   readonly event: TEvent | ((params: { context: unknown; event: MachineEvent }) => TEvent);
 }
 
+/**
+ * Cancel action to cancel a pending delayed event by ID
+ */
+export interface CancelAction<
+  TContext extends MachineContext,
+  TEvent extends MachineEvent,
+> {
+  readonly _tag: "cancel";
+  readonly sendId: string | ((params: { context: TContext; event: TEvent }) => string);
+}
+
 export type Action<
   TContext extends MachineContext,
   TEvent extends MachineEvent,
   R = never,
   E = never,
-> = AssignAction<TContext, TEvent> | EffectAction<TContext, TEvent, R, E> | RaiseAction<TEvent>;
+> =
+  | AssignAction<TContext, TEvent>
+  | EffectAction<TContext, TEvent, R, E>
+  | RaiseAction<TEvent>
+  | CancelAction<TContext, TEvent>;
 
 // ============================================================================
 // Guard Types
@@ -121,6 +136,8 @@ export interface TransitionConfig<
   readonly target?: TStateValue;
   readonly guard?: Guard<TContext, TEvent, R, E>;
   readonly actions?: ReadonlyArray<Action<TContext, TEvent, R, E>>;
+  /** Optional ID for delayed transitions (used with cancel()) */
+  readonly id?: string;
 }
 
 // ============================================================================

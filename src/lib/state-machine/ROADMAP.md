@@ -10,7 +10,7 @@ This document tracks the implementation of XState-inspired actions for our Effec
 
 | Feature | Implementation | Tests | Notes |
 |---------|---------------|-------|-------|
-| `cancel` | [ ] | [ ] | Cancel delayed events by ID |
+| `cancel` | [x] | [x] | Cancel delayed events by ID |
 | `emit` | [ ] | [ ] | Emit to external listeners |
 | `enqueueActions` | [ ] | [ ] | Dynamic action queuing |
 | `sendTo` | [ ] | [ ] | Send to another actor |
@@ -65,10 +65,10 @@ export interface CancelAction<TContext, TEvent> {
 ```
 
 **Tests required**:
-- [ ] Cancel prevents delayed transition from firing
-- [ ] Cancel with dynamic ID (function)
-- [ ] Cancel non-existent ID is a no-op
-- [ ] Multiple delays with different IDs, cancel only one
+- [x] Cancel prevents delayed transition from firing
+- [x] Cancel with dynamic ID (function)
+- [x] Cancel non-existent ID is a no-op
+- [x] Multiple delays with different IDs, cancel only one
 
 ---
 

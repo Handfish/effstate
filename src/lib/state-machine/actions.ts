@@ -2,6 +2,7 @@ import type { Effect } from "effect";
 import type {
   Action,
   AssignAction,
+  CancelAction,
   EffectAction,
   MachineContext,
   MachineEvent,
@@ -74,6 +75,35 @@ export function raise<TEvent extends MachineEvent>(
   return {
     _tag: "raise",
     event,
+  };
+}
+
+/**
+ * Cancel a pending delayed event by its ID.
+ *
+ * @example
+ * ```ts
+ * // In after config, give the delay an ID
+ * after: {
+ *   1000: { target: "timeout", id: "myDelay" }
+ * }
+ *
+ * // Cancel it before it fires
+ * actions: [cancel("myDelay")]
+ *
+ * // Or with dynamic ID
+ * actions: [cancel(({ context }) => `delay-${context.id}`)]
+ * ```
+ */
+export function cancel<
+  TContext extends MachineContext,
+  TEvent extends MachineEvent = MachineEvent,
+>(
+  sendId: string | ((params: { context: TContext; event: TEvent }) => string),
+): CancelAction<TContext, TEvent> {
+  return {
+    _tag: "cancel",
+    sendId,
   };
 }
 

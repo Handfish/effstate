@@ -102,12 +102,21 @@ export const interpret = <
 
     const commandQueue = yield* Queue.unbounded<TEvent>();
     const activityFibersRef = yield* Effect.sync(() => new Map<string, Fiber.RuntimeFiber<void, never>>());
+    const delayFibersRef = yield* Effect.sync(() => new Map<string, Fiber.RuntimeFiber<void, never>>());
     const send = (event: TEvent) => commandQueue.unsafeOffer(event);
+    const cancelDelay = (id: string) => {
+      const fiber = delayFibersRef.get(id);
+      if (fiber) {
+        delayFibersRef.delete(id);
+        return Fiber.interrupt(fiber).pipe(Effect.catchAll(() => Effect.void));
+      }
+      return Effect.void;
+    };
 
     // Run entry actions for initial state
     const initialState = machine.config.states[machine.initialSnapshot.value];
     if (initialState?.entry) {
-      yield* runActions(initialState.entry, machine.initialSnapshot.context, { _tag: "$init" } as TEvent, send);
+      yield* runActions(initialState.entry, machine.initialSnapshot.context, { _tag: "$init" } as TEvent, send, cancelDelay);
     }
 
     // Start activities for initial state
@@ -127,6 +136,7 @@ export const interpret = <
         initialState.after,
         machine.initialSnapshot,
         commandQueue,
+        delayFibersRef,
       );
     }
 
@@ -159,7 +169,7 @@ export const interpret = <
 
             // Run exit actions
             if (stateConfig?.exit) {
-              yield* runActions(stateConfig.exit, newContext, event, send);
+              yield* runActions(stateConfig.exit, newContext, event, send, cancelDelay);
             }
 
             // Stop activities
@@ -172,13 +182,14 @@ export const interpret = <
                 newContext,
                 event,
                 send,
+                cancelDelay,
               );
             }
 
             // Run entry actions
             const targetStateConfig = machine.config.states[targetState];
             if (targetStateConfig?.entry) {
-              newContext = yield* runActionsWithContext(targetStateConfig.entry, newContext, event, send);
+              newContext = yield* runActionsWithContext(targetStateConfig.entry, newContext, event, send, cancelDelay);
             }
 
             // Update snapshot
@@ -202,7 +213,7 @@ export const interpret = <
 
             // Handle delayed transitions for new state
             if (targetStateConfig?.after) {
-              yield* handleAfterTransition(targetStateConfig.after, newSnapshot, commandQueue);
+              yield* handleAfterTransition(targetStateConfig.after, newSnapshot, commandQueue, delayFibersRef);
             }
 
             yield* Effect.log(
@@ -236,7 +247,7 @@ export const interpret = <
 
           // Run exit actions if transitioning
           if (isTransition && stateConfig.exit) {
-            yield* runActions(stateConfig.exit, newContext, event, send);
+            yield* runActions(stateConfig.exit, newContext, event, send, cancelDelay);
           }
 
           // Stop activities if transitioning
@@ -251,13 +262,14 @@ export const interpret = <
               newContext,
               event,
               send,
+              cancelDelay,
             );
           }
 
           // Run entry actions if transitioning
           const targetStateConfig = machine.config.states[targetState];
           if (isTransition && targetStateConfig?.entry) {
-            newContext = yield* runActionsWithContext(targetStateConfig.entry, newContext, event, send);
+            newContext = yield* runActionsWithContext(targetStateConfig.entry, newContext, event, send, cancelDelay);
           }
 
           // Update snapshot
@@ -281,7 +293,7 @@ export const interpret = <
 
           // Handle delayed transitions
           if (isTransition && targetStateConfig?.after) {
-            yield* handleAfterTransition(targetStateConfig.after, newSnapshot, commandQueue);
+            yield* handleAfterTransition(targetStateConfig.after, newSnapshot, commandQueue, delayFibersRef);
           }
 
           yield* Effect.log(
@@ -309,6 +321,7 @@ const runActions = <TContext extends MachineContext, TEvent extends MachineEvent
   context: TContext,
   event: TEvent,
   send: (event: TEvent) => void,
+  cancelDelay: (id: string) => Effect.Effect<void>,
 ): Effect.Effect<void, never, any> =>
   Effect.forEach(actions, (action) => {
     switch (action._tag) {
@@ -323,6 +336,12 @@ const runActions = <TContext extends MachineContext, TEvent extends MachineEvent
         send(raisedEvent);
         return Effect.void;
       }
+      case "cancel": {
+        const id = typeof action.sendId === "function"
+          ? action.sendId({ context, event })
+          : action.sendId;
+        return cancelDelay(id);
+      }
     }
   }, { discard: true });
 
@@ -331,6 +350,7 @@ const runActionsWithContext = <TContext extends MachineContext, TEvent extends M
   context: TContext,
   event: TEvent,
   send: (event: TEvent) => void,
+  cancelDelay: (id: string) => Effect.Effect<void>,
 ): Effect.Effect<TContext, never, any> =>
   Effect.reduce(actions, context, (ctx, action) => {
     switch (action._tag) {
@@ -349,6 +369,12 @@ const runActionsWithContext = <TContext extends MachineContext, TEvent extends M
           : action.event;
         send(raisedEvent);
         return Effect.succeed(ctx);
+      }
+      case "cancel": {
+        const id = typeof action.sendId === "function"
+          ? action.sendId({ context: ctx, event })
+          : action.sendId;
+        return cancelDelay(id).pipe(Effect.map(() => ctx));
       }
     }
   });
@@ -412,32 +438,43 @@ const handleAfterTransition = <
   after: StateNodeConfig<TStateValue, TContext, TEvent, any, any>["after"],
   _snapshot: MachineSnapshot<TStateValue, TContext>,
   commandQueue: Queue.Queue<TEvent>,
+  delayFibersRef: Map<string, Fiber.RuntimeFiber<void, never>>,
 ): Effect.Effect<void, never, any> => {
   if (!after) return Effect.void;
 
   // Handle object with delay/transition
   if ("delay" in after && "transition" in after) {
     const delay = Duration.decode(after.delay);
-    return Effect.sleep(delay).pipe(
-      Effect.zipRight(
-        Queue.offer(commandQueue, { _tag: "$after", delay } as unknown as TEvent),
-      ),
-      Effect.forkScoped,
-      Effect.asVoid,
-    );
+    const transitionId = (after.transition as TransitionConfig<TStateValue, TContext, TEvent, any, any>).id;
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.sleep(delay).pipe(
+        Effect.zipRight(
+          Queue.offer(commandQueue, { _tag: "$after", delay } as unknown as TEvent),
+        ),
+        Effect.forkScoped,
+      );
+      if (transitionId) {
+        delayFibersRef.set(transitionId, fiber as Fiber.RuntimeFiber<void, never>);
+      }
+    });
   }
 
   // Handle numeric delays
   const entries = Object.entries(after as Record<number, TransitionConfig<TStateValue, TContext, TEvent, any, any>>);
   return Effect.forEach(
     entries,
-    ([delayMs, _config]) =>
-      Effect.sleep(Duration.millis(Number(delayMs))).pipe(
-        Effect.zipRight(
-          Queue.offer(commandQueue, { _tag: "$after", delay: delayMs } as unknown as TEvent),
-        ),
-        Effect.forkScoped,
-      ),
+    ([delayMs, config]) =>
+      Effect.gen(function* () {
+        const fiber = yield* Effect.sleep(Duration.millis(Number(delayMs))).pipe(
+          Effect.zipRight(
+            Queue.offer(commandQueue, { _tag: "$after", delay: delayMs } as unknown as TEvent),
+          ),
+          Effect.forkScoped,
+        );
+        if (config.id) {
+          delayFibersRef.set(config.id, fiber as Fiber.RuntimeFiber<void, never>);
+        }
+      }),
     { discard: true },
   );
 };

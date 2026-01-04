@@ -3,6 +3,7 @@ export type {
   Action,
   ActivityConfig,
   AssignAction,
+  CancelAction,
   EffectAction,
   EffectGuard,
   EventByTag,
@@ -23,7 +24,7 @@ export type {
 export { createMachine, interpret, type MachineActor } from "./machine.js";
 
 // Actions
-export { assign, effect, log, raise } from "./actions.js";
+export { assign, cancel, effect, log, raise } from "./actions.js";
 
 // Guards
 export { and, guard, guardEffect, not, or } from "./guards.js";

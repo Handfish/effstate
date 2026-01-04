@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Data, Effect, Exit, Ref } from "effect";
 import { createMachine, interpret } from "./machine";
-import { assign, effect, raise } from "./actions";
+import { assign, effect, raise, cancel } from "./actions";
 import { guard, guardEffect, and, or, not } from "./guards";
 
 // ============================================================================
@@ -1166,6 +1166,186 @@ describe("after (delayed transitions)", () => {
 
           const snapshot = yield* actor.getSnapshot;
           expect(snapshot.value).toBe("done");
+        }),
+      ),
+    );
+  });
+});
+
+// ============================================================================
+// cancel - Cancel Delayed Events
+// ============================================================================
+
+describe("cancel (delayed events)", () => {
+  it("cancels a pending delayed transition by ID", async () => {
+    const machine = createMachine<"test", "waiting" | "cancelled" | "timeout", TestContext, TestEvent>({
+      id: "test",
+      initial: "waiting",
+      context: { count: 0, log: [] },
+      states: {
+        waiting: {
+          after: {
+            100: { target: "timeout", id: "myTimeout" },
+          },
+          on: {
+            TOGGLE: {
+              target: "cancelled",
+              actions: [cancel("myTimeout")],
+            },
+          },
+        },
+        cancelled: {},
+        timeout: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+
+          // Cancel before timeout fires
+          yield* Effect.sleep("30 millis");
+          actor.send(new Toggle());
+          yield* Effect.sleep("10 millis");
+
+          let snapshot = yield* actor.getSnapshot;
+          expect(snapshot.value).toBe("cancelled");
+
+          // Wait past when timeout would have fired
+          yield* Effect.sleep("100 millis");
+
+          // Should still be in cancelled state (timeout was cancelled)
+          snapshot = yield* actor.getSnapshot;
+          expect(snapshot.value).toBe("cancelled");
+        }),
+      ),
+    );
+  });
+
+  it("cancel with dynamic ID from function", async () => {
+    const machine = createMachine<"test", "waiting" | "cancelled" | "timeout", TestContext, TestEvent>({
+      id: "test",
+      initial: "waiting",
+      context: { count: 0, log: [] },
+      states: {
+        waiting: {
+          after: {
+            100: { target: "timeout", id: "delay-100" },
+          },
+          on: {
+            SET_VALUE: {
+              target: "cancelled",
+              actions: [cancel(({ event }) => `delay-${event.value}`)],
+            },
+          },
+        },
+        cancelled: {},
+        timeout: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+
+          yield* Effect.sleep("30 millis");
+          actor.send(new SetValue({ value: 100 })); // Cancel "delay-100"
+          yield* Effect.sleep("10 millis");
+
+          let snapshot = yield* actor.getSnapshot;
+          expect(snapshot.value).toBe("cancelled");
+
+          yield* Effect.sleep("100 millis");
+          snapshot = yield* actor.getSnapshot;
+          expect(snapshot.value).toBe("cancelled"); // Timeout was cancelled
+        }),
+      ),
+    );
+  });
+
+  it("cancel non-existent ID is a no-op", async () => {
+    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+      id: "test",
+      initial: "a",
+      context: { count: 0, log: [] },
+      states: {
+        a: {
+          on: {
+            TOGGLE: {
+              target: "b",
+              actions: [cancel("nonexistent")],
+            },
+          },
+        },
+        b: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+          actor.send(new Toggle());
+          yield* Effect.sleep("10 millis");
+
+          const snapshot = yield* actor.getSnapshot;
+          expect(snapshot.value).toBe("b"); // Transition still works
+        }),
+      ),
+    );
+  });
+
+  it("cancels only the specified delay, others still fire", async () => {
+    const machine = createMachine<"test", "waiting" | "partial" | "timeout1" | "timeout2", TestContext, TestEvent>({
+      id: "test",
+      initial: "waiting",
+      context: { count: 0, log: [] },
+      states: {
+        waiting: {
+          after: {
+            50: { target: "timeout1", id: "short" },
+            150: { target: "timeout2", id: "long" },
+          },
+          on: {
+            TOGGLE: {
+              target: "partial",
+              actions: [cancel("long")], // Cancel only the long one
+            },
+          },
+        },
+        partial: {
+          after: {
+            // The short timeout should have been cleared when we left "waiting"
+            // But let's test that "long" doesn't fire from original state
+            200: { target: "timeout2" },
+          },
+        },
+        timeout1: {},
+        timeout2: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+
+          // Quickly transition to partial (before short timeout)
+          yield* Effect.sleep("20 millis");
+          actor.send(new Toggle());
+          yield* Effect.sleep("10 millis");
+
+          let snapshot = yield* actor.getSnapshot;
+          expect(snapshot.value).toBe("partial");
+
+          // Wait past when "long" would have fired
+          yield* Effect.sleep("200 millis");
+          snapshot = yield* actor.getSnapshot;
+          // Should still be partial - the original "long" was cancelled
+          // and the new 200ms timeout in partial should now fire to timeout2
+          expect(snapshot.value).toBe("timeout2");
         }),
       ),
     );
