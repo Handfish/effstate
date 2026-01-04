@@ -340,7 +340,7 @@ export interface StopChildAction<TContext, TEvent> {
 - [ ] spawnChild with input (deferred - needs input passing mechanism)
 - [x] stopChild stops the child
 - [x] Parent scope closing cleans up children
-- [ ] Child can sendParent to parent (requires sendParent implementation)
+- [x] Child can sendParent to parent
 
 ---
 
@@ -352,7 +352,9 @@ Recommended order based on dependencies:
 2. ~~**`emit`**~~ - ✅ Done - Standalone, adds event emitter pattern
 3. ~~**`enqueueActions`**~~ - ✅ Done - Dynamic action queuing
 4. ~~**`spawnChild` + `stopChild`**~~ - ✅ Done - Actor hierarchy foundation
-5. **`sendTo` + `sendParent` + `forwardTo`** - Next up - Requires actor hierarchy
+5. ~~**`sendTo` + `sendParent` + `forwardTo`**~~ - ✅ Done - Actor communication
+
+**All features complete!**
 
 ---
 
