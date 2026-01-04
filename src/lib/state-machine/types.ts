@@ -177,6 +177,42 @@ export interface StopChildAction<
   readonly childId: string | ((params: { context: TContext; event: TEvent }) => string);
 }
 
+/**
+ * SendTo action to send an event to a child actor by ID
+ */
+export interface SendToAction<
+  TContext extends MachineContext,
+  TEvent extends MachineEvent,
+  TTargetEvent extends MachineEvent = MachineEvent,
+> {
+  readonly _tag: "sendTo";
+  readonly target: string | ((params: { context: TContext; event: TEvent }) => string);
+  readonly event: TTargetEvent | ((params: { context: TContext; event: TEvent }) => TTargetEvent);
+}
+
+/**
+ * SendParent action to send an event to the parent actor
+ */
+export interface SendParentAction<
+  TContext extends MachineContext,
+  TEvent extends MachineEvent,
+  TParentEvent extends MachineEvent = MachineEvent,
+> {
+  readonly _tag: "sendParent";
+  readonly event: TParentEvent | ((params: { context: TContext; event: TEvent }) => TParentEvent);
+}
+
+/**
+ * ForwardTo action to forward the current event to a child actor
+ */
+export interface ForwardToAction<
+  TContext extends MachineContext,
+  TEvent extends MachineEvent,
+> {
+  readonly _tag: "forwardTo";
+  readonly target: string | ((params: { context: TContext; event: TEvent }) => string);
+}
+
 export type Action<
   TContext extends MachineContext,
   TEvent extends MachineEvent,
@@ -190,7 +226,10 @@ export type Action<
   | EmitAction<TContext, TEvent>
   | EnqueueActionsAction<TContext, TEvent, R, E>
   | SpawnChildAction<TContext, TEvent>
-  | StopChildAction<TContext, TEvent>;
+  | StopChildAction<TContext, TEvent>
+  | SendToAction<TContext, TEvent>
+  | SendParentAction<TContext, TEvent>
+  | ForwardToAction<TContext, TEvent>;
 
 // ============================================================================
 // Guard Types

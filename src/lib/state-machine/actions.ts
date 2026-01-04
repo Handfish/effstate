@@ -9,10 +9,13 @@ import type {
   EmittedEvent,
   EnqueueActionsAction,
   EnqueueActionsParams,
+  ForwardToAction,
   MachineContext,
   MachineDefinition,
   MachineEvent,
   RaiseAction,
+  SendParentAction,
+  SendToAction,
   SpawnChildAction,
   StopChildAction,
 } from "./types.js";
@@ -240,6 +243,85 @@ export function stopChild<
   return {
     _tag: "stopChild",
     childId,
+  };
+}
+
+/**
+ * Send an event to a child actor by ID.
+ *
+ * @example
+ * ```ts
+ * // Static target and event
+ * sendTo("myChild", new ChildEvent())
+ *
+ * // Dynamic target from context
+ * sendTo(({ context }) => `child-${context.id}`, new ChildEvent())
+ *
+ * // Dynamic event from context
+ * sendTo("myChild", ({ context }) => new CountEvent({ count: context.count }))
+ * ```
+ */
+export function sendTo<
+  TContext extends MachineContext,
+  TEvent extends MachineEvent = MachineEvent,
+  TTargetEvent extends MachineEvent = MachineEvent,
+>(
+  target: string | ((params: { context: TContext; event: TEvent }) => string),
+  event: TTargetEvent | ((params: { context: TContext; event: TEvent }) => TTargetEvent),
+): SendToAction<TContext, TEvent, TTargetEvent> {
+  return {
+    _tag: "sendTo",
+    target,
+    event,
+  };
+}
+
+/**
+ * Send an event to the parent actor.
+ *
+ * @example
+ * ```ts
+ * // Static event
+ * sendParent(new DoneEvent({ result: 42 }))
+ *
+ * // Dynamic event from context
+ * sendParent(({ context }) => new CountEvent({ count: context.count }))
+ * ```
+ */
+export function sendParent<
+  TContext extends MachineContext,
+  TEvent extends MachineEvent = MachineEvent,
+  TParentEvent extends MachineEvent = MachineEvent,
+>(
+  event: TParentEvent | ((params: { context: TContext; event: TEvent }) => TParentEvent),
+): SendParentAction<TContext, TEvent, TParentEvent> {
+  return {
+    _tag: "sendParent",
+    event,
+  };
+}
+
+/**
+ * Forward the current event to a child actor.
+ *
+ * @example
+ * ```ts
+ * // Static target
+ * forwardTo("myChild")
+ *
+ * // Dynamic target from context
+ * forwardTo(({ context }) => `child-${context.id}`)
+ * ```
+ */
+export function forwardTo<
+  TContext extends MachineContext,
+  TEvent extends MachineEvent = MachineEvent,
+>(
+  target: string | ((params: { context: TContext; event: TEvent }) => string),
+): ForwardToAction<TContext, TEvent> {
+  return {
+    _tag: "forwardTo",
+    target,
   };
 }
 

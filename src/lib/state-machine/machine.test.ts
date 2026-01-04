@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Data, Effect, Exit, Ref } from "effect";
 import { createMachine, interpret } from "./machine";
-import { assign, effect, raise, cancel, emit, enqueueActions, spawnChild, stopChild } from "./actions";
+import { assign, effect, raise, cancel, emit, enqueueActions, spawnChild, stopChild, sendTo, sendParent, forwardTo } from "./actions";
 import { guard, guardEffect, and, or, not } from "./guards";
 
 // ============================================================================
@@ -2101,5 +2101,548 @@ describe("spawnChild / stopChild (actor hierarchy)", () => {
     );
     // After scope closes, cleanup should have happened
     // (We can't easily test this from outside, but the implementation should handle it)
+  });
+});
+
+// ============================================================================
+// sendTo - Send Events to Child Actors
+// ============================================================================
+
+describe("sendTo (send events to child actors)", () => {
+  it("sendTo delivers event to child actor", async () => {
+    const childMachine = createChildMachine("child");
+
+    const machine = createMachine<"test", "idle" | "parenting", TestContext, TestEvent>({
+      id: "test",
+      initial: "idle",
+      context: { count: 0, log: [] },
+      states: {
+        idle: {
+          on: {
+            TOGGLE: {
+              target: "parenting",
+              actions: [spawnChild(childMachine, { id: "myChild" })],
+            },
+          },
+        },
+        parenting: {
+          on: {
+            TICK: {
+              actions: [sendTo("myChild", new ChildStart())],
+            },
+          },
+        },
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+          actor.send(new Toggle());
+          yield* Effect.sleep("20 millis");
+
+          // Child should be in idle state
+          const child = actor.children.get("myChild");
+          expect(child).toBeDefined();
+          let childSnapshot = yield* child!.getSnapshot;
+          expect(childSnapshot.value).toBe("idle");
+
+          // Send event to child via parent
+          actor.send(new Tick());
+          yield* Effect.sleep("20 millis");
+
+          // Child should now be in running state
+          childSnapshot = yield* child!.getSnapshot;
+          expect(childSnapshot.value).toBe("running");
+          expect(childSnapshot.context.started).toBe(true);
+        }),
+      ),
+    );
+  });
+
+  it("sendTo with dynamic target from function", async () => {
+    const childMachine = createChildMachine("child");
+
+    const machine = createMachine<"test", "idle" | "parenting", TestContext, TestEvent>({
+      id: "test",
+      initial: "idle",
+      context: { count: 42, log: [] },
+      states: {
+        idle: {
+          on: {
+            TOGGLE: {
+              target: "parenting",
+              actions: [spawnChild(childMachine, { id: "child-42" })],
+            },
+          },
+        },
+        parenting: {
+          on: {
+            TICK: {
+              actions: [
+                sendTo(
+                  ({ context }) => `child-${context.count}`,
+                  new ChildStart(),
+                ),
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+          actor.send(new Toggle());
+          yield* Effect.sleep("20 millis");
+
+          const child = actor.children.get("child-42");
+          expect(child).toBeDefined();
+
+          actor.send(new Tick());
+          yield* Effect.sleep("20 millis");
+
+          const childSnapshot = yield* child!.getSnapshot;
+          expect(childSnapshot.value).toBe("running");
+        }),
+      ),
+    );
+  });
+
+  it("sendTo with dynamic event from function", async () => {
+    const childMachine = createChildMachine("child");
+
+    const machine = createMachine<"test", "idle" | "parenting", TestContext, TestEvent>({
+      id: "test",
+      initial: "idle",
+      context: { count: 0, log: [] },
+      states: {
+        idle: {
+          on: {
+            TOGGLE: {
+              target: "parenting",
+              actions: [spawnChild(childMachine, { id: "myChild" })],
+            },
+          },
+        },
+        parenting: {
+          on: {
+            TICK: {
+              actions: [
+                sendTo("myChild", () => new ChildStart()),
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+          actor.send(new Toggle());
+          yield* Effect.sleep("20 millis");
+
+          actor.send(new Tick());
+          yield* Effect.sleep("20 millis");
+
+          const child = actor.children.get("myChild");
+          const childSnapshot = yield* child!.getSnapshot;
+          expect(childSnapshot.value).toBe("running");
+        }),
+      ),
+    );
+  });
+
+  it("sendTo non-existent actor is a no-op", async () => {
+    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+      id: "test",
+      initial: "a",
+      context: { count: 0, log: [] },
+      states: {
+        a: {
+          on: {
+            TOGGLE: {
+              target: "b",
+              actions: [sendTo("nonexistent", new ChildStart())],
+            },
+          },
+        },
+        b: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+          actor.send(new Toggle());
+          yield* Effect.sleep("20 millis");
+
+          const snapshot = yield* actor.getSnapshot;
+          expect(snapshot.value).toBe("b"); // Transition still works
+        }),
+      ),
+    );
+  });
+});
+
+// ============================================================================
+// sendParent - Send Events to Parent Actor
+// ============================================================================
+
+// Parent event types for testing parent communication
+class ParentNotify extends Data.TaggedClass("PARENT_NOTIFY")<{ readonly message: string }> {}
+type ParentEvent = TestEvent | ParentNotify;
+
+describe("sendParent (send events to parent actor)", () => {
+  it("sendParent delivers event to parent", async () => {
+    // Child machine that sends to parent
+    const childMachine = createMachine<"child", "idle" | "notifying", { started: boolean }, ChildEvent | ParentNotify>({
+      id: "child",
+      initial: "idle",
+      context: { started: false },
+      states: {
+        idle: {
+          on: {
+            CHILD_START: {
+              target: "notifying",
+              actions: [
+                sendParent(new ParentNotify({ message: "Child started!" })),
+              ],
+            },
+          },
+        },
+        notifying: {},
+      },
+    });
+
+    const machine = createMachine<"test", "idle" | "parenting" | "notified", TestContext, ParentEvent>({
+      id: "test",
+      initial: "idle",
+      context: { count: 0, log: [] },
+      states: {
+        idle: {
+          on: {
+            TOGGLE: {
+              target: "parenting",
+              actions: [spawnChild(childMachine, { id: "myChild" })],
+            },
+          },
+        },
+        parenting: {
+          on: {
+            TICK: {
+              actions: [sendTo("myChild", new ChildStart())],
+            },
+            PARENT_NOTIFY: {
+              target: "notified",
+              actions: [
+                assign(({ event }) => ({
+                  log: [event.message],
+                })),
+              ],
+            },
+          },
+        },
+        notified: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+
+          // Spawn child
+          actor.send(new Toggle());
+          yield* Effect.sleep("20 millis");
+
+          // Tell child to start (which sends to parent)
+          actor.send(new Tick());
+          yield* Effect.sleep("30 millis");
+
+          const snapshot = yield* actor.getSnapshot;
+          expect(snapshot.value).toBe("notified");
+          expect(snapshot.context.log).toContain("Child started!");
+        }),
+      ),
+    );
+  });
+
+  it("sendParent with dynamic event from function", async () => {
+    // Child machine that sends dynamic event to parent
+    const childMachine = createMachine<"child", "idle" | "notifying", { count: number }, ChildEvent | ParentNotify>({
+      id: "child",
+      initial: "idle",
+      context: { count: 42 },
+      states: {
+        idle: {
+          on: {
+            CHILD_START: {
+              target: "notifying",
+              actions: [
+                sendParent(({ context }) =>
+                  new ParentNotify({ message: `Count is ${context.count}` }),
+                ),
+              ],
+            },
+          },
+        },
+        notifying: {},
+      },
+    });
+
+    const machine = createMachine<"test", "idle" | "parenting" | "notified", TestContext, ParentEvent>({
+      id: "test",
+      initial: "idle",
+      context: { count: 0, log: [] },
+      states: {
+        idle: {
+          on: {
+            TOGGLE: {
+              target: "parenting",
+              actions: [spawnChild(childMachine, { id: "myChild" })],
+            },
+          },
+        },
+        parenting: {
+          on: {
+            TICK: {
+              actions: [sendTo("myChild", new ChildStart())],
+            },
+            PARENT_NOTIFY: {
+              target: "notified",
+              actions: [
+                assign(({ event }) => ({
+                  log: [event.message],
+                })),
+              ],
+            },
+          },
+        },
+        notified: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+
+          actor.send(new Toggle());
+          yield* Effect.sleep("20 millis");
+
+          actor.send(new Tick());
+          yield* Effect.sleep("30 millis");
+
+          const snapshot = yield* actor.getSnapshot;
+          expect(snapshot.value).toBe("notified");
+          expect(snapshot.context.log).toContain("Count is 42");
+        }),
+      ),
+    );
+  });
+
+  it("sendParent with no parent is a no-op", async () => {
+    // Machine that tries to send to parent (but has none)
+    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+      id: "test",
+      initial: "a",
+      context: { count: 0, log: [] },
+      states: {
+        a: {
+          on: {
+            TOGGLE: {
+              target: "b",
+              actions: [sendParent(new ParentNotify({ message: "Hello" }))],
+            },
+          },
+        },
+        b: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+          actor.send(new Toggle());
+          yield* Effect.sleep("20 millis");
+
+          const snapshot = yield* actor.getSnapshot;
+          expect(snapshot.value).toBe("b"); // Transition still works
+        }),
+      ),
+    );
+  });
+});
+
+// ============================================================================
+// forwardTo - Forward Current Event to Another Actor
+// ============================================================================
+
+describe("forwardTo (forward current event to another actor)", () => {
+  it("forwardTo passes current event to child unchanged", async () => {
+    // Child machine that handles TICK event
+    const childMachine = createMachine<"child", "idle" | "ticked", { tickCount: number }, Tick>({
+      id: "child",
+      initial: "idle",
+      context: { tickCount: 0 },
+      states: {
+        idle: {
+          on: {
+            TICK: {
+              target: "ticked",
+              actions: [assign({ tickCount: 1 })],
+            },
+          },
+        },
+        ticked: {},
+      },
+    });
+
+    const machine = createMachine<"test", "idle" | "parenting", TestContext, TestEvent>({
+      id: "test",
+      initial: "idle",
+      context: { count: 0, log: [] },
+      states: {
+        idle: {
+          on: {
+            TOGGLE: {
+              target: "parenting",
+              actions: [spawnChild(childMachine, { id: "myChild" })],
+            },
+          },
+        },
+        parenting: {
+          on: {
+            TICK: {
+              actions: [forwardTo("myChild")],
+            },
+          },
+        },
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+
+          actor.send(new Toggle());
+          yield* Effect.sleep("20 millis");
+
+          const child = actor.children.get("myChild");
+          expect(child).toBeDefined();
+          let childSnapshot = yield* child!.getSnapshot;
+          expect(childSnapshot.value).toBe("idle");
+
+          // Forward TICK to child
+          actor.send(new Tick());
+          yield* Effect.sleep("20 millis");
+
+          childSnapshot = yield* child!.getSnapshot;
+          expect(childSnapshot.value).toBe("ticked");
+          expect(childSnapshot.context.tickCount).toBe(1);
+        }),
+      ),
+    );
+  });
+
+  it("forwardTo with dynamic target from function", async () => {
+    const childMachine = createMachine<"child", "idle" | "ticked", { tickCount: number }, Tick>({
+      id: "child",
+      initial: "idle",
+      context: { tickCount: 0 },
+      states: {
+        idle: {
+          on: {
+            TICK: {
+              target: "ticked",
+              actions: [assign({ tickCount: 1 })],
+            },
+          },
+        },
+        ticked: {},
+      },
+    });
+
+    const machine = createMachine<"test", "idle" | "parenting", TestContext, TestEvent>({
+      id: "test",
+      initial: "idle",
+      context: { count: 42, log: [] },
+      states: {
+        idle: {
+          on: {
+            TOGGLE: {
+              target: "parenting",
+              actions: [spawnChild(childMachine, { id: "child-42" })],
+            },
+          },
+        },
+        parenting: {
+          on: {
+            TICK: {
+              actions: [forwardTo(({ context }) => `child-${context.count}`)],
+            },
+          },
+        },
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+
+          actor.send(new Toggle());
+          yield* Effect.sleep("20 millis");
+
+          actor.send(new Tick());
+          yield* Effect.sleep("20 millis");
+
+          const child = actor.children.get("child-42");
+          const childSnapshot = yield* child!.getSnapshot;
+          expect(childSnapshot.value).toBe("ticked");
+        }),
+      ),
+    );
+  });
+
+  it("forwardTo non-existent actor is a no-op", async () => {
+    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+      id: "test",
+      initial: "a",
+      context: { count: 0, log: [] },
+      states: {
+        a: {
+          on: {
+            TOGGLE: {
+              target: "b",
+              actions: [forwardTo("nonexistent")],
+            },
+          },
+        },
+        b: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+          actor.send(new Toggle());
+          yield* Effect.sleep("20 millis");
+
+          const snapshot = yield* actor.getSnapshot;
+          expect(snapshot.value).toBe("b"); // Transition still works
+        }),
+      ),
+    );
   });
 });

@@ -13,9 +13,9 @@ This document tracks the implementation of XState-inspired actions for our Effec
 | `cancel` | [x] | [x] | Cancel delayed events by ID |
 | `emit` | [x] | [x] | Emit to external listeners |
 | `enqueueActions` | [x] | [x] | Dynamic action queuing |
-| `sendTo` | [ ] | [ ] | Send to another actor |
-| `sendParent` | [ ] | [ ] | Send to parent actor |
-| `forwardTo` | [ ] | [ ] | Forward event to another actor |
+| `sendTo` | [x] | [x] | Send to another actor |
+| `sendParent` | [x] | [x] | Send to parent actor |
+| `forwardTo` | [x] | [x] | Forward event to another actor |
 | `spawnChild` | [x] | [x] | Spawn child actor |
 | `stopChild` | [x] | [x] | Stop child actor |
 
@@ -255,11 +255,16 @@ Effect has its own actor model with `Effect.fork` and fibers. Consider whether t
 - C) Skip and rely on Effect's patterns
 
 **Tests required**:
-- [ ] sendTo delivers event to child actor
-- [ ] sendTo with delay schedules event
-- [ ] sendParent delivers to parent
-- [ ] forwardTo passes current event unchanged
-- [ ] sendTo non-existent actor throws/warns
+- [x] sendTo delivers event to child actor
+- [x] sendTo with dynamic target from function
+- [x] sendTo with dynamic event from function
+- [x] sendTo non-existent actor is a no-op
+- [x] sendParent delivers event to parent
+- [x] sendParent with dynamic event from function
+- [x] sendParent with no parent is a no-op
+- [x] forwardTo passes current event unchanged
+- [x] forwardTo with dynamic target from function
+- [x] forwardTo non-existent actor is a no-op
 
 ---
 

@@ -87,6 +87,8 @@ export interface MachineActor<
   ) => () => void;
   /** Map of child actors by ID. Use type assertion for specific child types. */
   readonly children: ReadonlyMap<string, MachineActor<string, MachineContext, MachineEvent>>;
+  /** Parent actor (if this is a spawned child). Use type assertion for specific parent type. */
+  readonly _parent?: MachineActor<string, MachineContext, MachineEvent>;
 }
 
 // ============================================================================
@@ -106,6 +108,9 @@ export const interpret = <
   E,
 >(
   machine: MachineDefinition<TId, TStateValue, TContext, TEvent, R, E>,
+  options?: {
+    parent?: MachineActor<string, MachineContext, MachineEvent>;
+  },
 ): Effect.Effect<MachineActor<TStateValue, TContext, TEvent>, never, R> =>
   Effect.gen(function* () {
     const snapshotRef = yield* SubscriptionRef.make<MachineSnapshot<TStateValue, TContext>>(
@@ -150,13 +155,25 @@ export const interpret = <
         listeners!.delete(handler as (event: EmittedEvent) => void);
       };
     };
+
+    // Create actor object early so we can pass it as parent to children
+    const actor: MachineActor<TStateValue, TContext, TEvent> = {
+      snapshotRef,
+      commandQueue,
+      send: (event: TEvent) => commandQueue.unsafeOffer(event),
+      getSnapshot: SubscriptionRef.get(snapshotRef),
+      on,
+      children: childrenRef as ReadonlyMap<string, MachineActor<string, MachineContext, MachineEvent>>,
+      _parent: options?.parent,
+    };
+
     const spawnChildActor = (
       childMachine: MachineDefinition<any, any, any, any, any, any>,
       childId: string,
     ): Effect.Effect<void, never, any> =>
       Effect.gen(function* () {
-        // Create the child actor
-        const childActor = yield* interpret(childMachine);
+        // Create the child actor with this actor as parent
+        const childActor = yield* interpret(childMachine, { parent: actor as MachineActor<string, MachineContext, MachineEvent> });
         childrenRef.set(childId, childActor);
       });
     const stopChildActor = (childId: string): Effect.Effect<void> => {
@@ -171,6 +188,17 @@ export const interpret = <
       }
       return Effect.void;
     };
+    const sendToChild = (childId: string, event: MachineEvent): void => {
+      const child = childrenRef.get(childId);
+      if (child) {
+        child.send(event);
+      }
+    };
+    const sendToParent = (event: MachineEvent): void => {
+      if (actor._parent) {
+        actor._parent.send(event);
+      }
+    };
 
     // Create helpers object for action runners
     const actionHelpers = {
@@ -179,6 +207,8 @@ export const interpret = <
       emitEvent,
       spawnChildActor,
       stopChildActor,
+      sendToChild,
+      sendToParent,
     };
 
     // Run entry actions for initial state
@@ -370,14 +400,7 @@ export const interpret = <
       Effect.forkScoped,
     );
 
-    return {
-      snapshotRef,
-      commandQueue,
-      send: (event: TEvent) => commandQueue.unsafeOffer(event),
-      getSnapshot: SubscriptionRef.get(snapshotRef),
-      on,
-      children: childrenRef as ReadonlyMap<string, MachineActor<string, MachineContext, MachineEvent>>,
-    };
+    return actor;
   });
 
 // ============================================================================
@@ -421,6 +444,8 @@ interface ActionRunnerHelpers<TEvent extends MachineEvent> {
   emitEvent: (event: EmittedEvent) => void;
   spawnChildActor: (machine: MachineDefinition<any, any, any, any, any, any>, id: string) => Effect.Effect<void, never, any>;
   stopChildActor: (id: string) => Effect.Effect<void>;
+  sendToChild: (childId: string, event: MachineEvent) => void;
+  sendToParent: (event: MachineEvent) => void;
 }
 
 const runActions = <TContext extends MachineContext, TEvent extends MachineEvent>(
@@ -473,6 +498,30 @@ const runActions = <TContext extends MachineContext, TEvent extends MachineEvent
           ? action.childId({ context, event })
           : action.childId;
         return helpers.stopChildActor(childId);
+      }
+      case "sendTo": {
+        const targetId = typeof action.target === "function"
+          ? action.target({ context, event })
+          : action.target;
+        const targetEvent = typeof action.event === "function"
+          ? action.event({ context, event })
+          : action.event;
+        helpers.sendToChild(targetId, targetEvent);
+        return Effect.void;
+      }
+      case "sendParent": {
+        const parentEvent = typeof action.event === "function"
+          ? action.event({ context, event })
+          : action.event;
+        helpers.sendToParent(parentEvent);
+        return Effect.void;
+      }
+      case "forwardTo": {
+        const targetId = typeof action.target === "function"
+          ? action.target({ context, event })
+          : action.target;
+        helpers.sendToChild(targetId, event);
+        return Effect.void;
       }
     }
   }, { discard: true });
@@ -532,6 +581,30 @@ const runActionsWithContext = <TContext extends MachineContext, TEvent extends M
           ? action.childId({ context: ctx, event })
           : action.childId;
         return helpers.stopChildActor(childId).pipe(Effect.map(() => ctx));
+      }
+      case "sendTo": {
+        const targetId = typeof action.target === "function"
+          ? action.target({ context: ctx, event })
+          : action.target;
+        const targetEvent = typeof action.event === "function"
+          ? action.event({ context: ctx, event })
+          : action.event;
+        helpers.sendToChild(targetId, targetEvent);
+        return Effect.succeed(ctx);
+      }
+      case "sendParent": {
+        const parentEvent = typeof action.event === "function"
+          ? action.event({ context: ctx, event })
+          : action.event;
+        helpers.sendToParent(parentEvent);
+        return Effect.succeed(ctx);
+      }
+      case "forwardTo": {
+        const targetId = typeof action.target === "function"
+          ? action.target({ context: ctx, event })
+          : action.target;
+        helpers.sendToChild(targetId, event);
+        return Effect.succeed(ctx);
       }
     }
   });
