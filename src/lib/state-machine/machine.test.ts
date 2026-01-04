@@ -2803,3 +2803,179 @@ describe("forwardTo (forward current event to another actor)", () => {
     );
   });
 });
+
+// ============================================================================
+// onError (Error Handling with TaggedErrors)
+// ============================================================================
+
+describe("onError (error handling)", () => {
+  it("emits ObserverError when observer throws", async () => {
+    const errors: Array<{ _tag: string; message: string }> = [];
+
+    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+      id: "test",
+      initial: "a",
+      context: { count: 0, log: [] },
+      states: {
+        a: { on: { TOGGLE: { target: "b" } } },
+        b: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = interpret(machine);
+
+          // Add an observer that throws
+          actor.subscribe(() => {
+            throw new Error("Observer crashed!");
+          });
+
+          // Subscribe to errors
+          actor.onError((error) => {
+            errors.push({ _tag: error._tag, message: error.message });
+          });
+
+          actor.send(new Toggle());
+          yield* Effect.sleep("20 millis");
+
+          expect(errors.length).toBeGreaterThan(0);
+          expect(errors[0]?._tag).toBe("ObserverError");
+          expect(errors[0]?.message).toContain("Observer at index");
+        }),
+      ),
+    );
+  });
+
+  it("emits GuardError when guard effect is async", async () => {
+    const errors: Array<{ _tag: string; message: string }> = [];
+
+    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+      id: "test",
+      initial: "a",
+      context: { count: 0, log: [] },
+      states: {
+        a: {
+          on: {
+            TOGGLE: {
+              target: "b",
+              guard: guardEffect(() =>
+                Effect.gen(function* () {
+                  yield* Effect.sleep("10 millis"); // This makes it async
+                  return true;
+                }),
+              ),
+            },
+          },
+        },
+        b: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = interpret(machine);
+
+          actor.onError((error) => {
+            errors.push({ _tag: error._tag, message: error.message });
+          });
+
+          actor.send(new Toggle());
+          yield* Effect.sleep("20 millis");
+
+          // Guard should fail because it's async
+          const snapshot = actor.getSnapshot();
+          expect(snapshot.value).toBe("a"); // Transition blocked
+
+          expect(errors.length).toBeGreaterThan(0);
+          expect(errors[0]?._tag).toBe("GuardError");
+          expect(errors[0]?.message).toContain("synchronously");
+        }),
+      ),
+    );
+  });
+
+  it("emits EffectActionError when effect action fails", async () => {
+    const errors: Array<{ _tag: string; message: string }> = [];
+
+    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent, never, string>({
+      id: "test",
+      initial: "a",
+      context: { count: 0, log: [] },
+      states: {
+        a: {
+          on: {
+            TOGGLE: {
+              target: "b",
+              actions: [
+                effect(() => Effect.fail("Action failed!")),
+              ],
+            },
+          },
+        },
+        b: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = interpret(machine);
+
+          actor.onError((error) => {
+            errors.push({ _tag: error._tag, message: error.message });
+          });
+
+          actor.send(new Toggle());
+          yield* Effect.sleep("50 millis"); // Wait for async effect to fail
+
+          expect(errors.length).toBeGreaterThan(0);
+          expect(errors[0]?._tag).toBe("EffectActionError");
+        }),
+      ),
+    );
+  });
+
+  it("unsubscribe removes error handler", async () => {
+    const errors: string[] = [];
+
+    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+      id: "test",
+      initial: "a",
+      context: { count: 0, log: [] },
+      states: {
+        a: { on: { TOGGLE: { target: "b" } } },
+        b: { on: { TOGGLE: { target: "a" } } },
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = interpret(machine);
+
+          actor.subscribe(() => {
+            throw new Error("crash");
+          });
+
+          const unsub = actor.onError((error) => {
+            errors.push(error._tag);
+          });
+
+          actor.send(new Toggle()); // First error
+          yield* Effect.sleep("20 millis");
+
+          unsub(); // Remove error handler
+
+          actor.send(new Toggle()); // Second error - should NOT be caught
+          yield* Effect.sleep("20 millis");
+
+          // Only one error should be recorded
+          expect(errors).toHaveLength(1);
+        }),
+      ),
+    );
+  });
+});

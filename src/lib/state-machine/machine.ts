@@ -1,4 +1,4 @@
-import { Duration, Effect, Fiber, Scope } from "effect";
+import { Duration, Effect, Exit, Fiber, Scope } from "effect";
 import type {
   Action,
   ActionEnqueuer,
@@ -10,7 +10,14 @@ import type {
   MachineEvent,
   MachineSnapshot,
   StateNodeConfig,
+  StateMachineError,
   TransitionConfig,
+} from "./types.js";
+import {
+  ObserverError,
+  EffectActionError,
+  GuardError,
+  ActivityError,
 } from "./types.js";
 
 // ============================================================================
@@ -104,6 +111,8 @@ export interface MachineActor<
     eventType: TEmitted["type"],
     handler: (event: TEmitted) => void,
   ) => () => void;
+  /** Subscribe to machine errors (observer failures, effect errors, etc.) */
+  readonly onError: (handler: (error: StateMachineError) => void) => () => void;
   readonly children: ReadonlyMap<string, MachineActor<string, MachineContext, MachineEvent>>;
   readonly _parent?: MachineActor<string, MachineContext, MachineEvent>;
   /** Stop the actor and clean up resources */
@@ -132,10 +141,22 @@ export function interpret<
   let stopped = false;
 
   const observers = new Set<(snapshot: MachineSnapshot<TStateValue, TContext>) => void>();
+  const errorHandlers = new Set<(error: StateMachineError) => void>();
   const activityCleanups = new Map<string, () => void>();
   const delayTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const listenersRef = new Map<string, Set<(event: EmittedEvent) => void>>();
   const childrenRef = new Map<string, MachineActor<any, any, any>>();
+
+  // Emit error to all error handlers
+  const emitError = (error: StateMachineError) => {
+    errorHandlers.forEach((handler) => {
+      try {
+        handler(error);
+      } catch {
+        // Prevent error handler errors from cascading
+      }
+    });
+  };
 
   // Deferred effects to run after state update
   const deferredEffects: Array<() => void> = [];
@@ -148,7 +169,19 @@ export function interpret<
   };
 
   const notifyObservers = () => {
-    observers.forEach((observer) => observer(snapshot));
+    let index = 0;
+    observers.forEach((observer) => {
+      try {
+        observer(snapshot);
+      } catch (cause) {
+        emitError(new ObserverError({
+          message: `Observer at index ${index} threw an error`,
+          observerIndex: index,
+          cause,
+        }));
+      }
+      index++;
+    });
   };
 
   const emitEvent = (event: EmittedEvent) => {
@@ -317,10 +350,20 @@ export function interpret<
           break;
         }
         case "effect": {
-          // Defer effect - run async
+          // Defer effect - run async with Exit-based error handling
           const eff = action.fn({ context: ctx, event }) as Effect.Effect<void>;
           deferredEffects.push(() => {
-            Effect.runPromise(eff).catch(() => {});
+            Effect.runPromiseExit(eff).then((exit) => {
+              Exit.match(exit, {
+                onFailure: (cause) => {
+                  emitError(new EffectActionError({
+                    message: "Effect action failed",
+                    cause,
+                  }));
+                },
+                onSuccess: () => {},
+              });
+            });
           });
           break;
         }
@@ -409,13 +452,31 @@ export function interpret<
     switch (guard._tag) {
       case "sync":
         return guard.fn({ context, event });
-      case "effect":
-        // Effect guards must complete synchronously
-        try {
-          return Effect.runSync(guard.fn({ context, event }) as Effect.Effect<boolean>);
-        } catch {
-          return false;
-        }
+      case "effect": {
+        // Effect guards must complete synchronously - use Exit for error handling
+        const exit = Effect.runSyncExit(
+          (guard.fn({ context, event }) as Effect.Effect<boolean>).pipe(
+            Effect.catchAll((cause) => {
+              emitError(new GuardError({
+                message: "Guard effect failed with typed error",
+                cause,
+              }));
+              return Effect.succeed(false);
+            }),
+          ),
+        );
+        return Exit.match(exit, {
+          onFailure: (cause) => {
+            // Handles async execution errors and other defects
+            emitError(new GuardError({
+              message: "Guard effect failed (must complete synchronously)",
+              cause,
+            }));
+            return false;
+          },
+          onSuccess: (result) => result,
+        });
+      }
     }
   };
 
@@ -440,9 +501,18 @@ export function interpret<
       };
 
       // Fork the activity and store the fiber for interruption
+      const activityId = activity.id;
       const fiber = Effect.runFork(
         activity.src({ context, event, send }).pipe(
-          Effect.catchAll(() => Effect.void),
+          // catchAllCause handles both typed errors and defects
+          Effect.catchAllCause((cause) => {
+            emitError(new ActivityError({
+              message: `Activity "${activityId}" failed`,
+              activityId,
+              cause,
+            }));
+            return Effect.void;
+          }),
         ) as Effect.Effect<void>
       );
 
@@ -506,6 +576,10 @@ export function interpret<
       return () => observers.delete(observer);
     },
     on,
+    onError: (handler) => {
+      errorHandlers.add(handler);
+      return () => errorHandlers.delete(handler);
+    },
     children: childrenRef as ReadonlyMap<string, MachineActor<string, MachineContext, MachineEvent>>,
     stop,
     ...(options?.parent ? { _parent: options.parent } : {}),

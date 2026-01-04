@@ -25,9 +25,18 @@ export type {
   SendToAction,
   SpawnChildAction,
   StateNodeConfig,
+  StateMachineError,
   StopChildAction,
   SyncGuard,
   TransitionConfig,
+} from "./types.js";
+
+// Error types (Effect TaggedErrors)
+export {
+  ObserverError,
+  EffectActionError,
+  GuardError,
+  ActivityError,
 } from "./types.js";
 
 // Machine creation

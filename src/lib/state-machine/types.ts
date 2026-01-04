@@ -1,4 +1,4 @@
-import type { Duration, Effect } from "effect";
+import { Data, type Duration, type Effect } from "effect";
 
 // ============================================================================
 // Core Types
@@ -82,6 +82,55 @@ export interface CancelAction<
 export interface EmittedEvent {
   readonly type: string;
 }
+
+// ============================================================================
+// Machine Error Types (Effect TaggedErrors)
+// ============================================================================
+
+/**
+ * Error thrown when an observer callback fails
+ */
+export class ObserverError extends Data.TaggedError("ObserverError")<{
+  readonly message: string;
+  readonly observerIndex: number;
+  readonly cause?: unknown;
+}> {}
+
+/**
+ * Error thrown when an effect action fails
+ */
+export class EffectActionError extends Data.TaggedError("EffectActionError")<{
+  readonly message: string;
+  readonly actionId?: string;
+  readonly cause?: unknown;
+}> {}
+
+/**
+ * Error thrown when a guard effect fails
+ */
+export class GuardError extends Data.TaggedError("GuardError")<{
+  readonly message: string;
+  readonly guardId?: string;
+  readonly cause?: unknown;
+}> {}
+
+/**
+ * Error thrown when an activity fails
+ */
+export class ActivityError extends Data.TaggedError("ActivityError")<{
+  readonly message: string;
+  readonly activityId: string;
+  readonly cause?: unknown;
+}> {}
+
+/**
+ * Union of all machine error types
+ */
+export type StateMachineError =
+  | ObserverError
+  | EffectActionError
+  | GuardError
+  | ActivityError;
 
 /**
  * Emit action to send events to external listeners via actor.on()
