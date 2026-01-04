@@ -85,6 +85,8 @@ export interface MachineActor<
     eventType: TEmitted["type"],
     handler: (event: TEmitted) => void,
   ) => () => void;
+  /** Map of child actors by ID. Use type assertion for specific child types. */
+  readonly children: ReadonlyMap<string, MachineActor<string, MachineContext, MachineEvent>>;
 }
 
 // ============================================================================
@@ -114,6 +116,8 @@ export const interpret = <
     const activityFibersRef = yield* Effect.sync(() => new Map<string, Fiber.RuntimeFiber<void, never>>());
     const delayFibersRef = yield* Effect.sync(() => new Map<string, Fiber.RuntimeFiber<void, never>>());
     const listenersRef = yield* Effect.sync(() => new Map<string, Set<(event: EmittedEvent) => void>>());
+    const childrenRef = yield* Effect.sync(() => new Map<string, MachineActor<any, any, any>>());
+    const childFibersRef = yield* Effect.sync(() => new Map<string, Fiber.RuntimeFiber<void, never>>());
     const send = (event: TEvent) => commandQueue.unsafeOffer(event);
     const cancelDelay = (id: string) => {
       const fiber = delayFibersRef.get(id);
@@ -146,11 +150,41 @@ export const interpret = <
         listeners!.delete(handler as (event: EmittedEvent) => void);
       };
     };
+    const spawnChildActor = (
+      childMachine: MachineDefinition<any, any, any, any, any, any>,
+      childId: string,
+    ): Effect.Effect<void, never, any> =>
+      Effect.gen(function* () {
+        // Create the child actor
+        const childActor = yield* interpret(childMachine);
+        childrenRef.set(childId, childActor);
+      });
+    const stopChildActor = (childId: string): Effect.Effect<void> => {
+      const child = childrenRef.get(childId);
+      if (child) {
+        childrenRef.delete(childId);
+        const fiber = childFibersRef.get(childId);
+        if (fiber) {
+          childFibersRef.delete(childId);
+          return Fiber.interrupt(fiber).pipe(Effect.catchAll(() => Effect.void));
+        }
+      }
+      return Effect.void;
+    };
+
+    // Create helpers object for action runners
+    const actionHelpers = {
+      send,
+      cancelDelay,
+      emitEvent,
+      spawnChildActor,
+      stopChildActor,
+    };
 
     // Run entry actions for initial state
     const initialState = machine.config.states[machine.initialSnapshot.value];
     if (initialState?.entry) {
-      yield* runActions(initialState.entry, machine.initialSnapshot.context, { _tag: "$init" } as TEvent, send, cancelDelay, emitEvent);
+      yield* runActions(initialState.entry, machine.initialSnapshot.context, { _tag: "$init" } as TEvent, actionHelpers);
     }
 
     // Start activities for initial state
@@ -203,7 +237,7 @@ export const interpret = <
 
             // Run exit actions
             if (stateConfig?.exit) {
-              yield* runActions(stateConfig.exit, newContext, event, send, cancelDelay, emitEvent);
+              yield* runActions(stateConfig.exit, newContext, event, actionHelpers);
             }
 
             // Stop activities
@@ -215,16 +249,14 @@ export const interpret = <
                 transitionConfig.actions as ReadonlyArray<Action<TContext, TEvent, R, E>>,
                 newContext,
                 event,
-                send,
-                cancelDelay,
-                emitEvent,
+                actionHelpers,
               );
             }
 
             // Run entry actions
             const targetStateConfig = machine.config.states[targetState];
             if (targetStateConfig?.entry) {
-              newContext = yield* runActionsWithContext(targetStateConfig.entry, newContext, event, send, cancelDelay, emitEvent);
+              newContext = yield* runActionsWithContext(targetStateConfig.entry, newContext, event, actionHelpers);
             }
 
             // Update snapshot
@@ -282,7 +314,7 @@ export const interpret = <
 
           // Run exit actions if transitioning
           if (isTransition && stateConfig.exit) {
-            yield* runActions(stateConfig.exit, newContext, event, send, cancelDelay, emitEvent);
+            yield* runActions(stateConfig.exit, newContext, event, actionHelpers);
           }
 
           // Stop activities if transitioning
@@ -296,16 +328,14 @@ export const interpret = <
               transitionConfig.actions as ReadonlyArray<Action<TContext, TEvent, R, E>>,
               newContext,
               event,
-              send,
-              cancelDelay,
-              emitEvent,
+              actionHelpers,
             );
           }
 
           // Run entry actions if transitioning
           const targetStateConfig = machine.config.states[targetState];
           if (isTransition && targetStateConfig?.entry) {
-            newContext = yield* runActionsWithContext(targetStateConfig.entry, newContext, event, send, cancelDelay, emitEvent);
+            newContext = yield* runActionsWithContext(targetStateConfig.entry, newContext, event, actionHelpers);
           }
 
           // Update snapshot
@@ -346,6 +376,7 @@ export const interpret = <
       send: (event: TEvent) => commandQueue.unsafeOffer(event),
       getSnapshot: SubscriptionRef.get(snapshotRef),
       on,
+      children: childrenRef as ReadonlyMap<string, MachineActor<string, MachineContext, MachineEvent>>,
     };
   });
 
@@ -384,13 +415,19 @@ const createActionEnqueuer = <TContext extends MachineContext, TEvent extends Ma
   return enqueue;
 };
 
+interface ActionRunnerHelpers<TEvent extends MachineEvent> {
+  send: (event: TEvent) => void;
+  cancelDelay: (id: string) => Effect.Effect<void>;
+  emitEvent: (event: EmittedEvent) => void;
+  spawnChildActor: (machine: MachineDefinition<any, any, any, any, any, any>, id: string) => Effect.Effect<void, never, any>;
+  stopChildActor: (id: string) => Effect.Effect<void>;
+}
+
 const runActions = <TContext extends MachineContext, TEvent extends MachineEvent>(
   actions: ReadonlyArray<Action<TContext, TEvent, any, any>>,
   context: TContext,
   event: TEvent,
-  send: (event: TEvent) => void,
-  cancelDelay: (id: string) => Effect.Effect<void>,
-  emitEvent: (event: EmittedEvent) => void,
+  helpers: ActionRunnerHelpers<TEvent>,
 ): Effect.Effect<void, never, any> =>
   Effect.forEach(actions, (action) => {
     switch (action._tag) {
@@ -402,20 +439,20 @@ const runActions = <TContext extends MachineContext, TEvent extends MachineEvent
         const raisedEvent = typeof action.event === "function"
           ? action.event({ context, event })
           : action.event;
-        send(raisedEvent);
+        helpers.send(raisedEvent);
         return Effect.void;
       }
       case "cancel": {
         const id = typeof action.sendId === "function"
           ? action.sendId({ context, event })
           : action.sendId;
-        return cancelDelay(id);
+        return helpers.cancelDelay(id);
       }
       case "emit": {
         const emitted = typeof action.event === "function"
           ? action.event({ context, event })
           : action.event;
-        emitEvent(emitted);
+        helpers.emitEvent(emitted);
         return Effect.void;
       }
       case "enqueueActions": {
@@ -423,7 +460,19 @@ const runActions = <TContext extends MachineContext, TEvent extends MachineEvent
         const enqueue = createActionEnqueuer<TContext, TEvent, any, any>(queue);
         action.collect({ context, event, enqueue });
         // Recursively run the collected actions
-        return runActions(queue, context, event, send, cancelDelay, emitEvent);
+        return runActions(queue, context, event, helpers);
+      }
+      case "spawnChild": {
+        const childId = typeof action.id === "function"
+          ? action.id({ context, event })
+          : action.id;
+        return helpers.spawnChildActor(action.src, childId);
+      }
+      case "stopChild": {
+        const childId = typeof action.childId === "function"
+          ? action.childId({ context, event })
+          : action.childId;
+        return helpers.stopChildActor(childId);
       }
     }
   }, { discard: true });
@@ -432,9 +481,7 @@ const runActionsWithContext = <TContext extends MachineContext, TEvent extends M
   actions: ReadonlyArray<Action<TContext, TEvent, any, any>>,
   context: TContext,
   event: TEvent,
-  send: (event: TEvent) => void,
-  cancelDelay: (id: string) => Effect.Effect<void>,
-  emitEvent: (event: EmittedEvent) => void,
+  helpers: ActionRunnerHelpers<TEvent>,
 ): Effect.Effect<TContext, never, any> =>
   Effect.reduce(actions, context, (ctx, action) => {
     switch (action._tag) {
@@ -451,20 +498,20 @@ const runActionsWithContext = <TContext extends MachineContext, TEvent extends M
         const raisedEvent = typeof action.event === "function"
           ? action.event({ context: ctx, event })
           : action.event;
-        send(raisedEvent);
+        helpers.send(raisedEvent);
         return Effect.succeed(ctx);
       }
       case "cancel": {
         const id = typeof action.sendId === "function"
           ? action.sendId({ context: ctx, event })
           : action.sendId;
-        return cancelDelay(id).pipe(Effect.map(() => ctx));
+        return helpers.cancelDelay(id).pipe(Effect.map(() => ctx));
       }
       case "emit": {
         const emitted = typeof action.event === "function"
           ? action.event({ context: ctx, event })
           : action.event;
-        emitEvent(emitted);
+        helpers.emitEvent(emitted);
         return Effect.succeed(ctx);
       }
       case "enqueueActions": {
@@ -472,7 +519,19 @@ const runActionsWithContext = <TContext extends MachineContext, TEvent extends M
         const enqueue = createActionEnqueuer<TContext, TEvent, any, any>(queue);
         action.collect({ context: ctx, event, enqueue });
         // Recursively run the collected actions with context tracking
-        return runActionsWithContext(queue, ctx, event, send, cancelDelay, emitEvent);
+        return runActionsWithContext(queue, ctx, event, helpers);
+      }
+      case "spawnChild": {
+        const childId = typeof action.id === "function"
+          ? action.id({ context: ctx, event })
+          : action.id;
+        return helpers.spawnChildActor(action.src, childId).pipe(Effect.map(() => ctx));
+      }
+      case "stopChild": {
+        const childId = typeof action.childId === "function"
+          ? action.childId({ context: ctx, event })
+          : action.childId;
+        return helpers.stopChildActor(childId).pipe(Effect.map(() => ctx));
       }
     }
   });

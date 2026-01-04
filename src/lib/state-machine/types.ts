@@ -150,6 +150,33 @@ export interface EnqueueActionsAction<
   readonly collect: (params: EnqueueActionsParams<TContext, TEvent, R, E>) => void;
 }
 
+/**
+ * SpawnChild action to dynamically create a child actor.
+ * Note: Child machines are heterogeneous (different types), so we use
+ * a generic MachineDefinition type. Use type assertion when accessing
+ * child actor state if you need specific typing.
+ */
+export interface SpawnChildAction<
+  TContext extends MachineContext,
+  TEvent extends MachineEvent,
+  TChildMachine extends MachineDefinition<string, string, MachineContext, MachineEvent, unknown, unknown> = MachineDefinition<string, string, MachineContext, MachineEvent, unknown, unknown>,
+> {
+  readonly _tag: "spawnChild";
+  readonly src: TChildMachine;
+  readonly id: string | ((params: { context: TContext; event: TEvent }) => string);
+}
+
+/**
+ * StopChild action to stop a child actor by ID
+ */
+export interface StopChildAction<
+  TContext extends MachineContext,
+  TEvent extends MachineEvent,
+> {
+  readonly _tag: "stopChild";
+  readonly childId: string | ((params: { context: TContext; event: TEvent }) => string);
+}
+
 export type Action<
   TContext extends MachineContext,
   TEvent extends MachineEvent,
@@ -161,7 +188,9 @@ export type Action<
   | RaiseAction<TEvent>
   | CancelAction<TContext, TEvent>
   | EmitAction<TContext, TEvent>
-  | EnqueueActionsAction<TContext, TEvent, R, E>;
+  | EnqueueActionsAction<TContext, TEvent, R, E>
+  | SpawnChildAction<TContext, TEvent>
+  | StopChildAction<TContext, TEvent>;
 
 // ============================================================================
 // Guard Types

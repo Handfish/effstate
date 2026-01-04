@@ -10,8 +10,11 @@ import type {
   EnqueueActionsAction,
   EnqueueActionsParams,
   MachineContext,
+  MachineDefinition,
   MachineEvent,
   RaiseAction,
+  SpawnChildAction,
+  StopChildAction,
 } from "./types.js";
 
 // ============================================================================
@@ -183,6 +186,60 @@ export function enqueueActions<
   return {
     _tag: "enqueueActions",
     collect,
+  };
+}
+
+/**
+ * Spawn a child actor from a machine definition.
+ *
+ * @example
+ * ```ts
+ * // Static ID
+ * spawnChild(childMachine, { id: "myChild" })
+ *
+ * // Dynamic ID from context
+ * spawnChild(childMachine, { id: ({ context }) => `child-${context.count}` })
+ * ```
+ */
+export function spawnChild<
+  TContext extends MachineContext,
+  TEvent extends MachineEvent = MachineEvent,
+  TChildMachine extends MachineDefinition<string, string, MachineContext, MachineEvent, unknown, unknown> = MachineDefinition<string, string, MachineContext, MachineEvent, unknown, unknown>,
+>(
+  src: TChildMachine,
+  options: {
+    id: string | ((params: { context: TContext; event: TEvent }) => string);
+  },
+): SpawnChildAction<TContext, TEvent, TChildMachine> {
+  return {
+    _tag: "spawnChild",
+    src,
+    id: options.id,
+  };
+}
+
+/**
+ * Stop a child actor by ID.
+ *
+ * @example
+ * ```ts
+ * // Static ID
+ * stopChild("myChild")
+ *
+ * // Dynamic ID from context/event
+ * stopChild(({ context }) => `child-${context.count}`)
+ * stopChild(({ event }) => `child-${event.childId}`)
+ * ```
+ */
+export function stopChild<
+  TContext extends MachineContext,
+  TEvent extends MachineEvent = MachineEvent,
+>(
+  childId: string | ((params: { context: TContext; event: TEvent }) => string),
+): StopChildAction<TContext, TEvent> {
+  return {
+    _tag: "stopChild",
+    childId,
   };
 }
 

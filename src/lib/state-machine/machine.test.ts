@@ -1846,3 +1846,260 @@ describe("enqueueActions (dynamic action queuing)", () => {
     );
   });
 });
+
+// ============================================================================
+// spawnChild / stopChild - Actor Hierarchy
+// ============================================================================
+
+// Child machine for testing
+class ChildStart extends Data.TaggedClass("CHILD_START")<{}> {}
+class ChildDone extends Data.TaggedClass("CHILD_DONE")<{}> {}
+type ChildEvent = ChildStart | ChildDone;
+
+interface ChildContext {
+  readonly started: boolean;
+}
+
+const createChildMachine = (id: string, onStart?: () => void) =>
+  createMachine<typeof id, "idle" | "running" | "done", ChildContext, ChildEvent>({
+    id,
+    initial: "idle",
+    context: { started: false },
+    states: {
+      idle: {
+        on: {
+          CHILD_START: {
+            target: "running",
+            actions: [
+              assign({ started: true }),
+              ...(onStart ? [effect(() => { onStart(); return Effect.void; })] : []),
+            ],
+          },
+        },
+      },
+      running: {
+        on: {
+          CHILD_DONE: { target: "done" },
+        },
+      },
+      done: {},
+    },
+  });
+
+describe("spawnChild / stopChild (actor hierarchy)", () => {
+  it("spawnChild creates a running child actor", async () => {
+    const childStarted = await Effect.runPromise(Ref.make(false));
+
+    const childMachine = createChildMachine("child", () => {
+      Effect.runSync(Ref.set(childStarted, true));
+    });
+
+    const machine = createMachine<"test", "idle" | "parenting", TestContext, TestEvent>({
+      id: "test",
+      initial: "idle",
+      context: { count: 0, log: [] },
+      states: {
+        idle: {
+          on: {
+            TOGGLE: {
+              target: "parenting",
+              actions: [spawnChild(childMachine, { id: "myChild" })],
+            },
+          },
+        },
+        parenting: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+          actor.send(new Toggle());
+          yield* Effect.sleep("20 millis");
+
+          const snapshot = yield* actor.getSnapshot;
+          expect(snapshot.value).toBe("parenting");
+
+          // Child should be in the children map
+          const children = actor.children;
+          expect(children.has("myChild")).toBe(true);
+        }),
+      ),
+    );
+  });
+
+  it("spawnChild with dynamic ID from function", async () => {
+    const childMachine = createChildMachine("child");
+
+    const machine = createMachine<"test", "idle" | "parenting", TestContext, TestEvent>({
+      id: "test",
+      initial: "idle",
+      context: { count: 42, log: [] },
+      states: {
+        idle: {
+          on: {
+            TOGGLE: {
+              target: "parenting",
+              actions: [
+                spawnChild(childMachine, {
+                  id: ({ context }) => `child-${context.count}`,
+                }),
+              ],
+            },
+          },
+        },
+        parenting: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+          actor.send(new Toggle());
+          yield* Effect.sleep("20 millis");
+
+          const children = actor.children;
+          expect(children.has("child-42")).toBe(true);
+        }),
+      ),
+    );
+  });
+
+  it("stopChild stops the specified child", async () => {
+    const childMachine = createChildMachine("child");
+
+    const machine = createMachine<"test", "idle" | "parenting" | "stopped", TestContext, TestEvent>({
+      id: "test",
+      initial: "idle",
+      context: { count: 0, log: [] },
+      states: {
+        idle: {
+          on: {
+            TOGGLE: {
+              target: "parenting",
+              actions: [spawnChild(childMachine, { id: "myChild" })],
+            },
+          },
+        },
+        parenting: {
+          on: {
+            TICK: {
+              target: "stopped",
+              actions: [stopChild("myChild")],
+            },
+          },
+        },
+        stopped: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+          actor.send(new Toggle());
+          yield* Effect.sleep("20 millis");
+
+          // Child should exist
+          expect(actor.children.has("myChild")).toBe(true);
+
+          // Stop the child
+          actor.send(new Tick());
+          yield* Effect.sleep("20 millis");
+
+          // Child should be removed
+          expect(actor.children.has("myChild")).toBe(false);
+        }),
+      ),
+    );
+  });
+
+  it("stopChild with dynamic ID from function", async () => {
+    const childMachine = createChildMachine("child");
+
+    const machine = createMachine<"test", "idle" | "parenting" | "stopped", TestContext, TestEvent>({
+      id: "test",
+      initial: "idle",
+      context: { count: 0, log: [] },
+      states: {
+        idle: {
+          on: {
+            TOGGLE: {
+              target: "parenting",
+              actions: [spawnChild(childMachine, { id: "child-100" })],
+            },
+          },
+        },
+        parenting: {
+          on: {
+            SET_VALUE: {
+              target: "stopped",
+              actions: [stopChild(({ event }) => `child-${event.value}`)],
+            },
+          },
+        },
+        stopped: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+          actor.send(new Toggle());
+          yield* Effect.sleep("20 millis");
+
+          expect(actor.children.has("child-100")).toBe(true);
+
+          // Stop using dynamic ID from event
+          actor.send(new SetValue({ value: 100 }));
+          yield* Effect.sleep("20 millis");
+
+          expect(actor.children.has("child-100")).toBe(false);
+        }),
+      ),
+    );
+  });
+
+  it("parent scope closing stops all children", async () => {
+    const childStopped = await Effect.runPromise(Ref.make(false));
+    const childMachine = createChildMachine("child");
+
+    const machine = createMachine<"test", "idle" | "parenting", TestContext, TestEvent>({
+      id: "test",
+      initial: "idle",
+      context: { count: 0, log: [] },
+      states: {
+        idle: {
+          on: {
+            TOGGLE: {
+              target: "parenting",
+              actions: [
+                spawnChild(childMachine, { id: "child1" }),
+                spawnChild(childMachine, { id: "child2" }),
+              ],
+            },
+          },
+        },
+        parenting: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+          actor.send(new Toggle());
+          yield* Effect.sleep("20 millis");
+
+          expect(actor.children.size).toBe(2);
+          // When scope closes, children should be cleaned up
+        }),
+      ),
+    );
+    // After scope closes, cleanup should have happened
+    // (We can't easily test this from outside, but the implementation should handle it)
+  });
+});

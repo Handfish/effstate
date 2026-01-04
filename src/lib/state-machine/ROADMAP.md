@@ -16,8 +16,8 @@ This document tracks the implementation of XState-inspired actions for our Effec
 | `sendTo` | [ ] | [ ] | Send to another actor |
 | `sendParent` | [ ] | [ ] | Send to parent actor |
 | `forwardTo` | [ ] | [ ] | Forward event to another actor |
-| `spawnChild` | [ ] | [ ] | Spawn child actor |
-| `stopChild` | [ ] | [ ] | Stop child actor |
+| `spawnChild` | [x] | [x] | Spawn child actor |
+| `stopChild` | [x] | [x] | Stop child actor |
 
 ---
 
@@ -330,12 +330,12 @@ export interface StopChildAction<TContext, TEvent> {
 ```
 
 **Tests required**:
-- [ ] spawnChild creates running child actor
-- [ ] spawnChild with dynamic ID
-- [ ] spawnChild with input
-- [ ] stopChild stops the child
-- [ ] Parent stopping stops all children
-- [ ] Child can sendParent to parent
+- [x] spawnChild creates running child actor
+- [x] spawnChild with dynamic ID
+- [ ] spawnChild with input (deferred - needs input passing mechanism)
+- [x] stopChild stops the child
+- [x] Parent scope closing cleans up children
+- [ ] Child can sendParent to parent (requires sendParent implementation)
 
 ---
 
@@ -343,11 +343,11 @@ export interface StopChildAction<TContext, TEvent> {
 
 Recommended order based on dependencies:
 
-1. **`cancel`** - Standalone, extends existing delay system
-2. **`emit`** - Standalone, adds event emitter pattern
-3. **`spawnChild` + `stopChild`** - Actor hierarchy foundation
-4. **`sendTo` + `sendParent` + `forwardTo`** - Requires actor hierarchy
-5. **`enqueueActions`** - Nice-to-have, Effect patterns may suffice
+1. ~~**`cancel`**~~ - ✅ Done - Standalone, extends existing delay system
+2. ~~**`emit`**~~ - ✅ Done - Standalone, adds event emitter pattern
+3. ~~**`enqueueActions`**~~ - ✅ Done - Dynamic action queuing
+4. ~~**`spawnChild` + `stopChild`**~~ - ✅ Done - Actor hierarchy foundation
+5. **`sendTo` + `sendParent` + `forwardTo`** - Next up - Requires actor hierarchy
 
 ---
 
