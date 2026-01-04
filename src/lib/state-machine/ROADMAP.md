@@ -393,4 +393,6 @@ Key files:
 
 Follow the implementation plan in ROADMAP.md for the next feature.
 Write tests first (TDD), then implement.
+
+Remember EffectTS is first-class in this library. Do everything to best DX for developers using Effect and @effect-atom.
 ```
