@@ -5,7 +5,7 @@ export type {
   AssignAction,
   EffectAction,
   EffectGuard,
-  EventByType,
+  EventByTag,
   Guard,
   MachineConfig,
   MachineContext,

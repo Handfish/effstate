@@ -7,7 +7,7 @@ import {
   effect,
   interpret,
 } from "@/lib/state-machine";
-import { Duration, Effect, Match, Schedule, Stream } from "effect";
+import { Data, Duration, Effect, Match, Schedule, Stream } from "effect";
 
 // ============================================================================
 // Types
@@ -25,10 +25,12 @@ interface GarageDoorContext {
   readonly position: number;
 }
 
-type GarageDoorEvent =
-  | { readonly type: "CLICK" }
-  | { readonly type: "TICK"; readonly delta: number }
-  | { readonly type: "ANIMATION_COMPLETE" };
+// Events using Effect's Data.TaggedClass for structural equality and type safety
+class Click extends Data.TaggedClass("CLICK")<{}> {}
+class Tick extends Data.TaggedClass("TICK")<{ readonly delta: number }> {}
+class AnimationComplete extends Data.TaggedClass("ANIMATION_COMPLETE")<{}> {}
+
+type GarageDoorEvent = Click | Tick | AnimationComplete;
 
 // ============================================================================
 // Configuration
@@ -52,7 +54,7 @@ const createAnimationActivity = (direction: 1 | -1) => ({
       yield* Stream.fromSchedule(Schedule.spaced(TICK_INTERVAL)).pipe(
         Stream.runForEach(() =>
           Effect.sync(() => {
-            send({ type: "TICK", delta: direction * POSITION_DELTA_PER_TICK });
+            send(new Tick({ delta: direction * POSITION_DELTA_PER_TICK }));
           }),
         ),
       );
@@ -185,14 +187,14 @@ export const useGarageDoor = (): {
   const { snapshot, send, isLoading, matches, context } = useMachine();
 
   const handleButtonClick = () => {
-    send({ type: "CLICK" });
+    send(new Click());
   };
 
   // Check for animation completion
   if (context.position >= 100 && matches("opening")) {
-    send({ type: "ANIMATION_COMPLETE" });
+    send(new AnimationComplete());
   } else if (context.position <= 0 && matches("closing")) {
-    send({ type: "ANIMATION_COMPLETE" });
+    send(new AnimationComplete());
   }
 
   return {

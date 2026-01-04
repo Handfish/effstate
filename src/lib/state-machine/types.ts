@@ -10,11 +10,11 @@ import type { Duration, Effect } from "effect";
 export type MachineContext = object;
 
 /**
- * Represents a state machine event with a type and optional payload
+ * Represents a state machine event with a _tag discriminator.
+ * Compatible with Effect's Data.TaggedClass pattern.
  */
-export interface MachineEvent<TType extends string = string, TPayload = unknown> {
-  readonly type: TType;
-  readonly payload?: TPayload;
+export interface MachineEvent<TTag extends string = string> {
+  readonly _tag: TTag;
 }
 
 /**
@@ -146,12 +146,12 @@ export interface ActivityConfig<
 // ============================================================================
 
 /**
- * Extract the specific event type from a union based on its type field.
+ * Extract the specific event type from a union based on its _tag field.
  * This enables proper event narrowing in transition handlers.
  */
-export type EventByType<TEvent extends MachineEvent, TType extends TEvent["type"]> = Extract<
+export type EventByTag<TEvent extends MachineEvent, TTag extends TEvent["_tag"]> = Extract<
   TEvent,
-  { type: TType }
+  { _tag: TTag }
 >;
 
 /**
@@ -162,13 +162,13 @@ export interface NarrowedTransitionConfig<
   TStateValue extends string,
   TContext extends MachineContext,
   TEvent extends MachineEvent,
-  TEventType extends TEvent["type"],
+  TEventTag extends TEvent["_tag"],
   R = never,
   E = never,
 > {
   readonly target?: TStateValue;
-  readonly guard?: Guard<TContext, EventByType<TEvent, TEventType>, R, E>;
-  readonly actions?: ReadonlyArray<Action<TContext, EventByType<TEvent, TEventType>, R, E>>;
+  readonly guard?: Guard<TContext, EventByTag<TEvent, TEventTag>, R, E>;
+  readonly actions?: ReadonlyArray<Action<TContext, EventByTag<TEvent, TEventTag>, R, E>>;
 }
 
 export interface StateNodeConfig<
@@ -181,7 +181,7 @@ export interface StateNodeConfig<
   readonly entry?: ReadonlyArray<Action<TContext, TEvent, R, E>>;
   readonly exit?: ReadonlyArray<Action<TContext, TEvent, R, E>>;
   readonly on?: {
-    readonly [K in TEvent["type"]]?: NarrowedTransitionConfig<TStateValue, TContext, TEvent, K, R, E>;
+    readonly [K in TEvent["_tag"]]?: NarrowedTransitionConfig<TStateValue, TContext, TEvent, K, R, E>;
   };
   readonly activities?: ReadonlyArray<ActivityConfig<TContext, TEvent, R, E>>;
   /** After delay, auto-transition */

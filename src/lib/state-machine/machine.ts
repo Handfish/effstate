@@ -106,7 +106,7 @@ export const interpret = <
     // Run entry actions for initial state
     const initialState = machine.config.states[machine.initialSnapshot.value];
     if (initialState?.entry) {
-      yield* runActions(initialState.entry, machine.initialSnapshot.context, { type: "$init" } as TEvent);
+      yield* runActions(initialState.entry, machine.initialSnapshot.context, { _tag: "$init" } as TEvent);
     }
 
     // Start activities for initial state
@@ -114,7 +114,7 @@ export const interpret = <
       yield* startActivities(
         initialState.activities,
         machine.initialSnapshot.context,
-        { type: "$init" } as TEvent,
+        { _tag: "$init" } as TEvent,
         (event) => commandQueue.unsafeOffer(event),
         activityFibersRef,
       );
@@ -138,11 +138,11 @@ export const interpret = <
 
           if (!stateConfig?.on) return;
 
-          const transitionConfig = stateConfig.on[event.type as TEvent["type"]];
+          const transitionConfig = stateConfig.on[event._tag as TEvent["_tag"]];
           if (!transitionConfig) return;
 
           // Check guard
-          // Note: Type assertion is safe here because we looked up the transition by event.type,
+          // Note: Type assertion is safe here because we looked up the transition by event._tag,
           // so the guard/actions are typed for exactly this event type at compile time
           if (transitionConfig.guard) {
             const allowed = yield* evaluateGuard(
@@ -209,7 +209,7 @@ export const interpret = <
           }
 
           yield* Effect.log(
-            `[${machine.id}] ${snapshot.value} -> ${targetState} (${event.type})`,
+            `[${machine.id}] ${snapshot.value} -> ${targetState} (${event._tag})`,
           );
         }),
       ),
@@ -332,7 +332,7 @@ const handleAfterTransition = <
     const delay = Duration.decode(after.delay);
     return Effect.sleep(delay).pipe(
       Effect.zipRight(
-        Queue.offer(commandQueue, { type: "$after", delay } as unknown as TEvent),
+        Queue.offer(commandQueue, { _tag: "$after", delay } as unknown as TEvent),
       ),
       Effect.forkScoped,
       Effect.asVoid,
@@ -346,7 +346,7 @@ const handleAfterTransition = <
     ([delayMs, _config]) =>
       Effect.sleep(Duration.millis(Number(delayMs))).pipe(
         Effect.zipRight(
-          Queue.offer(commandQueue, { type: "$after", delay: delayMs } as unknown as TEvent),
+          Queue.offer(commandQueue, { _tag: "$after", delay: delayMs } as unknown as TEvent),
         ),
         Effect.forkScoped,
       ),
