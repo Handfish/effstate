@@ -134,7 +134,7 @@ async function main() {
     actor.stop();
   });
 
-  // Benchmark: Full Lifecycle (without getSnapshot since it's an Effect)
+  // Benchmark: Full Lifecycle
   bench.add("Effect: full lifecycle", () => {
     const program = Effect.gen(function* () {
       const scope = yield* Scope.make();
@@ -142,7 +142,7 @@ async function main() {
       actor.send(incrementEvent);
       actor.send(incrementEvent);
       actor.send(decrementEvent);
-      yield* actor.getSnapshot; // getSnapshot is an Effect
+      actor.getSnapshot(); // getSnapshot is now synchronous!
       yield* Scope.close(scope, Effect.void);
     }).pipe(Logger.withMinimumLogLevel(LogLevel.None));
     Effect.runSync(program);

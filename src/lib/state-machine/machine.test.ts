@@ -83,7 +83,7 @@ describe("assign()", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.context.count).toBe(42);
         }),
       ),
@@ -115,7 +115,7 @@ describe("assign()", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.context.count).toBe(10);
         }),
       ),
@@ -147,7 +147,7 @@ describe("assign()", () => {
           actor.send(new SetValue({ value: 123 }));
           yield* Effect.sleep("10 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.context.count).toBe(123);
         }),
       ),
@@ -193,7 +193,7 @@ describe("raise()", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("c"); // Should have auto-transitioned via raised TICK
           expect(snapshot.context.count).toBe(99);
         }),
@@ -236,7 +236,7 @@ describe("raise()", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("c");
           expect(snapshot.context.count).toBe(50); // 5 * 10
         }),
@@ -428,7 +428,7 @@ describe("self-transitions", () => {
           const log = yield* Ref.get(actionLog);
           expect(log).toEqual(["tick-action"]); // Only transition action, no entry/exit
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("a");
           expect(snapshot.context.count).toBe(1);
         }),
@@ -471,7 +471,7 @@ describe("self-transitions", () => {
           const log = yield* Ref.get(actionLog);
           expect(log).toEqual([]); // No entry/exit for self-transition
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.context.count).toBe(1);
         }),
       ),
@@ -632,7 +632,7 @@ describe("activities", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("50 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.context.count).toBe(3);
         }),
       ),
@@ -670,7 +670,7 @@ describe("guards", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("b");
         }),
       ),
@@ -702,7 +702,7 @@ describe("guards", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("a"); // Should NOT transition
         }),
       ),
@@ -735,13 +735,13 @@ describe("guards", () => {
           // Value too low - should not transition
           actor.send(new SetValue({ value: 30 }));
           yield* Effect.sleep("10 millis");
-          let snapshot = yield* actor.getSnapshot;
+          let snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("a");
 
           // Value high enough - should transition
           actor.send(new SetValue({ value: 100 }));
           yield* Effect.sleep("10 millis");
-          snapshot = yield* actor.getSnapshot;
+          snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("b");
         }),
       ),
@@ -782,7 +782,7 @@ describe("guard combinators", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("b"); // Both conditions met
         }),
       ),
@@ -817,7 +817,7 @@ describe("guard combinators", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("a"); // Should NOT transition
         }),
       ),
@@ -852,7 +852,7 @@ describe("guard combinators", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("b"); // One condition met
         }),
       ),
@@ -887,7 +887,7 @@ describe("guard combinators", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("a"); // Should NOT transition
         }),
       ),
@@ -919,7 +919,7 @@ describe("guard combinators", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("b"); // NOT false = true
         }),
       ),
@@ -951,7 +951,7 @@ describe("guard combinators", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("a"); // NOT true = false
         }),
       ),
@@ -963,8 +963,10 @@ describe("guard combinators", () => {
 // guardEffect - Async Guards
 // ============================================================================
 
-describe("guardEffect (async guards)", () => {
-  it("allows transition when async guard resolves to true", async () => {
+describe("guardEffect (effect-based guards)", () => {
+  it("allows transition when effect guard resolves to true", async () => {
+    // Note: Effect guards must complete synchronously (no Effect.sleep).
+    // Use for guards that need Effect context (services, refs) but resolve immediately.
     const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
       id: "test",
       initial: "a",
@@ -975,10 +977,7 @@ describe("guardEffect (async guards)", () => {
             TOGGLE: {
               target: "b",
               guard: guardEffect(({ context }) =>
-                Effect.gen(function* () {
-                  yield* Effect.sleep("5 millis"); // Simulate async check
-                  return context.count > 5;
-                }),
+                Effect.succeed(context.count > 5), // Sync Effect guard
               ),
             },
           },
@@ -992,9 +991,8 @@ describe("guardEffect (async guards)", () => {
         Effect.gen(function* () {
           const actor = yield* interpret(machine);
           actor.send(new Toggle());
-          yield* Effect.sleep("20 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("b");
         }),
       ),
@@ -1031,7 +1029,7 @@ describe("guardEffect (async guards)", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("a"); // Should NOT transition
         }),
       ),
@@ -1063,7 +1061,7 @@ describe("guardEffect (async guards)", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("a"); // Error = blocked
         }),
       ),
@@ -1097,14 +1095,14 @@ describe("after (delayed transitions)", () => {
           const actor = yield* interpret(machine);
 
           // Should still be waiting
-          let snapshot = yield* actor.getSnapshot;
+          let snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("waiting");
 
           // Wait for delay
           yield* Effect.sleep("70 millis");
 
           // Should have transitioned
-          snapshot = yield* actor.getSnapshot;
+          snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("done");
         }),
       ),
@@ -1137,7 +1135,7 @@ describe("after (delayed transitions)", () => {
           // Wait for delay
           yield* Effect.sleep("50 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("done");
           expect(snapshot.context.count).toBe(42); // Action ran
         }),
@@ -1175,7 +1173,7 @@ describe("after (delayed transitions)", () => {
           const log = yield* Ref.get(actionLog);
           expect(log).toEqual(["exit-waiting", "entry-done"]);
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("done");
         }),
       ),
@@ -1220,14 +1218,14 @@ describe("cancel (delayed events)", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
-          let snapshot = yield* actor.getSnapshot;
+          let snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("cancelled");
 
           // Wait past when timeout would have fired
           yield* Effect.sleep("100 millis");
 
           // Should still be in cancelled state (timeout was cancelled)
-          snapshot = yield* actor.getSnapshot;
+          snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("cancelled");
         }),
       ),
@@ -1265,11 +1263,11 @@ describe("cancel (delayed events)", () => {
           actor.send(new SetValue({ value: 100 })); // Cancel "delay-100"
           yield* Effect.sleep("10 millis");
 
-          let snapshot = yield* actor.getSnapshot;
+          let snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("cancelled");
 
           yield* Effect.sleep("100 millis");
-          snapshot = yield* actor.getSnapshot;
+          snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("cancelled"); // Timeout was cancelled
         }),
       ),
@@ -1301,7 +1299,7 @@ describe("cancel (delayed events)", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("b"); // Transition still works
         }),
       ),
@@ -1348,12 +1346,12 @@ describe("cancel (delayed events)", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
-          let snapshot = yield* actor.getSnapshot;
+          let snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("partial");
 
           // Wait past when "long" would have fired
           yield* Effect.sleep("200 millis");
-          snapshot = yield* actor.getSnapshot;
+          snapshot = actor.getSnapshot();
           // Should still be partial - the original "long" was cancelled
           // and the new 200ms timeout in partial should now fire to timeout2
           expect(snapshot.value).toBe("timeout2");
@@ -1593,7 +1591,7 @@ describe("emit (external listeners)", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("b"); // Transition still works
         }),
       ),
@@ -1639,7 +1637,7 @@ describe("enqueueActions (dynamic action queuing)", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("b");
           expect(snapshot.context.count).toBe(10);
 
@@ -1683,7 +1681,7 @@ describe("enqueueActions (dynamic action queuing)", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.context.count).toBe(100); // count > 10, so assigned 100
         }),
       ),
@@ -1720,7 +1718,7 @@ describe("enqueueActions (dynamic action queuing)", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.context.count).toBe(50); // 42 + 8
         }),
       ),
@@ -1764,7 +1762,7 @@ describe("enqueueActions (dynamic action queuing)", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("30 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("c"); // Raised TICK transitioned to c
           expect(snapshot.context.count).toBe(99);
         }),
@@ -1839,7 +1837,7 @@ describe("enqueueActions (dynamic action queuing)", () => {
           actor.send(new SetValue({ value: 25 }));
           yield* Effect.sleep("20 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.context.count).toBe(50); // 25 * 2
         }),
       ),
@@ -1918,7 +1916,7 @@ describe("spawnChild / stopChild (actor hierarchy)", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("parenting");
 
           // Child should be in the children map
@@ -2145,7 +2143,7 @@ describe("sendTo (send events to child actors)", () => {
           // Child should be in idle state
           const child = actor.children.get("myChild");
           expect(child).toBeDefined();
-          let childSnapshot = yield* child!.getSnapshot;
+          let childSnapshot = child!.getSnapshot();
           expect(childSnapshot.value).toBe("idle");
 
           // Send event to child via parent
@@ -2153,7 +2151,7 @@ describe("sendTo (send events to child actors)", () => {
           yield* Effect.sleep("20 millis");
 
           // Child should now be in running state
-          childSnapshot = yield* child!.getSnapshot;
+          childSnapshot = child!.getSnapshot();
           expect(childSnapshot.value).toBe("running");
           expect(childSnapshot.context.started).toBe(true);
         }),
@@ -2205,7 +2203,7 @@ describe("sendTo (send events to child actors)", () => {
           actor.send(new Tick());
           yield* Effect.sleep("20 millis");
 
-          const childSnapshot = yield* child!.getSnapshot;
+          const childSnapshot = child!.getSnapshot();
           expect(childSnapshot.value).toBe("running");
         }),
       ),
@@ -2251,7 +2249,7 @@ describe("sendTo (send events to child actors)", () => {
           yield* Effect.sleep("20 millis");
 
           const child = actor.children.get("myChild");
-          const childSnapshot = yield* child!.getSnapshot;
+          const childSnapshot = child!.getSnapshot();
           expect(childSnapshot.value).toBe("running");
         }),
       ),
@@ -2283,7 +2281,7 @@ describe("sendTo (send events to child actors)", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("b"); // Transition still works
         }),
       ),
@@ -2366,7 +2364,7 @@ describe("sendParent (send events to parent actor)", () => {
           actor.send(new Tick());
           yield* Effect.sleep("30 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("notified");
           expect(snapshot.context.log).toContain("Child started!");
         }),
@@ -2440,7 +2438,7 @@ describe("sendParent (send events to parent actor)", () => {
           actor.send(new Tick());
           yield* Effect.sleep("30 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("notified");
           expect(snapshot.context.log).toContain("Count is 42");
         }),
@@ -2474,7 +2472,7 @@ describe("sendParent (send events to parent actor)", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("b"); // Transition still works
         }),
       ),
@@ -2539,14 +2537,14 @@ describe("forwardTo (forward current event to another actor)", () => {
 
           const child = actor.children.get("myChild");
           expect(child).toBeDefined();
-          let childSnapshot = yield* child!.getSnapshot;
+          let childSnapshot = child!.getSnapshot();
           expect(childSnapshot.value).toBe("idle");
 
           // Forward TICK to child
           actor.send(new Tick());
           yield* Effect.sleep("20 millis");
 
-          childSnapshot = yield* child!.getSnapshot;
+          childSnapshot = child!.getSnapshot();
           expect(childSnapshot.value).toBe("ticked");
           expect(childSnapshot.context.tickCount).toBe(1);
         }),
@@ -2607,7 +2605,7 @@ describe("forwardTo (forward current event to another actor)", () => {
           yield* Effect.sleep("20 millis");
 
           const child = actor.children.get("child-42");
-          const childSnapshot = yield* child!.getSnapshot;
+          const childSnapshot = child!.getSnapshot();
           expect(childSnapshot.value).toBe("ticked");
         }),
       ),
@@ -2639,7 +2637,7 @@ describe("forwardTo (forward current event to another actor)", () => {
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
-          const snapshot = yield* actor.getSnapshot;
+          const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("b"); // Transition still works
         }),
       ),

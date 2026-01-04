@@ -1,4 +1,4 @@
-import { Duration, Effect, Fiber, Queue, Stream, SubscriptionRef } from "effect";
+import { Duration, Effect, Fiber, Runtime, Scope } from "effect";
 import type {
   Action,
   ActionEnqueuer,
@@ -19,24 +19,6 @@ import type {
 
 /**
  * Create a state machine definition from config
- *
- * @example
- * ```ts
- * const toggleMachine = createMachine({
- *   id: "toggle",
- *   initial: "inactive",
- *   context: { count: 0 },
- *   states: {
- *     inactive: {
- *       on: { TOGGLE: { target: "active" } }
- *     },
- *     active: {
- *       entry: [assign(({ context }) => ({ count: context.count + 1 }))],
- *       on: { TOGGLE: { target: "inactive" } }
- *     }
- *   }
- * })
- * ```
  */
 export function createMachine<
   TId extends string,
@@ -61,6 +43,63 @@ export function createMachine<
 }
 
 // ============================================================================
+// Mailbox (XState-style linked list queue)
+// ============================================================================
+
+interface MailboxItem<T> {
+  value: T;
+  next: MailboxItem<T> | null;
+}
+
+class Mailbox<T> {
+  private _processing = false;
+  private _current: MailboxItem<T> | null = null;
+  private _last: MailboxItem<T> | null = null;
+  private _processor: (event: T) => void;
+
+  constructor(processor: (event: T) => void) {
+    this._processor = processor;
+  }
+
+  enqueue(event: T): void {
+    const item: MailboxItem<T> = { value: event, next: null };
+
+    if (this._current) {
+      // Already have items, append to end
+      this._last!.next = item;
+      this._last = item;
+    } else {
+      // Empty queue
+      this._current = item;
+      this._last = item;
+    }
+
+    // If not currently processing, start processing
+    if (!this._processing) {
+      this.flush();
+    }
+  }
+
+  private flush(): void {
+    this._processing = true;
+    while (this._current) {
+      const item = this._current;
+      this._current = item.next;
+      if (!this._current) {
+        this._last = null;
+      }
+      this._processor(item.value);
+    }
+    this._processing = false;
+  }
+
+  clear(): void {
+    this._current = null;
+    this._last = null;
+  }
+}
+
+// ============================================================================
 // Interpreter Types
 // ============================================================================
 
@@ -69,14 +108,12 @@ export interface MachineActor<
   TContext extends MachineContext,
   TEvent extends MachineEvent,
 > {
-  /** Current snapshot SubscriptionRef for reactive updates */
-  readonly snapshotRef: SubscriptionRef.SubscriptionRef<MachineSnapshot<TStateValue, TContext>>;
-  /** Command queue for sending events */
-  readonly commandQueue: Queue.Queue<TEvent>;
   /** Send an event to the machine */
   readonly send: (event: TEvent) => void;
-  /** Get current snapshot */
-  readonly getSnapshot: Effect.Effect<MachineSnapshot<TStateValue, TContext>>;
+  /** Get current snapshot synchronously */
+  readonly getSnapshot: () => MachineSnapshot<TStateValue, TContext>;
+  /** Subscribe to snapshot changes */
+  readonly subscribe: (observer: (snapshot: MachineSnapshot<TStateValue, TContext>) => void) => () => void;
   /**
    * Register a listener for emitted events.
    * Returns an unsubscribe function.
@@ -85,9 +122,9 @@ export interface MachineActor<
     eventType: TEmitted["type"],
     handler: (event: TEmitted) => void,
   ) => () => void;
-  /** Map of child actors by ID. Use type assertion for specific child types. */
+  /** Map of child actors by ID */
   readonly children: ReadonlyMap<string, MachineActor<string, MachineContext, MachineEvent>>;
-  /** Parent actor (if this is a spawned child). Use type assertion for specific parent type. */
+  /** Parent actor (if spawned) */
   readonly _parent?: MachineActor<string, MachineContext, MachineEvent>;
 }
 
@@ -97,7 +134,7 @@ export interface MachineActor<
 
 /**
  * Create and start a machine actor (interpreter)
- * Returns an Effect that creates the actor with proper scoping
+ * Uses XState-style synchronous event processing for performance
  */
 export const interpret = <
   TId extends string,
@@ -111,29 +148,41 @@ export const interpret = <
   options?: {
     parent?: MachineActor<string, MachineContext, MachineEvent>;
   },
-): Effect.Effect<MachineActor<TStateValue, TContext, TEvent>, never, R> =>
+): Effect.Effect<MachineActor<TStateValue, TContext, TEvent>, never, R | Scope.Scope> =>
   Effect.gen(function* () {
-    // Create refs in parallel for better performance
-    const [snapshotRef, commandQueue] = yield* Effect.all([
-      SubscriptionRef.make<MachineSnapshot<TStateValue, TContext>>(machine.initialSnapshot),
-      Queue.unbounded<TEvent>(),
-    ]);
-
-    // Plain Maps don't need Effect wrapping - created directly
+    // Mutable state (like XState)
+    let snapshot: MachineSnapshot<TStateValue, TContext> = machine.initialSnapshot;
+    const observers = new Set<(snapshot: MachineSnapshot<TStateValue, TContext>) => void>();
     const activityFibersRef = new Map<string, Fiber.RuntimeFiber<void, never>>();
     const delayFibersRef = new Map<string, Fiber.RuntimeFiber<void, never>>();
     const listenersRef = new Map<string, Set<(event: EmittedEvent) => void>>();
     const childrenRef = new Map<string, MachineActor<any, any, any>>();
-    const childFibersRef = new Map<string, Fiber.RuntimeFiber<void, never>>();
-    const send = (event: TEvent) => commandQueue.unsafeOffer(event);
-    const cancelDelay = (id: string) => {
-      const fiber = delayFibersRef.get(id);
-      if (fiber) {
-        delayFibersRef.delete(id);
-        return Fiber.interrupt(fiber).pipe(Effect.catchAll(() => Effect.void));
+
+    // Deferred effects queue (like XState's _deferred)
+    const deferredEffects: Array<Effect.Effect<void, never, any>> = [];
+
+    // Get runtime for running deferred effects
+    const runtime = yield* Effect.runtime<R>();
+
+    // Helper to run deferred effects synchronously
+    const flushDeferred = () => {
+      while (deferredEffects.length > 0) {
+        const eff = deferredEffects.shift()!;
+        try {
+          Effect.runSync(Effect.provide(eff, runtime));
+        } catch {
+          // Silently ignore sync errors, async effects handle their own errors
+        }
       }
-      return Effect.void;
     };
+
+    // Notify observers (like XState's update)
+    const notifyObservers = () => {
+      for (const observer of observers) {
+        observer(snapshot);
+      }
+    };
+
     const emitEvent = (event: EmittedEvent) => {
       const listeners = listenersRef.get(event.type);
       if (listeners) {
@@ -142,6 +191,7 @@ export const interpret = <
         }
       }
     };
+
     const on = <TEmitted extends EmittedEvent>(
       eventType: TEmitted["type"],
       handler: (event: TEmitted) => void,
@@ -152,251 +202,381 @@ export const interpret = <
         listenersRef.set(eventType, listeners);
       }
       listeners.add(handler as (event: EmittedEvent) => void);
-      // Return unsubscribe function
       return () => {
         listeners!.delete(handler as (event: EmittedEvent) => void);
       };
     };
 
-    // Create actor object early so we can pass it as parent to children
-    const actor: MachineActor<TStateValue, TContext, TEvent> = {
-      snapshotRef,
-      commandQueue,
-      send: (event: TEvent) => commandQueue.unsafeOffer(event),
-      getSnapshot: SubscriptionRef.get(snapshotRef),
+    // Forward declare actor for circular reference
+    let actor: MachineActor<TStateValue, TContext, TEvent>;
+
+    // Action helpers
+    const cancelDelay = (id: string) => {
+      const fiber = delayFibersRef.get(id);
+      if (fiber) {
+        delayFibersRef.delete(id);
+        deferredEffects.push(Fiber.interrupt(fiber).pipe(Effect.catchAll(() => Effect.void)));
+      }
+    };
+
+    const sendToChild = (childId: string, event: MachineEvent): void => {
+      const child = childrenRef.get(childId);
+      if (child) child.send(event);
+    };
+
+    const sendToParent = (event: MachineEvent): void => {
+      if (actor._parent) actor._parent.send(event);
+    };
+
+    // Process a single event synchronously
+    const processEvent = (event: TEvent): void => {
+      const stateConfig = machine.config.states[snapshot.value];
+
+      // Handle $after events (delayed transitions)
+      if (event._tag === "$after") {
+        const afterEvent = event as unknown as { _tag: "$after"; delay: number | string };
+        const afterConfig = stateConfig?.after;
+        if (!afterConfig) return;
+
+        let transitionConfig: TransitionConfig<TStateValue, TContext, TEvent, R, E> | undefined;
+        if ("delay" in afterConfig && "transition" in afterConfig) {
+          transitionConfig = afterConfig.transition as TransitionConfig<TStateValue, TContext, TEvent, R, E>;
+        } else {
+          const delays = afterConfig as Record<number, TransitionConfig<TStateValue, TContext, TEvent, R, E>>;
+          transitionConfig = delays[Number(afterEvent.delay)];
+        }
+
+        if (!transitionConfig?.target) return;
+
+        const targetState = transitionConfig.target;
+        let newContext = snapshot.context;
+
+        // Run exit actions
+        if (stateConfig?.exit) {
+          newContext = runActionsSync(stateConfig.exit, newContext, event);
+        }
+
+        // Stop activities (deferred)
+        stopAllActivitiesSync();
+
+        // Run transition actions
+        if (transitionConfig.actions) {
+          newContext = runActionsSync(
+            transitionConfig.actions as ReadonlyArray<Action<TContext, TEvent, R, E>>,
+            newContext,
+            event,
+          );
+        }
+
+        // Run entry actions
+        const targetStateConfig = machine.config.states[targetState];
+        if (targetStateConfig?.entry) {
+          newContext = runActionsSync(targetStateConfig.entry, newContext, event);
+        }
+
+        // Update snapshot
+        snapshot = { value: targetState, context: newContext, event };
+
+        // Start activities for new state (deferred)
+        if (targetStateConfig?.activities) {
+          startActivitiesDeferred(targetStateConfig.activities, newContext, event);
+        }
+
+        // Handle delayed transitions for new state
+        if (targetStateConfig?.after) {
+          scheduleAfterTransition(targetStateConfig.after, snapshot);
+        }
+
+        // Flush deferred effects and notify
+        flushDeferred();
+        notifyObservers();
+        return;
+      }
+
+      if (!stateConfig?.on) return;
+
+      const transitionConfig = stateConfig.on[event._tag as TEvent["_tag"]];
+      if (!transitionConfig) return;
+
+      // Check guard synchronously
+      if (transitionConfig.guard) {
+        const allowed = evaluateGuardSync(
+          transitionConfig.guard as Guard<TContext, TEvent, R, E>,
+          snapshot.context,
+          event,
+        );
+        if (!allowed) return;
+      }
+
+      const targetState = transitionConfig.target ?? snapshot.value;
+      const isTransition = targetState !== snapshot.value;
+
+      let newContext = snapshot.context;
+
+      // Run exit actions if transitioning
+      if (isTransition && stateConfig.exit) {
+        newContext = runActionsSync(stateConfig.exit, newContext, event);
+      }
+
+      // Stop activities if transitioning (deferred)
+      if (isTransition) {
+        stopAllActivitiesSync();
+      }
+
+      // Run transition actions
+      if (transitionConfig.actions) {
+        newContext = runActionsSync(
+          transitionConfig.actions as ReadonlyArray<Action<TContext, TEvent, R, E>>,
+          newContext,
+          event,
+        );
+      }
+
+      // Run entry actions if transitioning
+      const targetStateConfig = machine.config.states[targetState];
+      if (isTransition && targetStateConfig?.entry) {
+        newContext = runActionsSync(targetStateConfig.entry, newContext, event);
+      }
+
+      // Update snapshot
+      snapshot = { value: targetState, context: newContext, event };
+
+      // Start activities for new state (deferred)
+      if (isTransition && targetStateConfig?.activities) {
+        startActivitiesDeferred(targetStateConfig.activities, newContext, event);
+      }
+
+      // Handle delayed transitions
+      if (isTransition && targetStateConfig?.after) {
+        scheduleAfterTransition(targetStateConfig.after, snapshot);
+      }
+
+      // Flush deferred effects and notify
+      flushDeferred();
+      notifyObservers();
+    };
+
+    // Synchronous action runner
+    const runActionsSync = (
+      actions: ReadonlyArray<Action<TContext, TEvent, any, any>>,
+      context: TContext,
+      event: TEvent,
+    ): TContext => {
+      let ctx = context;
+      for (const action of actions) {
+        switch (action._tag) {
+          case "assign": {
+            const updates = action.fn({ context: ctx, event });
+            ctx = { ...ctx, ...updates };
+            break;
+          }
+          case "effect": {
+            // Defer effect execution
+            deferredEffects.push(action.fn({ context: ctx, event }).pipe(Effect.catchAll(() => Effect.void)));
+            break;
+          }
+          case "raise": {
+            const raisedEvent = typeof action.event === "function"
+              ? action.event({ context: ctx, event })
+              : action.event;
+            mailbox.enqueue(raisedEvent);
+            break;
+          }
+          case "cancel": {
+            const id = typeof action.sendId === "function"
+              ? action.sendId({ context: ctx, event })
+              : action.sendId;
+            cancelDelay(id);
+            break;
+          }
+          case "emit": {
+            const emitted = typeof action.event === "function"
+              ? action.event({ context: ctx, event })
+              : action.event;
+            emitEvent(emitted);
+            break;
+          }
+          case "enqueueActions": {
+            const queue: Array<Action<TContext, TEvent, any, any>> = [];
+            const enqueue = createActionEnqueuer<TContext, TEvent, any, any>(queue);
+            action.collect({ context: ctx, event, enqueue });
+            ctx = runActionsSync(queue, ctx, event);
+            break;
+          }
+          case "spawnChild": {
+            const childId = typeof action.id === "function"
+              ? action.id({ context: ctx, event })
+              : action.id;
+            // Defer child spawning
+            deferredEffects.push(
+              Effect.gen(function* () {
+                const childActor = yield* interpret(action.src, { parent: actor as MachineActor<string, MachineContext, MachineEvent> });
+                childrenRef.set(childId, childActor);
+              }),
+            );
+            break;
+          }
+          case "stopChild": {
+            const childId = typeof action.childId === "function"
+              ? action.childId({ context: ctx, event })
+              : action.childId;
+            const child = childrenRef.get(childId);
+            if (child) {
+              childrenRef.delete(childId);
+            }
+            break;
+          }
+          case "sendTo": {
+            const targetId = typeof action.target === "function"
+              ? action.target({ context: ctx, event })
+              : action.target;
+            const targetEvent = typeof action.event === "function"
+              ? action.event({ context: ctx, event })
+              : action.event;
+            sendToChild(targetId, targetEvent);
+            break;
+          }
+          case "sendParent": {
+            const parentEvent = typeof action.event === "function"
+              ? action.event({ context: ctx, event })
+              : action.event;
+            sendToParent(parentEvent);
+            break;
+          }
+          case "forwardTo": {
+            const targetId = typeof action.target === "function"
+              ? action.target({ context: ctx, event })
+              : action.target;
+            sendToChild(targetId, event);
+            break;
+          }
+        }
+      }
+      return ctx;
+    };
+
+    const evaluateGuardSync = (
+      guard: Guard<TContext, TEvent, any, any>,
+      context: TContext,
+      event: TEvent,
+    ): boolean => {
+      switch (guard._tag) {
+        case "sync":
+          return guard.fn({ context, event });
+        case "effect":
+          // Run effect guard synchronously using captured runtime
+          try {
+            return Runtime.runSync(runtime)(guard.fn({ context, event }));
+          } catch {
+            return false;
+          }
+      }
+    };
+
+    const stopAllActivitiesSync = () => {
+      for (const fiber of activityFibersRef.values()) {
+        deferredEffects.push(Fiber.interrupt(fiber).pipe(Effect.catchAll(() => Effect.void)));
+      }
+      activityFibersRef.clear();
+    };
+
+    const startActivitiesDeferred = (
+      activities: ReadonlyArray<{
+        readonly id: string;
+        readonly src: (params: { context: TContext; event: TEvent; send: (event: TEvent) => void }) => Effect.Effect<void, any, any>;
+      }>,
+      context: TContext,
+      event: TEvent,
+    ) => {
+      for (const activity of activities) {
+        deferredEffects.push(
+          Effect.gen(function* () {
+            const fiber = yield* activity.src({ context, event, send: mailbox.enqueue.bind(mailbox) }).pipe(
+              Effect.catchAll(() => Effect.void),
+              Effect.forkScoped,
+            );
+            activityFibersRef.set(activity.id, fiber as Fiber.RuntimeFiber<void, never>);
+          }),
+        );
+      }
+    };
+
+    const scheduleAfterTransition = (
+      after: StateNodeConfig<TStateValue, TContext, TEvent, any, any>["after"],
+      _snapshot: MachineSnapshot<TStateValue, TContext>,
+    ) => {
+      if (!after) return;
+
+      if ("delay" in after && "transition" in after) {
+        const delay = Duration.toMillis(Duration.decode(after.delay));
+        const transitionId = (after.transition as TransitionConfig<TStateValue, TContext, TEvent, any, any>).id;
+        deferredEffects.push(
+          Effect.gen(function* () {
+            const fiber = yield* Effect.sleep(Duration.millis(delay)).pipe(
+              Effect.zipRight(Effect.sync(() => mailbox.enqueue({ _tag: "$after", delay } as unknown as TEvent))),
+              Effect.forkScoped,
+            );
+            if (transitionId) {
+              delayFibersRef.set(transitionId, fiber as Fiber.RuntimeFiber<void, never>);
+            }
+          }),
+        );
+        return;
+      }
+
+      const entries = Object.entries(after as Record<number, TransitionConfig<TStateValue, TContext, TEvent, any, any>>);
+      for (const [delayMs, config] of entries) {
+        deferredEffects.push(
+          Effect.gen(function* () {
+            const fiber = yield* Effect.sleep(Duration.millis(Number(delayMs))).pipe(
+              Effect.zipRight(Effect.sync(() => mailbox.enqueue({ _tag: "$after", delay: delayMs } as unknown as TEvent))),
+              Effect.forkScoped,
+            );
+            if (config.id) {
+              delayFibersRef.set(config.id, fiber as Fiber.RuntimeFiber<void, never>);
+            }
+          }),
+        );
+      }
+    };
+
+    // Create mailbox with synchronous processor
+    const mailbox = new Mailbox<TEvent>(processEvent);
+
+    // Create actor object
+    actor = {
+      send: (event: TEvent) => mailbox.enqueue(event),
+      getSnapshot: () => snapshot,
+      subscribe: (observer) => {
+        observers.add(observer);
+        return () => observers.delete(observer);
+      },
       on,
       children: childrenRef as ReadonlyMap<string, MachineActor<string, MachineContext, MachineEvent>>,
       _parent: options?.parent,
     };
 
-    const spawnChildActor = (
-      childMachine: MachineDefinition<any, any, any, any, any, any>,
-      childId: string,
-    ): Effect.Effect<void, never, any> =>
-      Effect.gen(function* () {
-        // Create the child actor with this actor as parent
-        const childActor = yield* interpret(childMachine, { parent: actor as MachineActor<string, MachineContext, MachineEvent> });
-        childrenRef.set(childId, childActor);
-      });
-    const stopChildActor = (childId: string): Effect.Effect<void> => {
-      const child = childrenRef.get(childId);
-      if (child) {
-        childrenRef.delete(childId);
-        const fiber = childFibersRef.get(childId);
-        if (fiber) {
-          childFibersRef.delete(childId);
-          return Fiber.interrupt(fiber).pipe(Effect.catchAll(() => Effect.void));
-        }
-      }
-      return Effect.void;
-    };
-    const sendToChild = (childId: string, event: MachineEvent): void => {
-      const child = childrenRef.get(childId);
-      if (child) {
-        child.send(event);
-      }
-    };
-    const sendToParent = (event: MachineEvent): void => {
-      if (actor._parent) {
-        actor._parent.send(event);
-      }
-    };
-
-    // Create helpers object for action runners
-    const actionHelpers = {
-      send,
-      cancelDelay,
-      emitEvent,
-      spawnChildActor,
-      stopChildActor,
-      sendToChild,
-      sendToParent,
-    };
-
     // Run entry actions for initial state
     const initialState = machine.config.states[machine.initialSnapshot.value];
     if (initialState?.entry) {
-      yield* runActions(initialState.entry, machine.initialSnapshot.context, { _tag: "$init" } as TEvent, actionHelpers);
+      snapshot = {
+        ...snapshot,
+        context: runActionsSync(initialState.entry, snapshot.context, { _tag: "$init" } as TEvent),
+      };
     }
 
     // Start activities for initial state
     if (initialState?.activities) {
-      yield* startActivities(
-        initialState.activities,
-        machine.initialSnapshot.context,
-        { _tag: "$init" } as TEvent,
-        send,
-        activityFibersRef,
-      );
+      startActivitiesDeferred(initialState.activities, snapshot.context, { _tag: "$init" } as TEvent);
     }
 
     // Handle delayed transitions for initial state
     if (initialState?.after) {
-      yield* handleAfterTransition(
-        initialState.after,
-        machine.initialSnapshot,
-        commandQueue,
-        delayFibersRef,
-      );
+      scheduleAfterTransition(initialState.after, snapshot);
     }
 
-    // Main event processing loop
-    yield* Stream.fromQueue(commandQueue).pipe(
-      Stream.runForEach((event) =>
-        Effect.gen(function* () {
-          const snapshot = yield* SubscriptionRef.get(snapshotRef);
-          const stateConfig = machine.config.states[snapshot.value];
-
-          // Handle $after events (delayed transitions)
-          if (event._tag === "$after") {
-            const afterEvent = event as unknown as { _tag: "$after"; delay: number | string };
-            const afterConfig = stateConfig?.after;
-            if (!afterConfig) return;
-
-            // Find the matching transition config
-            let transitionConfig: TransitionConfig<TStateValue, TContext, TEvent, R, E> | undefined;
-            if ("delay" in afterConfig && "transition" in afterConfig) {
-              transitionConfig = afterConfig.transition as TransitionConfig<TStateValue, TContext, TEvent, R, E>;
-            } else {
-              const delays = afterConfig as Record<number, TransitionConfig<TStateValue, TContext, TEvent, R, E>>;
-              transitionConfig = delays[Number(afterEvent.delay)];
-            }
-
-            if (!transitionConfig?.target) return;
-
-            const targetState = transitionConfig.target;
-            let newContext = snapshot.context;
-
-            // Run exit actions
-            if (stateConfig?.exit) {
-              yield* runActions(stateConfig.exit, newContext, event, actionHelpers);
-            }
-
-            // Stop activities
-            yield* stopAllActivities(activityFibersRef);
-
-            // Run transition actions
-            if (transitionConfig.actions) {
-              newContext = yield* runActionsWithContext(
-                transitionConfig.actions as ReadonlyArray<Action<TContext, TEvent, R, E>>,
-                newContext,
-                event,
-                actionHelpers,
-              );
-            }
-
-            // Run entry actions
-            const targetStateConfig = machine.config.states[targetState];
-            if (targetStateConfig?.entry) {
-              newContext = yield* runActionsWithContext(targetStateConfig.entry, newContext, event, actionHelpers);
-            }
-
-            // Update snapshot
-            const newSnapshot: MachineSnapshot<TStateValue, TContext> = {
-              value: targetState,
-              context: newContext,
-              event,
-            };
-            yield* SubscriptionRef.set(snapshotRef, newSnapshot);
-
-            // Start activities for new state
-            if (targetStateConfig?.activities) {
-              yield* startActivities(
-                targetStateConfig.activities,
-                newContext,
-                event,
-                send,
-                activityFibersRef,
-              );
-            }
-
-            // Handle delayed transitions for new state
-            if (targetStateConfig?.after) {
-              yield* handleAfterTransition(targetStateConfig.after, newSnapshot, commandQueue, delayFibersRef);
-            }
-
-            yield* Effect.log(`[${machine.id}] ${snapshot.value} -> ${targetState} ($after)`);
-            return;
-          }
-
-          if (!stateConfig?.on) return;
-
-          const transitionConfig = stateConfig.on[event._tag as TEvent["_tag"]];
-          if (!transitionConfig) return;
-
-          // Check guard
-          // Note: Type assertion is safe here because we looked up the transition by event._tag,
-          // so the guard/actions are typed for exactly this event type at compile time
-          if (transitionConfig.guard) {
-            const allowed = yield* evaluateGuard(
-              transitionConfig.guard as Guard<TContext, TEvent, R, E>,
-              snapshot.context,
-              event,
-            );
-            if (!allowed) return;
-          }
-
-          // Determine target state
-          const targetState = transitionConfig.target ?? snapshot.value;
-          const isTransition = targetState !== snapshot.value;
-
-          let newContext = snapshot.context;
-
-          // Run exit actions if transitioning
-          if (isTransition && stateConfig.exit) {
-            yield* runActions(stateConfig.exit, newContext, event, actionHelpers);
-          }
-
-          // Stop activities if transitioning
-          if (isTransition) {
-            yield* stopAllActivities(activityFibersRef);
-          }
-
-          // Run transition actions
-          if (transitionConfig.actions) {
-            newContext = yield* runActionsWithContext(
-              transitionConfig.actions as ReadonlyArray<Action<TContext, TEvent, R, E>>,
-              newContext,
-              event,
-              actionHelpers,
-            );
-          }
-
-          // Run entry actions if transitioning
-          const targetStateConfig = machine.config.states[targetState];
-          if (isTransition && targetStateConfig?.entry) {
-            newContext = yield* runActionsWithContext(targetStateConfig.entry, newContext, event, actionHelpers);
-          }
-
-          // Update snapshot
-          const newSnapshot: MachineSnapshot<TStateValue, TContext> = {
-            value: targetState,
-            context: newContext,
-            event,
-          };
-          yield* SubscriptionRef.set(snapshotRef, newSnapshot);
-
-          // Start activities for new state
-          if (isTransition && targetStateConfig?.activities) {
-            yield* startActivities(
-              targetStateConfig.activities,
-              newContext,
-              event,
-              send,
-              activityFibersRef,
-            );
-          }
-
-          // Handle delayed transitions
-          if (isTransition && targetStateConfig?.after) {
-            yield* handleAfterTransition(targetStateConfig.after, newSnapshot, commandQueue, delayFibersRef);
-          }
-
-          yield* Effect.log(`[${machine.id}] ${snapshot.value} -> ${targetState} (${event._tag})`);
-        }),
-      ),
-      Effect.forkScoped,
-    );
+    // Flush any deferred effects from initialization
+    flushDeferred();
 
     return actor;
   });
@@ -434,283 +614,4 @@ const createActionEnqueuer = <TContext extends MachineContext, TEvent extends Ma
   };
 
   return enqueue;
-};
-
-interface ActionRunnerHelpers<TEvent extends MachineEvent> {
-  send: (event: TEvent) => void;
-  cancelDelay: (id: string) => Effect.Effect<void>;
-  emitEvent: (event: EmittedEvent) => void;
-  spawnChildActor: (machine: MachineDefinition<any, any, any, any, any, any>, id: string) => Effect.Effect<void, never, any>;
-  stopChildActor: (id: string) => Effect.Effect<void>;
-  sendToChild: (childId: string, event: MachineEvent) => void;
-  sendToParent: (event: MachineEvent) => void;
-}
-
-const runActions = <TContext extends MachineContext, TEvent extends MachineEvent>(
-  actions: ReadonlyArray<Action<TContext, TEvent, any, any>>,
-  context: TContext,
-  event: TEvent,
-  helpers: ActionRunnerHelpers<TEvent>,
-): Effect.Effect<void, never, any> => {
-  if (actions.length === 0) return Effect.void;
-  return Effect.forEach(actions, (action) => {
-    switch (action._tag) {
-      case "assign":
-        return Effect.void;
-      case "effect":
-        return action.fn({ context, event }).pipe(Effect.catchAll(() => Effect.void));
-      case "raise": {
-        const raisedEvent = typeof action.event === "function"
-          ? action.event({ context, event })
-          : action.event;
-        helpers.send(raisedEvent);
-        return Effect.void;
-      }
-      case "cancel": {
-        const id = typeof action.sendId === "function"
-          ? action.sendId({ context, event })
-          : action.sendId;
-        return helpers.cancelDelay(id);
-      }
-      case "emit": {
-        const emitted = typeof action.event === "function"
-          ? action.event({ context, event })
-          : action.event;
-        helpers.emitEvent(emitted);
-        return Effect.void;
-      }
-      case "enqueueActions": {
-        const queue: Array<Action<TContext, TEvent, any, any>> = [];
-        const enqueue = createActionEnqueuer<TContext, TEvent, any, any>(queue);
-        action.collect({ context, event, enqueue });
-        // Recursively run the collected actions
-        return runActions(queue, context, event, helpers);
-      }
-      case "spawnChild": {
-        const childId = typeof action.id === "function"
-          ? action.id({ context, event })
-          : action.id;
-        return helpers.spawnChildActor(action.src, childId);
-      }
-      case "stopChild": {
-        const childId = typeof action.childId === "function"
-          ? action.childId({ context, event })
-          : action.childId;
-        return helpers.stopChildActor(childId);
-      }
-      case "sendTo": {
-        const targetId = typeof action.target === "function"
-          ? action.target({ context, event })
-          : action.target;
-        const targetEvent = typeof action.event === "function"
-          ? action.event({ context, event })
-          : action.event;
-        helpers.sendToChild(targetId, targetEvent);
-        return Effect.void;
-      }
-      case "sendParent": {
-        const parentEvent = typeof action.event === "function"
-          ? action.event({ context, event })
-          : action.event;
-        helpers.sendToParent(parentEvent);
-        return Effect.void;
-      }
-      case "forwardTo": {
-        const targetId = typeof action.target === "function"
-          ? action.target({ context, event })
-          : action.target;
-        helpers.sendToChild(targetId, event);
-        return Effect.void;
-      }
-    }
-  }, { discard: true });
-};
-
-const runActionsWithContext = <TContext extends MachineContext, TEvent extends MachineEvent>(
-  actions: ReadonlyArray<Action<TContext, TEvent, any, any>>,
-  context: TContext,
-  event: TEvent,
-  helpers: ActionRunnerHelpers<TEvent>,
-): Effect.Effect<TContext, never, any> => {
-  if (actions.length === 0) return Effect.succeed(context);
-  return Effect.reduce(actions, context, (ctx, action) => {
-    switch (action._tag) {
-      case "assign": {
-        const updates = action.fn({ context: ctx, event });
-        return Effect.succeed({ ...ctx, ...updates });
-      }
-      case "effect":
-        return action.fn({ context: ctx, event }).pipe(
-          Effect.catchAll(() => Effect.void),
-          Effect.map(() => ctx),
-        );
-      case "raise": {
-        const raisedEvent = typeof action.event === "function"
-          ? action.event({ context: ctx, event })
-          : action.event;
-        helpers.send(raisedEvent);
-        return Effect.succeed(ctx);
-      }
-      case "cancel": {
-        const id = typeof action.sendId === "function"
-          ? action.sendId({ context: ctx, event })
-          : action.sendId;
-        return helpers.cancelDelay(id).pipe(Effect.map(() => ctx));
-      }
-      case "emit": {
-        const emitted = typeof action.event === "function"
-          ? action.event({ context: ctx, event })
-          : action.event;
-        helpers.emitEvent(emitted);
-        return Effect.succeed(ctx);
-      }
-      case "enqueueActions": {
-        const queue: Array<Action<TContext, TEvent, any, any>> = [];
-        const enqueue = createActionEnqueuer<TContext, TEvent, any, any>(queue);
-        action.collect({ context: ctx, event, enqueue });
-        // Recursively run the collected actions with context tracking
-        return runActionsWithContext(queue, ctx, event, helpers);
-      }
-      case "spawnChild": {
-        const childId = typeof action.id === "function"
-          ? action.id({ context: ctx, event })
-          : action.id;
-        return helpers.spawnChildActor(action.src, childId).pipe(Effect.map(() => ctx));
-      }
-      case "stopChild": {
-        const childId = typeof action.childId === "function"
-          ? action.childId({ context: ctx, event })
-          : action.childId;
-        return helpers.stopChildActor(childId).pipe(Effect.map(() => ctx));
-      }
-      case "sendTo": {
-        const targetId = typeof action.target === "function"
-          ? action.target({ context: ctx, event })
-          : action.target;
-        const targetEvent = typeof action.event === "function"
-          ? action.event({ context: ctx, event })
-          : action.event;
-        helpers.sendToChild(targetId, targetEvent);
-        return Effect.succeed(ctx);
-      }
-      case "sendParent": {
-        const parentEvent = typeof action.event === "function"
-          ? action.event({ context: ctx, event })
-          : action.event;
-        helpers.sendToParent(parentEvent);
-        return Effect.succeed(ctx);
-      }
-      case "forwardTo": {
-        const targetId = typeof action.target === "function"
-          ? action.target({ context: ctx, event })
-          : action.target;
-        helpers.sendToChild(targetId, event);
-        return Effect.succeed(ctx);
-      }
-    }
-  });
-};
-
-const evaluateGuard = <TContext extends MachineContext, TEvent extends MachineEvent>(
-  guard: Guard<TContext, TEvent, any, any>,
-  context: TContext,
-  event: TEvent,
-): Effect.Effect<boolean, never, any> => {
-  switch (guard._tag) {
-    case "sync":
-      return Effect.succeed(guard.fn({ context, event }));
-    case "effect":
-      return guard.fn({ context, event }).pipe(Effect.catchAll(() => Effect.succeed(false)));
-  }
-};
-
-const startActivities = <TContext extends MachineContext, TEvent extends MachineEvent>(
-  activities: ReadonlyArray<{
-    readonly id: string;
-    readonly src: (params: {
-      context: TContext;
-      event: TEvent;
-      send: (event: TEvent) => void;
-    }) => Effect.Effect<void, any, any>;
-  }>,
-  context: TContext,
-  event: TEvent,
-  send: (event: TEvent) => void,
-  fibersRef: Map<string, Fiber.RuntimeFiber<void, never>>,
-): Effect.Effect<void, never, any> => {
-  if (activities.length === 0) return Effect.void;
-  return Effect.forEach(
-    activities,
-    (activity) =>
-      Effect.gen(function* () {
-        const fiber = yield* activity.src({ context, event, send }).pipe(
-          Effect.catchAll(() => Effect.void),
-          Effect.forkScoped,
-        );
-        fibersRef.set(activity.id, fiber as Fiber.RuntimeFiber<void, never>);
-      }),
-    { discard: true },
-  );
-};
-
-const stopAllActivities = (
-  fibersRef: Map<string, Fiber.RuntimeFiber<void, never>>,
-): Effect.Effect<void> => {
-  if (fibersRef.size === 0) return Effect.void;
-  return Effect.forEach(
-    Array.from(fibersRef.values()),
-    (fiber) => Fiber.interrupt(fiber).pipe(Effect.catchAll(() => Effect.void)),
-    { discard: true },
-  ).pipe(
-    Effect.tap(() => Effect.sync(() => fibersRef.clear())),
-  );
-};
-
-const handleAfterTransition = <
-  TStateValue extends string,
-  TContext extends object,
-  TEvent extends MachineEvent,
->(
-  after: StateNodeConfig<TStateValue, TContext, TEvent, any, any>["after"],
-  _snapshot: MachineSnapshot<TStateValue, TContext>,
-  commandQueue: Queue.Queue<TEvent>,
-  delayFibersRef: Map<string, Fiber.RuntimeFiber<void, never>>,
-): Effect.Effect<void, never, any> => {
-  if (!after) return Effect.void;
-
-  // Handle object with delay/transition
-  if ("delay" in after && "transition" in after) {
-    const delay = Duration.decode(after.delay);
-    const transitionId = (after.transition as TransitionConfig<TStateValue, TContext, TEvent, any, any>).id;
-    return Effect.gen(function* () {
-      const fiber = yield* Effect.sleep(delay).pipe(
-        Effect.zipRight(
-          Queue.offer(commandQueue, { _tag: "$after", delay } as unknown as TEvent),
-        ),
-        Effect.forkScoped,
-      );
-      if (transitionId) {
-        delayFibersRef.set(transitionId, fiber as Fiber.RuntimeFiber<void, never>);
-      }
-    });
-  }
-
-  // Handle numeric delays
-  const entries = Object.entries(after as Record<number, TransitionConfig<TStateValue, TContext, TEvent, any, any>>);
-  return Effect.forEach(
-    entries,
-    ([delayMs, config]) =>
-      Effect.gen(function* () {
-        const fiber = yield* Effect.sleep(Duration.millis(Number(delayMs))).pipe(
-          Effect.zipRight(
-            Queue.offer(commandQueue, { _tag: "$after", delay: delayMs } as unknown as TEvent),
-          ),
-          Effect.forkScoped,
-        );
-        if (config.id) {
-          delayFibersRef.set(config.id, fiber as Fiber.RuntimeFiber<void, never>);
-        }
-      }),
-    { discard: true },
-  );
 };
