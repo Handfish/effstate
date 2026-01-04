@@ -11,7 +11,7 @@ This document tracks the implementation of XState-inspired actions for our Effec
 | Feature | Implementation | Tests | Notes |
 |---------|---------------|-------|-------|
 | `cancel` | [x] | [x] | Cancel delayed events by ID |
-| `emit` | [ ] | [ ] | Emit to external listeners |
+| `emit` | [x] | [x] | Emit to external listeners |
 | `enqueueActions` | [ ] | [ ] | Dynamic action queuing |
 | `sendTo` | [ ] | [ ] | Send to another actor |
 | `sendParent` | [ ] | [ ] | Send to parent actor |
@@ -127,11 +127,11 @@ export interface MachineConfig<...TEmitted extends { type: string }> {
 ```
 
 **Tests required**:
-- [ ] Emit calls registered listener
-- [ ] Multiple listeners for same event type
-- [ ] Unsubscribe removes listener
-- [ ] Emit with dynamic event (function)
-- [ ] No listeners is a no-op
+- [x] Emit calls registered listener
+- [x] Multiple listeners for same event type
+- [x] Unsubscribe removes listener
+- [x] Emit with dynamic event (function)
+- [x] No listeners is a no-op
 
 ---
 

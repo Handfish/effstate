@@ -1,6 +1,7 @@
 import { Duration, Effect, Fiber, Queue, Stream, SubscriptionRef } from "effect";
 import type {
   Action,
+  EmittedEvent,
   Guard,
   MachineConfig,
   MachineContext,
@@ -75,6 +76,14 @@ export interface MachineActor<
   readonly send: (event: TEvent) => void;
   /** Get current snapshot */
   readonly getSnapshot: Effect.Effect<MachineSnapshot<TStateValue, TContext>>;
+  /**
+   * Register a listener for emitted events.
+   * Returns an unsubscribe function.
+   */
+  readonly on: <TEmitted extends EmittedEvent>(
+    eventType: TEmitted["type"],
+    handler: (event: TEmitted) => void,
+  ) => () => void;
 }
 
 // ============================================================================
@@ -103,6 +112,7 @@ export const interpret = <
     const commandQueue = yield* Queue.unbounded<TEvent>();
     const activityFibersRef = yield* Effect.sync(() => new Map<string, Fiber.RuntimeFiber<void, never>>());
     const delayFibersRef = yield* Effect.sync(() => new Map<string, Fiber.RuntimeFiber<void, never>>());
+    const listenersRef = yield* Effect.sync(() => new Map<string, Set<(event: EmittedEvent) => void>>());
     const send = (event: TEvent) => commandQueue.unsafeOffer(event);
     const cancelDelay = (id: string) => {
       const fiber = delayFibersRef.get(id);
@@ -112,11 +122,34 @@ export const interpret = <
       }
       return Effect.void;
     };
+    const emitEvent = (event: EmittedEvent) => {
+      const listeners = listenersRef.get(event.type);
+      if (listeners) {
+        for (const handler of listeners) {
+          handler(event);
+        }
+      }
+    };
+    const on = <TEmitted extends EmittedEvent>(
+      eventType: TEmitted["type"],
+      handler: (event: TEmitted) => void,
+    ): (() => void) => {
+      let listeners = listenersRef.get(eventType);
+      if (!listeners) {
+        listeners = new Set();
+        listenersRef.set(eventType, listeners);
+      }
+      listeners.add(handler as (event: EmittedEvent) => void);
+      // Return unsubscribe function
+      return () => {
+        listeners!.delete(handler as (event: EmittedEvent) => void);
+      };
+    };
 
     // Run entry actions for initial state
     const initialState = machine.config.states[machine.initialSnapshot.value];
     if (initialState?.entry) {
-      yield* runActions(initialState.entry, machine.initialSnapshot.context, { _tag: "$init" } as TEvent, send, cancelDelay);
+      yield* runActions(initialState.entry, machine.initialSnapshot.context, { _tag: "$init" } as TEvent, send, cancelDelay, emitEvent);
     }
 
     // Start activities for initial state
@@ -169,7 +202,7 @@ export const interpret = <
 
             // Run exit actions
             if (stateConfig?.exit) {
-              yield* runActions(stateConfig.exit, newContext, event, send, cancelDelay);
+              yield* runActions(stateConfig.exit, newContext, event, send, cancelDelay, emitEvent);
             }
 
             // Stop activities
@@ -183,13 +216,14 @@ export const interpret = <
                 event,
                 send,
                 cancelDelay,
+                emitEvent,
               );
             }
 
             // Run entry actions
             const targetStateConfig = machine.config.states[targetState];
             if (targetStateConfig?.entry) {
-              newContext = yield* runActionsWithContext(targetStateConfig.entry, newContext, event, send, cancelDelay);
+              newContext = yield* runActionsWithContext(targetStateConfig.entry, newContext, event, send, cancelDelay, emitEvent);
             }
 
             // Update snapshot
@@ -247,7 +281,7 @@ export const interpret = <
 
           // Run exit actions if transitioning
           if (isTransition && stateConfig.exit) {
-            yield* runActions(stateConfig.exit, newContext, event, send, cancelDelay);
+            yield* runActions(stateConfig.exit, newContext, event, send, cancelDelay, emitEvent);
           }
 
           // Stop activities if transitioning
@@ -263,13 +297,14 @@ export const interpret = <
               event,
               send,
               cancelDelay,
+              emitEvent,
             );
           }
 
           // Run entry actions if transitioning
           const targetStateConfig = machine.config.states[targetState];
           if (isTransition && targetStateConfig?.entry) {
-            newContext = yield* runActionsWithContext(targetStateConfig.entry, newContext, event, send, cancelDelay);
+            newContext = yield* runActionsWithContext(targetStateConfig.entry, newContext, event, send, cancelDelay, emitEvent);
           }
 
           // Update snapshot
@@ -309,6 +344,7 @@ export const interpret = <
       commandQueue,
       send: (event: TEvent) => commandQueue.unsafeOffer(event),
       getSnapshot: SubscriptionRef.get(snapshotRef),
+      on,
     };
   });
 
@@ -322,6 +358,7 @@ const runActions = <TContext extends MachineContext, TEvent extends MachineEvent
   event: TEvent,
   send: (event: TEvent) => void,
   cancelDelay: (id: string) => Effect.Effect<void>,
+  emitEvent: (event: EmittedEvent) => void,
 ): Effect.Effect<void, never, any> =>
   Effect.forEach(actions, (action) => {
     switch (action._tag) {
@@ -342,6 +379,13 @@ const runActions = <TContext extends MachineContext, TEvent extends MachineEvent
           : action.sendId;
         return cancelDelay(id);
       }
+      case "emit": {
+        const emitted = typeof action.event === "function"
+          ? action.event({ context, event })
+          : action.event;
+        emitEvent(emitted);
+        return Effect.void;
+      }
     }
   }, { discard: true });
 
@@ -351,6 +395,7 @@ const runActionsWithContext = <TContext extends MachineContext, TEvent extends M
   event: TEvent,
   send: (event: TEvent) => void,
   cancelDelay: (id: string) => Effect.Effect<void>,
+  emitEvent: (event: EmittedEvent) => void,
 ): Effect.Effect<TContext, never, any> =>
   Effect.reduce(actions, context, (ctx, action) => {
     switch (action._tag) {
@@ -375,6 +420,13 @@ const runActionsWithContext = <TContext extends MachineContext, TEvent extends M
           ? action.sendId({ context: ctx, event })
           : action.sendId;
         return cancelDelay(id).pipe(Effect.map(() => ctx));
+      }
+      case "emit": {
+        const emitted = typeof action.event === "function"
+          ? action.event({ context: ctx, event })
+          : action.event;
+        emitEvent(emitted);
+        return Effect.succeed(ctx);
       }
     }
   });

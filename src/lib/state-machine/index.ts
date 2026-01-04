@@ -6,6 +6,8 @@ export type {
   CancelAction,
   EffectAction,
   EffectGuard,
+  EmitAction,
+  EmittedEvent,
   EventByTag,
   Guard,
   MachineConfig,
@@ -24,7 +26,7 @@ export type {
 export { createMachine, interpret, type MachineActor } from "./machine.js";
 
 // Actions
-export { assign, cancel, effect, log, raise } from "./actions.js";
+export { assign, cancel, effect, emit, log, raise } from "./actions.js";
 
 // Guards
 export { and, guard, guardEffect, not, or } from "./guards.js";

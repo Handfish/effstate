@@ -4,6 +4,8 @@ import type {
   AssignAction,
   CancelAction,
   EffectAction,
+  EmitAction,
+  EmittedEvent,
   MachineContext,
   MachineEvent,
   RaiseAction,
@@ -104,6 +106,35 @@ export function cancel<
   return {
     _tag: "cancel",
     sendId,
+  };
+}
+
+/**
+ * Emit an event to external listeners registered via actor.on().
+ *
+ * @example
+ * ```ts
+ * // Static event
+ * emit({ type: "notification", message: "Hello" })
+ *
+ * // Dynamic event from context
+ * emit(({ context }) => ({ type: "countChanged", count: context.count }))
+ *
+ * // Listen externally
+ * const actor = interpret(machine);
+ * actor.on("notification", (event) => console.log(event.message));
+ * ```
+ */
+export function emit<
+  TContext extends MachineContext,
+  TEvent extends MachineEvent = MachineEvent,
+  TEmitted extends EmittedEvent = EmittedEvent,
+>(
+  event: TEmitted | ((params: { context: TContext; event: TEvent }) => TEmitted),
+): EmitAction<TContext, TEvent, TEmitted> {
+  return {
+    _tag: "emit",
+    event,
   };
 }
 

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Data, Effect, Exit, Ref } from "effect";
 import { createMachine, interpret } from "./machine";
-import { assign, effect, raise, cancel } from "./actions";
+import { assign, effect, raise, cancel, emit } from "./actions";
 import { guard, guardEffect, and, or, not } from "./guards";
 
 // ============================================================================
@@ -13,6 +13,17 @@ class SetValue extends Data.TaggedClass("SET_VALUE")<{ readonly value: number }>
 class Tick extends Data.TaggedClass("TICK")<{}> {}
 
 type TestEvent = Toggle | SetValue | Tick;
+
+// Emitted events (for external listeners)
+interface NotificationEvent {
+  readonly type: "notification";
+  readonly message: string;
+}
+interface CountChangedEvent {
+  readonly type: "countChanged";
+  readonly count: number;
+}
+type TestEmittedEvent = NotificationEvent | CountChangedEvent;
 
 interface TestContext {
   readonly count: number;
@@ -1346,6 +1357,244 @@ describe("cancel (delayed events)", () => {
           // Should still be partial - the original "long" was cancelled
           // and the new 200ms timeout in partial should now fire to timeout2
           expect(snapshot.value).toBe("timeout2");
+        }),
+      ),
+    );
+  });
+});
+
+// ============================================================================
+// emit - Emit to External Listeners
+// ============================================================================
+
+describe("emit (external listeners)", () => {
+  it("emits event to registered listener", async () => {
+    const received: TestEmittedEvent[] = [];
+
+    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+      id: "test",
+      initial: "a",
+      context: { count: 0, log: [] },
+      states: {
+        a: {
+          on: {
+            TOGGLE: {
+              target: "b",
+              actions: [
+                emit<TestContext, TestEvent, TestEmittedEvent>({
+                  type: "notification",
+                  message: "Transitioning to b",
+                }),
+              ],
+            },
+          },
+        },
+        b: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+
+          // Register listener
+          actor.on("notification", (event) => {
+            received.push(event);
+          });
+
+          actor.send(new Toggle());
+          yield* Effect.sleep("20 millis");
+
+          expect(received).toHaveLength(1);
+          expect(received[0]).toEqual({
+            type: "notification",
+            message: "Transitioning to b",
+          });
+        }),
+      ),
+    );
+  });
+
+  it("emits to multiple listeners for same event type", async () => {
+    const received1: TestEmittedEvent[] = [];
+    const received2: TestEmittedEvent[] = [];
+
+    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+      id: "test",
+      initial: "a",
+      context: { count: 0, log: [] },
+      states: {
+        a: {
+          on: {
+            TOGGLE: {
+              target: "b",
+              actions: [
+                emit<TestContext, TestEvent, TestEmittedEvent>({
+                  type: "notification",
+                  message: "Hello",
+                }),
+              ],
+            },
+          },
+        },
+        b: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+
+          actor.on("notification", (event) => received1.push(event));
+          actor.on("notification", (event) => received2.push(event));
+
+          actor.send(new Toggle());
+          yield* Effect.sleep("20 millis");
+
+          expect(received1).toHaveLength(1);
+          expect(received2).toHaveLength(1);
+        }),
+      ),
+    );
+  });
+
+  it("unsubscribe removes listener", async () => {
+    const received: TestEmittedEvent[] = [];
+
+    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+      id: "test",
+      initial: "a",
+      context: { count: 0, log: [] },
+      states: {
+        a: {
+          on: {
+            TOGGLE: {
+              target: "b",
+              actions: [
+                emit<TestContext, TestEvent, TestEmittedEvent>({
+                  type: "notification",
+                  message: "First",
+                }),
+              ],
+            },
+          },
+        },
+        b: {
+          on: {
+            TOGGLE: {
+              target: "a",
+              actions: [
+                emit<TestContext, TestEvent, TestEmittedEvent>({
+                  type: "notification",
+                  message: "Second",
+                }),
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+
+          const unsubscribe = actor.on("notification", (event) => received.push(event));
+
+          actor.send(new Toggle()); // Should emit "First"
+          yield* Effect.sleep("20 millis");
+
+          unsubscribe(); // Remove listener
+
+          actor.send(new Toggle()); // Should NOT emit "Second"
+          yield* Effect.sleep("20 millis");
+
+          expect(received).toHaveLength(1);
+          expect(received[0]).toEqual({ type: "notification", message: "First" });
+        }),
+      ),
+    );
+  });
+
+  it("emits with dynamic event from function", async () => {
+    const received: TestEmittedEvent[] = [];
+
+    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+      id: "test",
+      initial: "a",
+      context: { count: 42, log: [] },
+      states: {
+        a: {
+          on: {
+            TOGGLE: {
+              target: "b",
+              actions: [
+                emit<TestContext, TestEvent, TestEmittedEvent>(({ context }) => ({
+                  type: "countChanged",
+                  count: context.count,
+                })),
+              ],
+            },
+          },
+        },
+        b: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+
+          actor.on("countChanged", (event) => received.push(event));
+
+          actor.send(new Toggle());
+          yield* Effect.sleep("20 millis");
+
+          expect(received).toHaveLength(1);
+          expect(received[0]).toEqual({ type: "countChanged", count: 42 });
+        }),
+      ),
+    );
+  });
+
+  it("emit with no listeners is a no-op", async () => {
+    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+      id: "test",
+      initial: "a",
+      context: { count: 0, log: [] },
+      states: {
+        a: {
+          on: {
+            TOGGLE: {
+              target: "b",
+              actions: [
+                emit<TestContext, TestEvent, TestEmittedEvent>({
+                  type: "notification",
+                  message: "No one listening",
+                }),
+              ],
+            },
+          },
+        },
+        b: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+
+          // No listeners registered
+          actor.send(new Toggle());
+          yield* Effect.sleep("20 millis");
+
+          const snapshot = yield* actor.getSnapshot;
+          expect(snapshot.value).toBe("b"); // Transition still works
         }),
       ),
     );

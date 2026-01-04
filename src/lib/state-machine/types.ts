@@ -76,6 +76,25 @@ export interface CancelAction<
   readonly sendId: string | ((params: { context: TContext; event: TEvent }) => string);
 }
 
+/**
+ * Base type for emitted events (events sent to external listeners)
+ */
+export interface EmittedEvent {
+  readonly type: string;
+}
+
+/**
+ * Emit action to send events to external listeners via actor.on()
+ */
+export interface EmitAction<
+  TContext extends MachineContext,
+  TEvent extends MachineEvent,
+  TEmitted extends EmittedEvent = EmittedEvent,
+> {
+  readonly _tag: "emit";
+  readonly event: TEmitted | ((params: { context: TContext; event: TEvent }) => TEmitted);
+}
+
 export type Action<
   TContext extends MachineContext,
   TEvent extends MachineEvent,
@@ -85,7 +104,8 @@ export type Action<
   | AssignAction<TContext, TEvent>
   | EffectAction<TContext, TEvent, R, E>
   | RaiseAction<TEvent>
-  | CancelAction<TContext, TEvent>;
+  | CancelAction<TContext, TEvent>
+  | EmitAction<TContext, TEvent>;
 
 // ============================================================================
 // Guard Types
