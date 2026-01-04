@@ -79,7 +79,7 @@ describe("assign()", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -111,7 +111,7 @@ describe("assign()", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -143,7 +143,7 @@ describe("assign()", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new SetValue({ value: 123 }));
           yield* Effect.sleep("10 millis");
 
@@ -189,7 +189,7 @@ describe("raise()", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -232,7 +232,7 @@ describe("raise()", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -274,7 +274,7 @@ describe("entry/exit actions", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -308,7 +308,7 @@ describe("entry/exit actions", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -340,7 +340,7 @@ describe("entry/exit actions", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -370,7 +370,7 @@ describe("entry/exit actions", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* interpret(machine);
+          interpret(machine);
           yield* Effect.sleep("10 millis");
 
           const log = yield* Ref.get(entryLog);
@@ -415,7 +415,7 @@ describe("self-transitions", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           yield* Effect.sleep("10 millis");
 
           // Clear the log after initial entry
@@ -460,7 +460,7 @@ describe("self-transitions", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           yield* Effect.sleep("10 millis");
 
           yield* Ref.set(actionLog, []); // Clear after initial entry
@@ -515,7 +515,7 @@ describe("activities", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
 
           // Activity should not be started yet
           let started = yield* Ref.get(activityStarted);
@@ -566,7 +566,7 @@ describe("activities", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
 
           // Start running
           actor.send(new Toggle());
@@ -627,7 +627,7 @@ describe("activities", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
 
           actor.send(new Toggle());
           yield* Effect.sleep("50 millis");
@@ -666,7 +666,7 @@ describe("guards", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -698,7 +698,7 @@ describe("guards", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -730,7 +730,7 @@ describe("guards", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
 
           // Value too low - should not transition
           actor.send(new SetValue({ value: 30 }));
@@ -778,7 +778,7 @@ describe("guard combinators", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -813,7 +813,7 @@ describe("guard combinators", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -848,7 +848,7 @@ describe("guard combinators", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -883,7 +883,7 @@ describe("guard combinators", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -915,7 +915,7 @@ describe("guard combinators", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -947,7 +947,7 @@ describe("guard combinators", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -989,7 +989,7 @@ describe("guardEffect (effect-based guards)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
 
           const snapshot = actor.getSnapshot();
@@ -1025,7 +1025,7 @@ describe("guardEffect (effect-based guards)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -1057,7 +1057,7 @@ describe("guardEffect (effect-based guards)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -1092,7 +1092,7 @@ describe("after (delayed transitions)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
 
           // Should still be waiting
           let snapshot = actor.getSnapshot();
@@ -1130,7 +1130,7 @@ describe("after (delayed transitions)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
 
           // Wait for delay
           yield* Effect.sleep("50 millis");
@@ -1166,7 +1166,7 @@ describe("after (delayed transitions)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
 
           yield* Effect.sleep("50 millis");
 
@@ -1211,7 +1211,7 @@ describe("cancel (delayed events)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
 
           // Cancel before timeout fires
           yield* Effect.sleep("30 millis");
@@ -1257,7 +1257,7 @@ describe("cancel (delayed events)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
 
           yield* Effect.sleep("30 millis");
           actor.send(new SetValue({ value: 100 })); // Cancel "delay-100"
@@ -1295,7 +1295,7 @@ describe("cancel (delayed events)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -1339,7 +1339,7 @@ describe("cancel (delayed events)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
 
           // Quickly transition to partial (before short timeout)
           yield* Effect.sleep("20 millis");
@@ -1394,7 +1394,7 @@ describe("emit (external listeners)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
 
           // Register listener
           actor.on("notification", (event) => {
@@ -1443,7 +1443,7 @@ describe("emit (external listeners)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
 
           actor.on("notification", (event) => received1.push(event));
           actor.on("notification", (event) => received2.push(event));
@@ -1498,7 +1498,7 @@ describe("emit (external listeners)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
 
           const unsubscribe = actor.on("notification", (event) => received.push(event));
 
@@ -1545,7 +1545,7 @@ describe("emit (external listeners)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
 
           actor.on("countChanged", (event) => received.push(event));
 
@@ -1585,7 +1585,7 @@ describe("emit (external listeners)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
 
           // No listeners registered
           actor.send(new Toggle());
@@ -1633,7 +1633,7 @@ describe("enqueueActions (dynamic action queuing)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -1677,7 +1677,7 @@ describe("enqueueActions (dynamic action queuing)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -1714,7 +1714,7 @@ describe("enqueueActions (dynamic action queuing)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -1758,7 +1758,7 @@ describe("enqueueActions (dynamic action queuing)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("30 millis");
 
@@ -1797,7 +1797,7 @@ describe("enqueueActions (dynamic action queuing)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -1833,7 +1833,7 @@ describe("enqueueActions (dynamic action queuing)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new SetValue({ value: 25 }));
           yield* Effect.sleep("20 millis");
 
@@ -1912,7 +1912,7 @@ describe("spawnChild / stopChild (actor hierarchy)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -1954,7 +1954,7 @@ describe("spawnChild / stopChild (actor hierarchy)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -1996,7 +1996,7 @@ describe("spawnChild / stopChild (actor hierarchy)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -2045,7 +2045,7 @@ describe("spawnChild / stopChild (actor hierarchy)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -2088,7 +2088,7 @@ describe("spawnChild / stopChild (actor hierarchy)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -2136,7 +2136,7 @@ describe("sendTo (send events to child actors)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -2193,7 +2193,7 @@ describe("sendTo (send events to child actors)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -2241,7 +2241,7 @@ describe("sendTo (send events to child actors)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -2277,7 +2277,7 @@ describe("sendTo (send events to child actors)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -2354,7 +2354,7 @@ describe("sendParent (send events to parent actor)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
 
           // Spawn child
           actor.send(new Toggle());
@@ -2430,7 +2430,7 @@ describe("sendParent (send events to parent actor)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
 
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
@@ -2468,7 +2468,7 @@ describe("sendParent (send events to parent actor)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -2530,7 +2530,7 @@ describe("forwardTo (forward current event to another actor)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
 
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
@@ -2596,7 +2596,7 @@ describe("forwardTo (forward current event to another actor)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
 
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
@@ -2633,7 +2633,7 @@ describe("forwardTo (forward current event to another actor)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* interpret(machine);
+          const actor = interpret(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 

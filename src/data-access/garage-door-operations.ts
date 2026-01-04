@@ -7,7 +7,7 @@ import {
   effect,
   interpret,
 } from "@/lib/state-machine";
-import { Data, Duration, Effect, Match, Schedule, Stream } from "effect";
+import { Data, Duration, Effect, Match, Schedule, Stream, SubscriptionRef } from "effect";
 
 // ============================================================================
 // Types
@@ -146,15 +146,23 @@ export const garageDoorMachine = createMachine<
 // ============================================================================
 
 // Create atoms with full type inference from appRuntime
+// interpret() now returns MachineActor synchronously, so wrap in Effect.sync
 const actorAtom = appRuntime
-  .atom(interpret(garageDoorMachine))
+  .atom(Effect.sync(() => interpret(garageDoorMachine)))
   .pipe(Atom.keepAlive);
 
+// Create a SubscriptionRef that stays in sync with the actor's snapshot
 const snapshotAtom = appRuntime
   .subscriptionRef((get) =>
     Effect.gen(function* () {
       const actor = yield* get.result(actorAtom);
-      return actor.snapshotRef;
+      // Create a SubscriptionRef with the current snapshot
+      const ref = yield* SubscriptionRef.make(actor.getSnapshot());
+      // Subscribe to actor changes and update the ref
+      actor.subscribe((snapshot) => {
+        Effect.runSync(SubscriptionRef.set(ref, snapshot));
+      });
+      return ref;
     })
   )
   .pipe(Atom.keepAlive);

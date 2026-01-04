@@ -1,5 +1,4 @@
 import { Bench } from "tinybench";
-import { Effect, Scope, Logger, LogLevel } from "effect";
 import { Data } from "effect";
 
 // Our Effect-first state machine
@@ -118,14 +117,10 @@ async function main() {
     });
   });
 
-  // Benchmark: Actor Creation
+  // Benchmark: Actor Creation (now synchronous like XState!)
   bench.add("Effect: interpret", () => {
-    const program = Effect.gen(function* () {
-      const scope = yield* Scope.make();
-      const actor = yield* Effect.provideService(interpret(effectMachine), Scope.Scope, scope);
-      return actor;
-    }).pipe(Logger.withMinimumLogLevel(LogLevel.None));
-    Effect.runSync(program);
+    const actor = interpret(effectMachine);
+    actor.stop();
   });
 
   bench.add("XState: createActor+start", () => {
@@ -136,16 +131,12 @@ async function main() {
 
   // Benchmark: Full Lifecycle
   bench.add("Effect: full lifecycle", () => {
-    const program = Effect.gen(function* () {
-      const scope = yield* Scope.make();
-      const actor = yield* Effect.provideService(interpret(effectMachine), Scope.Scope, scope);
-      actor.send(incrementEvent);
-      actor.send(incrementEvent);
-      actor.send(decrementEvent);
-      actor.getSnapshot(); // getSnapshot is now synchronous!
-      yield* Scope.close(scope, Effect.void);
-    }).pipe(Logger.withMinimumLogLevel(LogLevel.None));
-    Effect.runSync(program);
+    const actor = interpret(effectMachine);
+    actor.send(incrementEvent);
+    actor.send(incrementEvent);
+    actor.send(decrementEvent);
+    actor.getSnapshot();
+    actor.stop();
   });
 
   bench.add("XState: full lifecycle", () => {
