@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Data, Effect, Exit, Ref } from "effect";
 import { createMachine, interpret } from "./machine";
-import { assign, effect, raise, cancel, emit } from "./actions";
+import { assign, effect, raise, cancel, emit, enqueueActions, spawnChild, stopChild } from "./actions";
 import { guard, guardEffect, and, or, not } from "./guards";
 
 // ============================================================================
@@ -1595,6 +1595,252 @@ describe("emit (external listeners)", () => {
 
           const snapshot = yield* actor.getSnapshot;
           expect(snapshot.value).toBe("b"); // Transition still works
+        }),
+      ),
+    );
+  });
+});
+
+// ============================================================================
+// enqueueActions - Dynamic Action Queuing
+// ============================================================================
+
+describe("enqueueActions (dynamic action queuing)", () => {
+  it("enqueues multiple actions that execute in order", async () => {
+    const actionLog = await Effect.runPromise(Ref.make<string[]>([]));
+
+    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+      id: "test",
+      initial: "a",
+      context: { count: 0, log: [] },
+      states: {
+        a: {
+          on: {
+            TOGGLE: {
+              target: "b",
+              actions: [
+                enqueueActions<TestContext, TestEvent>(({ enqueue }) => {
+                  enqueue(effect(() => Ref.update(actionLog, (log) => [...log, "first"])));
+                  enqueue(assign({ count: 10 }));
+                  enqueue(effect(() => Ref.update(actionLog, (log) => [...log, "second"])));
+                }),
+              ],
+            },
+          },
+        },
+        b: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+          actor.send(new Toggle());
+          yield* Effect.sleep("20 millis");
+
+          const snapshot = yield* actor.getSnapshot;
+          expect(snapshot.value).toBe("b");
+          expect(snapshot.context.count).toBe(10);
+
+          const log = yield* Ref.get(actionLog);
+          expect(log).toEqual(["first", "second"]);
+        }),
+      ),
+    );
+  });
+
+  it("conditional enqueueing based on context", async () => {
+    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+      id: "test",
+      initial: "a",
+      context: { count: 15, log: [] },
+      states: {
+        a: {
+          on: {
+            TOGGLE: {
+              target: "b",
+              actions: [
+                enqueueActions<TestContext, TestEvent>(({ context, enqueue }) => {
+                  if (context.count > 10) {
+                    enqueue(assign({ count: 100 }));
+                  } else {
+                    enqueue(assign({ count: 0 }));
+                  }
+                }),
+              ],
+            },
+          },
+        },
+        b: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+          actor.send(new Toggle());
+          yield* Effect.sleep("20 millis");
+
+          const snapshot = yield* actor.getSnapshot;
+          expect(snapshot.context.count).toBe(100); // count > 10, so assigned 100
+        }),
+      ),
+    );
+  });
+
+  it("enqueue.assign shorthand works", async () => {
+    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+      id: "test",
+      initial: "a",
+      context: { count: 0, log: [] },
+      states: {
+        a: {
+          on: {
+            TOGGLE: {
+              target: "b",
+              actions: [
+                enqueueActions<TestContext, TestEvent>(({ enqueue }) => {
+                  enqueue.assign({ count: 42 });
+                  enqueue.assign(({ context }) => ({ count: context.count + 8 }));
+                }),
+              ],
+            },
+          },
+        },
+        b: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+          actor.send(new Toggle());
+          yield* Effect.sleep("20 millis");
+
+          const snapshot = yield* actor.getSnapshot;
+          expect(snapshot.context.count).toBe(50); // 42 + 8
+        }),
+      ),
+    );
+  });
+
+  it("enqueue.raise shorthand works", async () => {
+    const machine = createMachine<"test", "a" | "b" | "c", TestContext, TestEvent>({
+      id: "test",
+      initial: "a",
+      context: { count: 0, log: [] },
+      states: {
+        a: {
+          on: {
+            TOGGLE: {
+              target: "b",
+              actions: [
+                enqueueActions<TestContext, TestEvent>(({ enqueue }) => {
+                  enqueue.raise(new Tick());
+                }),
+              ],
+            },
+          },
+        },
+        b: {
+          on: {
+            TICK: {
+              target: "c",
+              actions: [assign({ count: 99 })],
+            },
+          },
+        },
+        c: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+          actor.send(new Toggle());
+          yield* Effect.sleep("30 millis");
+
+          const snapshot = yield* actor.getSnapshot;
+          expect(snapshot.value).toBe("c"); // Raised TICK transitioned to c
+          expect(snapshot.context.count).toBe(99);
+        }),
+      ),
+    );
+  });
+
+  it("enqueue.effect shorthand works", async () => {
+    const effectRan = await Effect.runPromise(Ref.make(false));
+
+    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+      id: "test",
+      initial: "a",
+      context: { count: 0, log: [] },
+      states: {
+        a: {
+          on: {
+            TOGGLE: {
+              target: "b",
+              actions: [
+                enqueueActions<TestContext, TestEvent>(({ enqueue }) => {
+                  enqueue.effect(() => Ref.set(effectRan, true));
+                }),
+              ],
+            },
+          },
+        },
+        b: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+          actor.send(new Toggle());
+          yield* Effect.sleep("20 millis");
+
+          const ran = yield* Ref.get(effectRan);
+          expect(ran).toBe(true);
+        }),
+      ),
+    );
+  });
+
+  it("accesses event data in enqueueActions", async () => {
+    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+      id: "test",
+      initial: "a",
+      context: { count: 0, log: [] },
+      states: {
+        a: {
+          on: {
+            SET_VALUE: {
+              target: "b",
+              actions: [
+                enqueueActions<TestContext, SetValue>(({ event, enqueue }) => {
+                  enqueue.assign({ count: event.value * 2 });
+                }),
+              ],
+            },
+          },
+        },
+        b: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* interpret(machine);
+          actor.send(new SetValue({ value: 25 }));
+          yield* Effect.sleep("20 millis");
+
+          const snapshot = yield* actor.getSnapshot;
+          expect(snapshot.context.count).toBe(50); // 25 * 2
         }),
       ),
     );

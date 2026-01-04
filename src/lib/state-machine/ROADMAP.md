@@ -12,7 +12,7 @@ This document tracks the implementation of XState-inspired actions for our Effec
 |---------|---------------|-------|-------|
 | `cancel` | [x] | [x] | Cancel delayed events by ID |
 | `emit` | [x] | [x] | Emit to external listeners |
-| `enqueueActions` | [ ] | [ ] | Dynamic action queuing |
+| `enqueueActions` | [x] | [x] | Dynamic action queuing |
 | `sendTo` | [ ] | [ ] | Send to another actor |
 | `sendParent` | [ ] | [ ] | Send to parent actor |
 | `forwardTo` | [ ] | [ ] | Forward event to another actor |
@@ -195,10 +195,11 @@ effect(({ context, event }) => Effect.gen(function* () {
 ```
 
 **Tests required**:
-- [ ] Enqueue multiple actions
-- [ ] Conditional enqueueing with check()
-- [ ] Enqueue.assign, enqueue.raise, etc.
-- [ ] Actions execute in order
+- [x] Enqueue multiple actions
+- [x] Conditional enqueueing based on context
+- [x] Enqueue.assign, enqueue.raise, enqueue.effect shorthands
+- [x] Actions execute in order
+- [x] Access event data in enqueueActions
 
 ---
 

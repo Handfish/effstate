@@ -95,6 +95,61 @@ export interface EmitAction<
   readonly event: TEmitted | ((params: { context: TContext; event: TEvent }) => TEmitted);
 }
 
+/**
+ * Enqueue actions interface for building dynamic action lists.
+ * Provides shortcuts for common action types.
+ */
+export interface ActionEnqueuer<
+  TContext extends MachineContext,
+  TEvent extends MachineEvent,
+  R = never,
+  E = never,
+> {
+  /** Enqueue any action */
+  (action: Action<TContext, TEvent, R, E>): void;
+  /** Enqueue an assign action */
+  assign: (
+    assignment:
+      | Partial<TContext>
+      | ((params: { context: TContext; event: TEvent }) => Partial<TContext>),
+  ) => void;
+  /** Enqueue a raise action */
+  raise: (
+    event: TEvent | ((params: { context: TContext; event: TEvent }) => TEvent),
+  ) => void;
+  /** Enqueue an effect action */
+  effect: (
+    fn: (params: { context: TContext; event: TEvent }) => import("effect").Effect.Effect<void, E, R>,
+  ) => void;
+}
+
+/**
+ * Parameters passed to enqueueActions collector function
+ */
+export interface EnqueueActionsParams<
+  TContext extends MachineContext,
+  TEvent extends MachineEvent,
+  R = never,
+  E = never,
+> {
+  readonly context: TContext;
+  readonly event: TEvent;
+  readonly enqueue: ActionEnqueuer<TContext, TEvent, R, E>;
+}
+
+/**
+ * EnqueueActions action for dynamically building action lists at runtime
+ */
+export interface EnqueueActionsAction<
+  TContext extends MachineContext,
+  TEvent extends MachineEvent,
+  R = never,
+  E = never,
+> {
+  readonly _tag: "enqueueActions";
+  readonly collect: (params: EnqueueActionsParams<TContext, TEvent, R, E>) => void;
+}
+
 export type Action<
   TContext extends MachineContext,
   TEvent extends MachineEvent,
@@ -105,7 +160,8 @@ export type Action<
   | EffectAction<TContext, TEvent, R, E>
   | RaiseAction<TEvent>
   | CancelAction<TContext, TEvent>
-  | EmitAction<TContext, TEvent>;
+  | EmitAction<TContext, TEvent>
+  | EnqueueActionsAction<TContext, TEvent, R, E>;
 
 // ============================================================================
 // Guard Types

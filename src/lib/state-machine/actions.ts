@@ -1,11 +1,14 @@
 import type { Effect } from "effect";
 import type {
   Action,
+  ActionEnqueuer,
   AssignAction,
   CancelAction,
   EffectAction,
   EmitAction,
   EmittedEvent,
+  EnqueueActionsAction,
+  EnqueueActionsParams,
   MachineContext,
   MachineEvent,
   RaiseAction,
@@ -151,6 +154,36 @@ export function log<
     const msg = typeof message === "function" ? message({ context, event }) : message;
     return import("effect").then(({ Effect }) => Effect.log(msg)) as any;
   });
+}
+
+/**
+ * Dynamically enqueue actions at runtime based on conditions.
+ *
+ * @example
+ * ```ts
+ * enqueueActions(({ context, event, enqueue }) => {
+ *   enqueue(assign({ count: 0 }));
+ *
+ *   if (context.count > 10) {
+ *     enqueue.assign({ status: 'high' });
+ *   }
+ *
+ *   enqueue.raise({ _tag: 'DONE' });
+ * })
+ * ```
+ */
+export function enqueueActions<
+  TContext extends MachineContext,
+  TEvent extends MachineEvent = MachineEvent,
+  R = never,
+  E = never,
+>(
+  collect: (params: EnqueueActionsParams<TContext, TEvent, R, E>) => void,
+): EnqueueActionsAction<TContext, TEvent, R, E> {
+  return {
+    _tag: "enqueueActions",
+    collect,
+  };
 }
 
 // ============================================================================

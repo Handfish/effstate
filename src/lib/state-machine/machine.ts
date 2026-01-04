@@ -1,6 +1,7 @@
 import { Duration, Effect, Fiber, Queue, Stream, SubscriptionRef } from "effect";
 import type {
   Action,
+  ActionEnqueuer,
   EmittedEvent,
   Guard,
   MachineConfig,
@@ -352,6 +353,37 @@ export const interpret = <
 // Internal Helpers
 // ============================================================================
 
+const createActionEnqueuer = <TContext extends MachineContext, TEvent extends MachineEvent, R, E>(
+  queue: Array<Action<TContext, TEvent, R, E>>,
+): ActionEnqueuer<TContext, TEvent, R, E> => {
+  const enqueue = ((action: Action<TContext, TEvent, R, E>) => {
+    queue.push(action);
+  }) as ActionEnqueuer<TContext, TEvent, R, E>;
+
+  enqueue.assign = (assignment) => {
+    queue.push({
+      _tag: "assign",
+      fn: typeof assignment === "function" ? assignment : () => assignment,
+    } as Action<TContext, TEvent, R, E>);
+  };
+
+  enqueue.raise = (event) => {
+    queue.push({
+      _tag: "raise",
+      event,
+    } as Action<TContext, TEvent, R, E>);
+  };
+
+  enqueue.effect = (fn) => {
+    queue.push({
+      _tag: "effect",
+      fn,
+    } as Action<TContext, TEvent, R, E>);
+  };
+
+  return enqueue;
+};
+
 const runActions = <TContext extends MachineContext, TEvent extends MachineEvent>(
   actions: ReadonlyArray<Action<TContext, TEvent, any, any>>,
   context: TContext,
@@ -385,6 +417,13 @@ const runActions = <TContext extends MachineContext, TEvent extends MachineEvent
           : action.event;
         emitEvent(emitted);
         return Effect.void;
+      }
+      case "enqueueActions": {
+        const queue: Array<Action<TContext, TEvent, any, any>> = [];
+        const enqueue = createActionEnqueuer<TContext, TEvent, any, any>(queue);
+        action.collect({ context, event, enqueue });
+        // Recursively run the collected actions
+        return runActions(queue, context, event, send, cancelDelay, emitEvent);
       }
     }
   }, { discard: true });
@@ -427,6 +466,13 @@ const runActionsWithContext = <TContext extends MachineContext, TEvent extends M
           : action.event;
         emitEvent(emitted);
         return Effect.succeed(ctx);
+      }
+      case "enqueueActions": {
+        const queue: Array<Action<TContext, TEvent, any, any>> = [];
+        const enqueue = createActionEnqueuer<TContext, TEvent, any, any>(queue);
+        action.collect({ context: ctx, event, enqueue });
+        // Recursively run the collected actions with context tracking
+        return runActionsWithContext(queue, ctx, event, send, cancelDelay, emitEvent);
       }
     }
   });

@@ -1,6 +1,7 @@
 // Types
 export type {
   Action,
+  ActionEnqueuer,
   ActivityConfig,
   AssignAction,
   CancelAction,
@@ -8,6 +9,8 @@ export type {
   EffectGuard,
   EmitAction,
   EmittedEvent,
+  EnqueueActionsAction,
+  EnqueueActionsParams,
   EventByTag,
   Guard,
   MachineConfig,
@@ -26,7 +29,7 @@ export type {
 export { createMachine, interpret, type MachineActor } from "./machine.js";
 
 // Actions
-export { assign, cancel, effect, emit, log, raise } from "./actions.js";
+export { assign, cancel, effect, emit, enqueueActions, log, raise } from "./actions.js";
 
 // Guards
 export { and, guard, guardEffect, not, or } from "./guards.js";
