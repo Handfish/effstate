@@ -113,9 +113,9 @@ export interface ActionEnqueuer<
       | Partial<TContext>
       | ((params: { context: TContext; event: TEvent }) => Partial<TContext>),
   ) => void;
-  /** Enqueue a raise action */
+  /** Enqueue a raise action (can raise any event type) */
   raise: (
-    event: TEvent | ((params: { context: TContext; event: TEvent }) => TEvent),
+    event: MachineEvent | ((params: { context: TContext; event: TEvent }) => MachineEvent),
   ) => void;
   /** Enqueue an effect action */
   effect: (
@@ -159,7 +159,8 @@ export interface EnqueueActionsAction<
 export interface SpawnChildAction<
   TContext extends MachineContext,
   TEvent extends MachineEvent,
-  TChildMachine extends MachineDefinition<string, string, MachineContext, MachineEvent, unknown, unknown> = MachineDefinition<string, string, MachineContext, MachineEvent, unknown, unknown>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  TChildMachine extends MachineDefinition<string, string, any, any, any, any> = MachineDefinition<string, string, any, any, any, any>,
 > {
   readonly _tag: "spawnChild";
   readonly src: TChildMachine;
@@ -221,7 +222,7 @@ export type Action<
 > =
   | AssignAction<TContext, TEvent>
   | EffectAction<TContext, TEvent, R, E>
-  | RaiseAction<TEvent>
+  | RaiseAction<MachineEvent>
   | CancelAction<TContext, TEvent>
   | EmitAction<TContext, TEvent>
   | EnqueueActionsAction<TContext, TEvent, R, E>

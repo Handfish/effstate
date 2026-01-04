@@ -1,4 +1,4 @@
-import { Duration, Effect, Fiber, Runtime, Scope } from "effect";
+import { Duration, Effect, Fiber, Scope } from "effect";
 import type {
   Action,
   ActionEnqueuer,
@@ -148,17 +148,13 @@ export function interpret<
   };
 
   const notifyObservers = () => {
-    for (const observer of observers) {
-      observer(snapshot);
-    }
+    observers.forEach((observer) => observer(snapshot));
   };
 
   const emitEvent = (event: EmittedEvent) => {
     const listeners = listenersRef.get(event.type);
     if (listeners) {
-      for (const handler of listeners) {
-        handler(event);
-      }
+      listeners.forEach((handler) => handler(event));
     }
   };
 
@@ -322,7 +318,7 @@ export function interpret<
         }
         case "effect": {
           // Defer effect - run async
-          const eff = action.fn({ context: ctx, event });
+          const eff = action.fn({ context: ctx, event }) as Effect.Effect<void>;
           deferredEffects.push(() => {
             Effect.runPromise(eff).catch(() => {});
           });
@@ -332,7 +328,7 @@ export function interpret<
           const raisedEvent = typeof action.event === "function"
             ? action.event({ context: ctx, event })
             : action.event;
-          mailbox.enqueue(raisedEvent);
+          mailbox.enqueue(raisedEvent as TEvent);
           break;
         }
         case "cancel": {
@@ -361,7 +357,7 @@ export function interpret<
             ? action.id({ context: ctx, event })
             : action.id;
           // Spawn child synchronously
-          const childActor = interpret(action.src, { parent: actor as MachineActor<string, MachineContext, MachineEvent> });
+          const childActor = interpret(action.src, { parent: actor as unknown as MachineActor<string, MachineContext, MachineEvent> });
           childrenRef.set(childId, childActor);
           break;
         }
@@ -416,7 +412,7 @@ export function interpret<
       case "effect":
         // Effect guards must complete synchronously
         try {
-          return Effect.runSync(guard.fn({ context, event }));
+          return Effect.runSync(guard.fn({ context, event }) as Effect.Effect<boolean>);
         } catch {
           return false;
         }
@@ -424,9 +420,9 @@ export function interpret<
   };
 
   const stopAllActivities = () => {
-    for (const cleanup of activityCleanups.values()) {
+    activityCleanups.forEach((cleanup) => {
       try { cleanup(); } catch { /* ignore */ }
-    }
+    });
     activityCleanups.clear();
   };
 
@@ -447,7 +443,7 @@ export function interpret<
       const fiber = Effect.runFork(
         activity.src({ context, event, send }).pipe(
           Effect.catchAll(() => Effect.void),
-        )
+        ) as Effect.Effect<void>
       );
 
       activityCleanups.set(activity.id, () => {
@@ -492,13 +488,9 @@ export function interpret<
   const stop = () => {
     stopped = true;
     stopAllActivities();
-    for (const timer of delayTimers.values()) {
-      clearTimeout(timer);
-    }
+    delayTimers.forEach((timer) => clearTimeout(timer));
     delayTimers.clear();
-    for (const child of childrenRef.values()) {
-      child.stop();
-    }
+    childrenRef.forEach((child) => child.stop());
     childrenRef.clear();
   };
 
@@ -515,8 +507,8 @@ export function interpret<
     },
     on,
     children: childrenRef as ReadonlyMap<string, MachineActor<string, MachineContext, MachineEvent>>,
-    _parent: options?.parent,
     stop,
+    ...(options?.parent ? { _parent: options.parent } : {}),
   };
 
   // Run entry actions for initial state

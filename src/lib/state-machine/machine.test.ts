@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { Data, Effect, Exit, Ref } from "effect";
+import { Data, Effect, Ref } from "effect";
 import { createMachine, interpret } from "./machine";
 import { assign, effect, raise, cancel, emit, enqueueActions, spawnChild, stopChild, sendTo, sendParent, forwardTo } from "./actions";
 import { guard, guardEffect, and, or, not } from "./guards";
@@ -50,6 +50,166 @@ describe("createMachine", () => {
     expect(machine.id).toBe("test");
     expect(machine.initialSnapshot.value).toBe("inactive");
     expect(machine.initialSnapshot.context.count).toBe(0);
+  });
+});
+
+// ============================================================================
+// subscribe() - Snapshot Observers
+// ============================================================================
+
+describe("subscribe()", () => {
+  it("calls subscriber on state transitions", async () => {
+    const snapshots: Array<{ value: string; count: number }> = [];
+
+    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+      id: "test",
+      initial: "a",
+      context: { count: 0, log: [] },
+      states: {
+        a: {
+          on: {
+            TOGGLE: {
+              target: "b",
+              actions: [assign({ count: 1 })],
+            },
+          },
+        },
+        b: {
+          on: {
+            TOGGLE: {
+              target: "a",
+              actions: [assign({ count: 2 })],
+            },
+          },
+        },
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = interpret(machine);
+
+          actor.subscribe((snapshot) => {
+            snapshots.push({ value: snapshot.value, count: snapshot.context.count });
+          });
+
+          actor.send(new Toggle()); // a → b
+          actor.send(new Toggle()); // b → a
+
+          expect(snapshots).toHaveLength(2);
+          expect(snapshots[0]).toEqual({ value: "b", count: 1 });
+          expect(snapshots[1]).toEqual({ value: "a", count: 2 });
+        }),
+      ),
+    );
+  });
+
+  it("calls subscriber on self-transitions with actions", async () => {
+    const snapshots: Array<{ value: string; count: number }> = [];
+
+    const machine = createMachine<"test", "counter", TestContext, TestEvent>({
+      id: "test",
+      initial: "counter",
+      context: { count: 0, log: [] },
+      states: {
+        counter: {
+          on: {
+            TOGGLE: {
+              actions: [assign(({ context }) => ({ count: context.count + 1 }))],
+            },
+          },
+        },
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = interpret(machine);
+
+          actor.subscribe((snapshot) => {
+            snapshots.push({ value: snapshot.value, count: snapshot.context.count });
+          });
+
+          actor.send(new Toggle());
+          actor.send(new Toggle());
+          actor.send(new Toggle());
+
+          expect(snapshots).toHaveLength(3);
+          expect(snapshots[0]?.count).toBe(1);
+          expect(snapshots[1]?.count).toBe(2);
+          expect(snapshots[2]?.count).toBe(3);
+        }),
+      ),
+    );
+  });
+
+  it("supports multiple subscribers", async () => {
+    let sub1Calls = 0;
+    let sub2Calls = 0;
+    let sub3Calls = 0;
+
+    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+      id: "test",
+      initial: "a",
+      context: { count: 0, log: [] },
+      states: {
+        a: { on: { TOGGLE: { target: "b" } } },
+        b: { on: { TOGGLE: { target: "a" } } },
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = interpret(machine);
+
+          actor.subscribe(() => sub1Calls++);
+          actor.subscribe(() => sub2Calls++);
+          actor.subscribe(() => sub3Calls++);
+
+          actor.send(new Toggle());
+          actor.send(new Toggle());
+
+          expect(sub1Calls).toBe(2);
+          expect(sub2Calls).toBe(2);
+          expect(sub3Calls).toBe(2);
+        }),
+      ),
+    );
+  });
+
+  it("unsubscribe removes subscriber", async () => {
+    const calls: number[] = [];
+
+    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+      id: "test",
+      initial: "a",
+      context: { count: 0, log: [] },
+      states: {
+        a: { on: { TOGGLE: { target: "b" } } },
+        b: { on: { TOGGLE: { target: "a" } } },
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = interpret(machine);
+
+          const unsub = actor.subscribe(() => calls.push(1));
+
+          actor.send(new Toggle()); // Should call subscriber
+          expect(calls).toHaveLength(1);
+
+          unsub(); // Unsubscribe
+
+          actor.send(new Toggle()); // Should NOT call subscriber
+          expect(calls).toHaveLength(1); // Still 1, not 2
+        }),
+      ),
+    );
   });
 });
 
@@ -212,7 +372,7 @@ describe("raise()", () => {
             TOGGLE: {
               target: "b",
               actions: [
-                raise(({ context }) => new SetValue({ value: context.count * 10 })),
+                raise(({ context }) => new SetValue({ value: (context as TestContext).count * 10 })),
               ],
             },
           },
@@ -1046,7 +1206,7 @@ describe("guardEffect (effect-based guards)", () => {
           on: {
             TOGGLE: {
               target: "b",
-              guard: guardEffect(() => Effect.fail("async error")),
+              guard: guardEffect(() => Effect.fail("async error").pipe(Effect.orElseSucceed(() => false))),
             },
           },
         },
@@ -1398,7 +1558,7 @@ describe("emit (external listeners)", () => {
 
           // Register listener
           actor.on("notification", (event) => {
-            received.push(event);
+            received.push(event as TestEmittedEvent);
           });
 
           actor.send(new Toggle());
@@ -1445,8 +1605,8 @@ describe("emit (external listeners)", () => {
         Effect.gen(function* () {
           const actor = interpret(machine);
 
-          actor.on("notification", (event) => received1.push(event));
-          actor.on("notification", (event) => received2.push(event));
+          actor.on("notification", (event) => received1.push(event as TestEmittedEvent));
+          actor.on("notification", (event) => received2.push(event as TestEmittedEvent));
 
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
@@ -1500,7 +1660,7 @@ describe("emit (external listeners)", () => {
         Effect.gen(function* () {
           const actor = interpret(machine);
 
-          const unsubscribe = actor.on("notification", (event) => received.push(event));
+          const unsubscribe = actor.on("notification", (event) => received.push(event as TestEmittedEvent));
 
           actor.send(new Toggle()); // Should emit "First"
           yield* Effect.sleep("20 millis");
@@ -1547,7 +1707,7 @@ describe("emit (external listeners)", () => {
         Effect.gen(function* () {
           const actor = interpret(machine);
 
-          actor.on("countChanged", (event) => received.push(event));
+          actor.on("countChanged", (event) => received.push(event as TestEmittedEvent));
 
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
@@ -1617,7 +1777,7 @@ describe("enqueueActions (dynamic action queuing)", () => {
             TOGGLE: {
               target: "b",
               actions: [
-                enqueueActions<TestContext, TestEvent>(({ enqueue }) => {
+                enqueueActions<TestContext, Toggle>(({ enqueue }) => {
                   enqueue(effect(() => Ref.update(actionLog, (log) => [...log, "first"])));
                   enqueue(assign({ count: 10 }));
                   enqueue(effect(() => Ref.update(actionLog, (log) => [...log, "second"])));
@@ -1659,7 +1819,7 @@ describe("enqueueActions (dynamic action queuing)", () => {
             TOGGLE: {
               target: "b",
               actions: [
-                enqueueActions<TestContext, TestEvent>(({ context, enqueue }) => {
+                enqueueActions<TestContext, Toggle>(({ context, enqueue }) => {
                   if (context.count > 10) {
                     enqueue(assign({ count: 100 }));
                   } else {
@@ -1699,7 +1859,7 @@ describe("enqueueActions (dynamic action queuing)", () => {
             TOGGLE: {
               target: "b",
               actions: [
-                enqueueActions<TestContext, TestEvent>(({ enqueue }) => {
+                enqueueActions<TestContext, Toggle>(({ enqueue }) => {
                   enqueue.assign({ count: 42 });
                   enqueue.assign(({ context }) => ({ count: context.count + 8 }));
                 }),
@@ -1736,7 +1896,7 @@ describe("enqueueActions (dynamic action queuing)", () => {
             TOGGLE: {
               target: "b",
               actions: [
-                enqueueActions<TestContext, TestEvent>(({ enqueue }) => {
+                enqueueActions<TestContext, Toggle>(({ enqueue }) => {
                   enqueue.raise(new Tick());
                 }),
               ],
@@ -1783,7 +1943,7 @@ describe("enqueueActions (dynamic action queuing)", () => {
             TOGGLE: {
               target: "b",
               actions: [
-                enqueueActions<TestContext, TestEvent>(({ enqueue }) => {
+                enqueueActions<TestContext, Toggle>(({ enqueue }) => {
                   enqueue.effect(() => Ref.set(effectRan, true));
                 }),
               ],
@@ -2062,7 +2222,6 @@ describe("spawnChild / stopChild (actor hierarchy)", () => {
   });
 
   it("parent scope closing stops all children", async () => {
-    const childStopped = await Effect.runPromise(Ref.make(false));
     const childMachine = createChildMachine("child");
 
     const machine = createMachine<"test", "idle" | "parenting", TestContext, TestEvent>({
@@ -2153,7 +2312,7 @@ describe("sendTo (send events to child actors)", () => {
           // Child should now be in running state
           childSnapshot = child!.getSnapshot();
           expect(childSnapshot.value).toBe("running");
-          expect(childSnapshot.context.started).toBe(true);
+          expect((childSnapshot.context as ChildContext).started).toBe(true);
         }),
       ),
     );
@@ -2546,7 +2705,7 @@ describe("forwardTo (forward current event to another actor)", () => {
 
           childSnapshot = child!.getSnapshot();
           expect(childSnapshot.value).toBe("ticked");
-          expect(childSnapshot.context.tickCount).toBe(1);
+          expect((childSnapshot.context as { tickCount: number }).tickCount).toBe(1);
         }),
       ),
     );

@@ -1,7 +1,6 @@
 import type { Effect } from "effect";
 import type {
   Action,
-  ActionEnqueuer,
   AssignAction,
   CancelAction,
   EffectAction,
@@ -207,7 +206,8 @@ export function enqueueActions<
 export function spawnChild<
   TContext extends MachineContext,
   TEvent extends MachineEvent = MachineEvent,
-  TChildMachine extends MachineDefinition<string, string, MachineContext, MachineEvent, unknown, unknown> = MachineDefinition<string, string, MachineContext, MachineEvent, unknown, unknown>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  TChildMachine extends MachineDefinition<string, string, any, any, any, any> = MachineDefinition<string, string, any, any, any, any>,
 >(
   src: TChildMachine,
   options: {
