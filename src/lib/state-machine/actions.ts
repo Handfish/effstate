@@ -207,7 +207,7 @@ export function spawnChild<
   TContext extends MachineContext,
   TEvent extends MachineEvent = MachineEvent,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  TChildMachine extends MachineDefinition<string, string, any, any, any, any> = MachineDefinition<string, string, any, any, any, any>,
+  TChildMachine extends MachineDefinition<string, string, any, any, unknown, unknown> = MachineDefinition<string, string, any, any, unknown, unknown>,
 >(
   src: TChildMachine,
   options: {

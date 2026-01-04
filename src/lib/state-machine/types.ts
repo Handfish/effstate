@@ -152,15 +152,19 @@ export interface EnqueueActionsAction<
 
 /**
  * SpawnChild action to dynamically create a child actor.
- * Note: Child machines are heterogeneous (different types), so we use
- * a generic MachineDefinition type. Use type assertion when accessing
- * child actor state if you need specific typing.
+ *
+ * Note: Child machines use `any` for context/event types due to TypeScript's
+ * contravariance in function parameters. The child's action functions have
+ * signatures like `(ctx: ChildContext) => ...` which can't be assigned to
+ * `(ctx: object) => ...`. This is a known limitation when composing machines.
+ *
+ * Use type assertions when accessing child actor state for specific typing.
  */
 export interface SpawnChildAction<
   TContext extends MachineContext,
   TEvent extends MachineEvent,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  TChildMachine extends MachineDefinition<string, string, any, any, any, any> = MachineDefinition<string, string, any, any, any, any>,
+  TChildMachine extends MachineDefinition<string, string, any, any, unknown, unknown> = MachineDefinition<string, string, any, any, unknown, unknown>,
 > {
   readonly _tag: "spawnChild";
   readonly src: TChildMachine;
