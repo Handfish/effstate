@@ -1,10 +1,14 @@
 import { appRuntime } from "@/lib/app-runtime";
-import { Atom, useAtomValue } from "@effect-atom/atom-react";
-import { Duration, Effect, Queue, Schedule, Stream, SubscriptionRef } from "effect";
-import React from "react";
+import {
+  assign,
+  createMachine,
+  createMachineAtoms,
+  effect,
+} from "@/lib/state-machine";
+import { Duration, Effect, Schedule, Stream } from "effect";
 
 // ============================================================================
-// Garage Door State Machine Types
+// Types
 // ============================================================================
 
 export type GarageDoorState =
@@ -15,12 +19,14 @@ export type GarageDoorState =
   | "closing"
   | "paused-while-closing";
 
-export interface GarageDoorStatus {
-  readonly state: GarageDoorState;
+interface GarageDoorContext {
   readonly position: number;
 }
 
-type Command = "click";
+type GarageDoorEvent =
+  | { readonly type: "CLICK" }
+  | { readonly type: "TICK"; readonly delta: number }
+  | { readonly type: "ANIMATION_COMPLETE" };
 
 // ============================================================================
 // Configuration
@@ -32,151 +38,140 @@ const POSITION_DELTA_PER_TICK =
   100 / (Duration.toMillis(FULL_CYCLE_DURATION) / Duration.toMillis(TICK_INTERVAL));
 
 // ============================================================================
-// Helper
+// Animation Activity
 // ============================================================================
 
-const makeStatus = (state: GarageDoorState, position: number): GarageDoorStatus => ({
-  state,
-  position,
+const createAnimationActivity = (direction: 1 | -1) => ({
+  id: `animation-${direction === 1 ? "opening" : "closing"}`,
+  src: ({ send }: { send: (event: GarageDoorEvent) => void }) =>
+    Effect.gen(function* () {
+      yield* Effect.log(`Animation activity started: ${direction === 1 ? "opening" : "closing"}`);
+
+      yield* Stream.fromSchedule(Schedule.spaced(TICK_INTERVAL)).pipe(
+        Stream.runForEach(() =>
+          Effect.sync(() => {
+            send({ type: "TICK", delta: direction * POSITION_DELTA_PER_TICK });
+          }),
+        ),
+      );
+    }),
 });
 
 // ============================================================================
-// State machine logic
+// Garage Door Machine
 // ============================================================================
 
-const getNextStateOnClick = (
-  current: GarageDoorStatus,
-): { status: GarageDoorStatus; direction: 1 | -1 | 0 } => {
-  switch (current.state) {
-    case "closed":
-      return { status: makeStatus("opening", current.position), direction: 1 };
-    case "open":
-      return { status: makeStatus("closing", current.position), direction: -1 };
-    case "opening":
-      return { status: makeStatus("paused-while-opening", current.position), direction: 0 };
-    case "closing":
-      return { status: makeStatus("paused-while-closing", current.position), direction: 0 };
-    case "paused-while-opening":
-      return { status: makeStatus("closing", current.position), direction: -1 };
-    case "paused-while-closing":
-      return { status: makeStatus("opening", current.position), direction: 1 };
-  }
-};
+export const garageDoorMachine = createMachine<
+  "garageDoor",
+  GarageDoorState,
+  GarageDoorContext,
+  GarageDoorEvent
+>({
+  id: "garageDoor",
+  initial: "closed",
+  context: {
+    position: 0,
+  },
+  states: {
+    closed: {
+      entry: [assign({ position: 0 })],
+      on: {
+        CLICK: { target: "opening" },
+      },
+    },
+
+    opening: {
+      entry: [
+        effect(() => Effect.log("Entering: opening")),
+      ],
+      activities: [createAnimationActivity(1)],
+      on: {
+        CLICK: { target: "paused-while-opening" },
+        TICK: {
+          actions: [
+            assign(({ context, event }) => {
+              const tickEvent = event as { type: "TICK"; delta: number };
+              const newPosition = Math.min(100, context.position + tickEvent.delta);
+              return { position: newPosition };
+            }),
+          ],
+        },
+        ANIMATION_COMPLETE: { target: "open" },
+      },
+    },
+
+    "paused-while-opening": {
+      entry: [effect(() => Effect.log("Entering: paused-while-opening"))],
+      on: {
+        CLICK: { target: "closing" },
+      },
+    },
+
+    open: {
+      entry: [assign({ position: 100 })],
+      on: {
+        CLICK: { target: "closing" },
+      },
+    },
+
+    closing: {
+      entry: [effect(() => Effect.log("Entering: closing"))],
+      activities: [createAnimationActivity(-1)],
+      on: {
+        CLICK: { target: "paused-while-closing" },
+        TICK: {
+          actions: [
+            assign(({ context, event }) => {
+              const tickEvent = event as { type: "TICK"; delta: number };
+              const newPosition = Math.max(0, context.position + tickEvent.delta);
+              return { position: newPosition };
+            }),
+          ],
+        },
+        ANIMATION_COMPLETE: { target: "closed" },
+      },
+    },
+
+    "paused-while-closing": {
+      entry: [effect(() => Effect.log("Entering: paused-while-closing"))],
+      on: {
+        CLICK: { target: "opening" },
+      },
+    },
+  },
+});
 
 // ============================================================================
-// Garage Door Control Atom (with forkScoped animation loop)
+// Atom Integration
 // ============================================================================
 
-const garageDoorControlAtom = appRuntime
-  .atom(
-    Effect.gen(function* () {
-      const statusRef = yield* SubscriptionRef.make<GarageDoorStatus>(makeStatus("closed", 0));
-      const commandQueue = yield* Queue.unbounded<Command>();
-
-      // Animation loop runs forever, scoped to atom lifetime
-      yield* Stream.fromQueue(commandQueue).pipe(
-        Stream.runForEach(() =>
-          Effect.gen(function* () {
-            const current = yield* SubscriptionRef.get(statusRef);
-            const { status, direction } = getNextStateOnClick(current);
-
-            yield* Effect.log(
-              `Click received. State: ${current.state} -> ${status.state}, direction: ${direction}`,
-            );
-            yield* SubscriptionRef.set(statusRef, status);
-
-            // If direction is non-zero, run animation until complete or interrupted by next click
-            if (direction !== 0) {
-              yield* runAnimation(statusRef, commandQueue, direction);
-            }
-          }),
-        ),
-        Effect.forkScoped,
-      );
-
-      return { statusRef, commandQueue };
-    }),
-  )
-  .pipe(Atom.keepAlive);
-
-// Animation runs until: reaches end, or receives a new click command
-const runAnimation = (
-  statusRef: SubscriptionRef.SubscriptionRef<GarageDoorStatus>,
-  commandQueue: Queue.Queue<Command>,
-  direction: 1 | -1,
-) =>
-  Effect.gen(function* () {
-    yield* Effect.log(`Animation starting: ${direction === 1 ? "opening" : "closing"}`);
-
-    // Use repeat with a schedule, checking for completion or interruption each tick
-    yield* Effect.repeat(
-      Effect.gen(function* () {
-        // Check if there's a pending command (non-blocking)
-        const hasCommand = yield* Queue.poll(commandQueue);
-        if (hasCommand._tag === "Some") {
-          // Put it back and stop animation - the main loop will handle it
-          yield* Queue.offer(commandQueue, hasCommand.value);
-          yield* Effect.log("Animation interrupted by click");
-          return false; // Signal to stop
-        }
-
-        const current = yield* SubscriptionRef.get(statusRef);
-        const newPosition = Math.max(
-          0,
-          Math.min(100, current.position + direction * POSITION_DELTA_PER_TICK),
-        );
-
-        if (newPosition <= 0) {
-          yield* SubscriptionRef.set(statusRef, makeStatus("closed", 0));
-          yield* Effect.log("Door fully closed");
-          return false;
-        } else if (newPosition >= 100) {
-          yield* SubscriptionRef.set(statusRef, makeStatus("open", 100));
-          yield* Effect.log("Door fully open");
-          return false;
-        } else {
-          const newState: GarageDoorState = direction === 1 ? "opening" : "closing";
-          yield* SubscriptionRef.set(statusRef, makeStatus(newState, newPosition));
-          return true; // Continue animation
-        }
-      }),
-      { while: (continueAnimation) => continueAnimation, schedule: Schedule.spaced(TICK_INTERVAL) },
-    );
-  });
-
-// ============================================================================
-// Public: Reactive status atom using subscriptionRef
-// ============================================================================
-
-const garageDoorStatusAtom = appRuntime
-  .subscriptionRef((get) =>
-    Effect.gen(function* () {
-      const control = yield* get.result(garageDoorControlAtom);
-      return control.statusRef;
-    }),
-  )
-  .pipe(Atom.keepAlive);
+const { useMachine } = createMachineAtoms(appRuntime, {
+  machine: garageDoorMachine,
+});
 
 // ============================================================================
 // React Hook
 // ============================================================================
 
 export const useGarageDoor = () => {
-  const controlResult = useAtomValue(garageDoorControlAtom);
-  const statusResult = useAtomValue(garageDoorStatusAtom);
+  const { snapshot, send, isLoading, matches } = useMachine();
 
-  const handleButtonClick = React.useCallback(() => {
-    if (controlResult._tag !== "Success") return;
-    controlResult.value.commandQueue.unsafeOffer("click");
-  }, [controlResult]);
+  const handleButtonClick = () => {
+    send({ type: "CLICK" });
+  };
 
-  const isLoading = controlResult._tag !== "Success" || statusResult._tag !== "Success";
-
-  const status: GarageDoorStatus =
-    statusResult._tag === "Success" ? statusResult.value : makeStatus("closed", 0);
+  // Check for animation completion
+  if (snapshot.context.position >= 100 && matches("opening")) {
+    send({ type: "ANIMATION_COMPLETE" });
+  } else if (snapshot.context.position <= 0 && matches("closing")) {
+    send({ type: "ANIMATION_COMPLETE" });
+  }
 
   return {
-    status,
+    status: {
+      state: snapshot.value,
+      position: snapshot.context.position,
+    },
     handleButtonClick,
     isLoading,
   };
