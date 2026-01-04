@@ -1,9 +1,11 @@
+import { Atom } from "@effect-atom/atom-react";
 import { appRuntime } from "@/lib/app-runtime";
 import {
   assign,
   createMachine,
-  createMachineAtoms,
+  createUseMachineHook,
   effect,
+  interpret,
 } from "@/lib/state-machine";
 import { Duration, Effect, Schedule, Stream } from "effect";
 
@@ -145,32 +147,62 @@ export const garageDoorMachine = createMachine<
 // Atom Integration
 // ============================================================================
 
-const { useMachine } = createMachineAtoms(appRuntime, {
-  machine: garageDoorMachine,
-});
+// Create atoms with full type inference from appRuntime
+const actorAtom = appRuntime
+  .atom(interpret(garageDoorMachine))
+  .pipe(Atom.keepAlive);
+
+const snapshotAtom = appRuntime
+  .subscriptionRef((get) =>
+    Effect.gen(function* () {
+      const actor = yield* get.result(actorAtom);
+      return actor.snapshotRef;
+    })
+  )
+  .pipe(Atom.keepAlive);
+
+// Create the hook with full type safety
+const useMachine = createUseMachineHook(
+  actorAtom,
+  snapshotAtom,
+  garageDoorMachine.initialSnapshot,
+);
+
+// ============================================================================
+// Status type for UI consumption
+// ============================================================================
+
+export interface GarageDoorStatus {
+  readonly state: GarageDoorState;
+  readonly position: number;
+}
 
 // ============================================================================
 // React Hook
 // ============================================================================
 
-export const useGarageDoor = () => {
-  const { snapshot, send, isLoading, matches } = useMachine();
+export const useGarageDoor = (): {
+  status: GarageDoorStatus;
+  handleButtonClick: () => void;
+  isLoading: boolean;
+} => {
+  const { snapshot, send, isLoading, matches, context } = useMachine();
 
   const handleButtonClick = () => {
     send({ type: "CLICK" });
   };
 
   // Check for animation completion
-  if (snapshot.context.position >= 100 && matches("opening")) {
+  if (context.position >= 100 && matches("opening")) {
     send({ type: "ANIMATION_COMPLETE" });
-  } else if (snapshot.context.position <= 0 && matches("closing")) {
+  } else if (context.position <= 0 && matches("closing")) {
     send({ type: "ANIMATION_COMPLETE" });
   }
 
   return {
     status: {
       state: snapshot.value,
-      position: snapshot.context.position,
+      position: context.position,
     },
     handleButtonClick,
     isLoading,

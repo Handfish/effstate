@@ -1,89 +1,84 @@
 import { Atom, Result, useAtomValue } from "@effect-atom/atom-react";
-import { Effect } from "effect";
 import React from "react";
-import { interpret, type MachineActor } from "./machine.js";
-import type { MachineContext, MachineDefinition, MachineEvent, MachineSnapshot } from "./types.js";
+import type { MachineActor } from "./machine.js";
+import type { MachineContext, MachineEvent, MachineSnapshot } from "./types.js";
 
 // ============================================================================
-// Atom Integration
+// React Hook Result Type
 // ============================================================================
 
-export interface MachineAtomConfig<
-  TId extends string,
+export interface UseMachineResult<
   TStateValue extends string,
   TContext extends MachineContext,
   TEvent extends MachineEvent,
-  R,
-  E,
 > {
-  readonly machine: MachineDefinition<TId, TStateValue, TContext, TEvent, R, E>;
+  /** Current state snapshot */
+  readonly snapshot: MachineSnapshot<TStateValue, TContext>;
+  /** Send an event to the machine */
+  readonly send: (event: TEvent) => void;
+  /** Whether the machine is still initializing */
+  readonly isLoading: boolean;
+  /** Check if machine is in a specific state */
+  readonly matches: (state: TStateValue) => boolean;
+  /** Current state value */
+  readonly state: TStateValue;
+  /** Current context */
+  readonly context: TContext;
 }
 
+// ============================================================================
+// Hook Factory
+// ============================================================================
+
 /**
- * Create atoms for a state machine that integrate with @effect-atom
+ * Create a React hook for using a state machine.
+ *
+ * This is the type-safe way to integrate with @effect-atom.
+ * You create the atoms directly with your runtime (full inference),
+ * then pass them here to get a typed hook.
  *
  * @example
  * ```ts
- * const { actorAtom, snapshotAtom, useMachine } = createMachineAtoms({
- *   runtime: appRuntime,
- *   machine: toggleMachine,
- * })
+ * // Create atoms with full type inference from appRuntime
+ * const actorAtom = appRuntime
+ *   .atom(interpret(myMachine))
+ *   .pipe(Atom.keepAlive);
+ *
+ * const snapshotAtom = appRuntime
+ *   .subscriptionRef((get) =>
+ *     Effect.gen(function* () {
+ *       const actor = yield* get.result(actorAtom);
+ *       return actor.snapshotRef;
+ *     })
+ *   )
+ *   .pipe(Atom.keepAlive);
+ *
+ * // Create the hook with full type safety
+ * const useMachine = createUseMachineHook(
+ *   actorAtom,
+ *   snapshotAtom,
+ *   myMachine.initialSnapshot,
+ * );
  * ```
  */
-export function createMachineAtoms<
-  TId extends string,
+export const createUseMachineHook = <
   TStateValue extends string,
   TContext extends MachineContext,
   TEvent extends MachineEvent,
-  R,
-  E,
 >(
-  runtime: {
-    atom: <A, E2, R2>(effect: Effect.Effect<A, E2, R2>) => Atom.Atom<Result.Result<A, E2>>;
-    subscriptionRef: <A, E2>(
-      fn: (get: any) => Effect.Effect<import("effect").SubscriptionRef.SubscriptionRef<A>, E2, any>,
-    ) => Atom.Atom<Result.Result<A, E2>>;
-  },
-  config: MachineAtomConfig<TId, TStateValue, TContext, TEvent, R, E>,
-): {
-  actorAtom: Atom.Atom<Result.Result<MachineActor<TStateValue, TContext, TEvent>, never>>;
-  snapshotAtom: Atom.Atom<Result.Result<unknown, unknown>>;
-  useMachine: () => {
-    snapshot: MachineSnapshot<TStateValue, TContext>;
-    send: (event: TEvent) => void;
-    isLoading: boolean;
-    matches: (state: TStateValue) => boolean;
-  };
-} {
-  // Actor atom - creates and holds the interpreter
-  const actorAtom = runtime
-    .atom(interpret(config.machine))
-    .pipe(Atom.keepAlive);
-
-  // Snapshot atom - reactive state using subscriptionRef
-  const snapshotAtom = runtime
-    .subscriptionRef((get: any) =>
-      Effect.gen(function* () {
-        const actor = yield* get.result(actorAtom);
-        return actor.snapshotRef;
-      }),
-    )
-    .pipe(Atom.keepAlive);
-
-  // React hook for using the machine
-  const useMachine = (): {
-    snapshot: MachineSnapshot<TStateValue, TContext>;
-    send: (event: TEvent) => void;
-    isLoading: boolean;
-    matches: (state: TStateValue) => boolean;
-  } => {
+  actorAtom: Atom.Atom<Result.Result<MachineActor<TStateValue, TContext, TEvent>, never>>,
+  snapshotAtom: Atom.Atom<Result.Result<MachineSnapshot<TStateValue, TContext>, never>>,
+  initialSnapshot: MachineSnapshot<TStateValue, TContext>,
+): (() => UseMachineResult<TStateValue, TContext, TEvent>) => {
+  return function useMachine(): UseMachineResult<TStateValue, TContext, TEvent> {
     const actorResult = useAtomValue(actorAtom);
     const snapshotResult = useAtomValue(snapshotAtom);
 
     const send = React.useCallback(
       (event: TEvent) => {
-        if (actorResult._tag !== "Success") return;
-        actorResult.value.send(event);
+        if (actorResult._tag === "Success") {
+          actorResult.value.send(event);
+        }
       },
       [actorResult],
     );
@@ -91,9 +86,7 @@ export function createMachineAtoms<
     const isLoading = actorResult._tag !== "Success" || snapshotResult._tag !== "Success";
 
     const snapshot: MachineSnapshot<TStateValue, TContext> =
-      snapshotResult._tag === "Success"
-        ? (snapshotResult.value as MachineSnapshot<TStateValue, TContext>)
-        : config.machine.initialSnapshot;
+      snapshotResult._tag === "Success" ? snapshotResult.value : initialSnapshot;
 
     const matches = React.useCallback(
       (state: TStateValue) => snapshot.value === state,
@@ -105,15 +98,11 @@ export function createMachineAtoms<
       send,
       isLoading,
       matches,
+      state: snapshot.value,
+      context: snapshot.context,
     };
   };
-
-  return {
-    actorAtom,
-    snapshotAtom,
-    useMachine,
-  };
-}
+};
 
 // ============================================================================
 // Selector Helpers
@@ -122,24 +111,15 @@ export function createMachineAtoms<
 /**
  * Create a selector for extracting values from context
  */
-export function selectContext<
-  TContext extends MachineContext,
-  TSelected,
->(
-  selector: (context: TContext) => TSelected,
-): <TStateValue extends string>(
-  snapshot: MachineSnapshot<TStateValue, TContext>,
-) => TSelected {
-  return (snapshot) => selector(snapshot.context);
-}
+export const selectContext =
+  <TContext extends MachineContext, TSelected>(selector: (context: TContext) => TSelected) =>
+  <TStateValue extends string>(snapshot: MachineSnapshot<TStateValue, TContext>): TSelected =>
+    selector(snapshot.context);
 
 /**
  * Create a selector for checking current state
  */
-export function selectState<TStateValue extends string>(
-  state: TStateValue,
-): <TContext extends MachineContext>(
-  snapshot: MachineSnapshot<TStateValue, TContext>,
-) => boolean {
-  return (snapshot) => snapshot.value === state;
-}
+export const selectState =
+  <TStateValue extends string>(state: TStateValue) =>
+  <TContext extends MachineContext>(snapshot: MachineSnapshot<TStateValue, TContext>): boolean =>
+    snapshot.value === state;

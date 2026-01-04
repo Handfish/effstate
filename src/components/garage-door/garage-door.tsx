@@ -1,10 +1,17 @@
 import { Button } from "@/components/ui/button";
 import {
+  type GarageDoorState,
   getButtonLabel,
   getStateLabel,
   useGarageDoor,
 } from "@/data-access/garage-door-operations";
 import { cn } from "@/lib/utils";
+
+const isPaused = (state: GarageDoorState): boolean =>
+  state === "paused-while-opening" || state === "paused-while-closing";
+
+const isAnimating = (state: GarageDoorState): boolean =>
+  state === "opening" || state === "closing";
 
 export const GarageDoor = () => {
   const { status, handleButtonClick, isLoading } = useGarageDoor();
@@ -85,9 +92,9 @@ export const GarageDoor = () => {
         onClick={handleButtonClick}
         size="lg"
         variant={
-          status.state.includes("paused")
+          isPaused(status.state)
             ? "secondary"
-            : status.state === "opening" || status.state === "closing"
+            : isAnimating(status.state)
               ? "destructive"
               : "default"
         }

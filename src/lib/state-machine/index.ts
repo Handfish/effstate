@@ -27,4 +27,9 @@ export { assign, effect, log, raise } from "./actions.js";
 export { and, guard, guardEffect, not, or } from "./guards.js";
 
 // Atom integration
-export { createMachineAtoms, selectContext, selectState } from "./atom.js";
+export {
+  createUseMachineHook,
+  selectContext,
+  selectState,
+  type UseMachineResult,
+} from "./atom.js";
