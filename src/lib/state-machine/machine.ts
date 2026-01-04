@@ -1,4 +1,5 @@
 import { Duration, Effect, Exit, Fiber, Scope } from "effect";
+// Note: Exit is still used for effect action error handling
 import type {
   Action,
   ActionEnqueuer,
@@ -14,9 +15,7 @@ import type {
   TransitionConfig,
 } from "./types.js";
 import {
-  ObserverError,
   EffectActionError,
-  GuardError,
   ActivityError,
 } from "./types.js";
 
@@ -169,18 +168,8 @@ export function interpret<
   };
 
   const notifyObservers = () => {
-    let index = 0;
     observers.forEach((observer) => {
-      try {
-        observer(snapshot);
-      } catch (cause) {
-        emitError(new ObserverError({
-          message: `Observer at index ${index} threw an error`,
-          observerIndex: index,
-          cause,
-        }));
-      }
-      index++;
+      try { observer(snapshot); } catch { /* isolate only */ }
     });
   };
 
@@ -288,12 +277,11 @@ export function interpret<
     if (!transitionConfig) return;
 
     if (transitionConfig.guard) {
-      const allowed = evaluateGuardSync(
-        transitionConfig.guard as Guard<TContext, TEvent, R, E>,
-        snapshot.context,
-        event,
-      );
-      if (!allowed) return;
+      // Cast guard to accept the event (narrowed event type is compatible)
+      const guardFn = transitionConfig.guard as Guard<TContext, TEvent>;
+      if (!guardFn({ context: snapshot.context, event })) {
+        return;
+      }
     }
 
     const targetState = transitionConfig.target ?? snapshot.value;
@@ -442,42 +430,6 @@ export function interpret<
       }
     }
     return ctx;
-  };
-
-  const evaluateGuardSync = (
-    guard: Guard<TContext, TEvent, any, any>,
-    context: TContext,
-    event: TEvent,
-  ): boolean => {
-    switch (guard._tag) {
-      case "sync":
-        return guard.fn({ context, event });
-      case "effect": {
-        // Effect guards must complete synchronously - use Exit for error handling
-        const exit = Effect.runSyncExit(
-          (guard.fn({ context, event }) as Effect.Effect<boolean>).pipe(
-            Effect.catchAll((cause) => {
-              emitError(new GuardError({
-                message: "Guard effect failed with typed error",
-                cause,
-              }));
-              return Effect.succeed(false);
-            }),
-          ),
-        );
-        return Exit.match(exit, {
-          onFailure: (cause) => {
-            // Handles async execution errors and other defects
-            emitError(new GuardError({
-              message: "Guard effect failed (must complete synchronously)",
-              cause,
-            }));
-            return false;
-          },
-          onSuccess: (result) => result,
-        });
-      }
-    }
   };
 
   const stopAllActivities = () => {

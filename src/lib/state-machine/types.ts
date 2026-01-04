@@ -88,29 +88,11 @@ export interface EmittedEvent {
 // ============================================================================
 
 /**
- * Error thrown when an observer callback fails
- */
-export class ObserverError extends Data.TaggedError("ObserverError")<{
-  readonly message: string;
-  readonly observerIndex: number;
-  readonly cause?: unknown;
-}> {}
-
-/**
  * Error thrown when an effect action fails
  */
 export class EffectActionError extends Data.TaggedError("EffectActionError")<{
   readonly message: string;
   readonly actionId?: string;
-  readonly cause?: unknown;
-}> {}
-
-/**
- * Error thrown when a guard effect fails
- */
-export class GuardError extends Data.TaggedError("GuardError")<{
-  readonly message: string;
-  readonly guardId?: string;
   readonly cause?: unknown;
 }> {}
 
@@ -127,9 +109,7 @@ export class ActivityError extends Data.TaggedError("ActivityError")<{
  * Union of all machine error types
  */
 export type StateMachineError =
-  | ObserverError
   | EffectActionError
-  | GuardError
   | ActivityError;
 
 /**
@@ -290,35 +270,17 @@ export type Action<
 // ============================================================================
 
 /**
- * Sync guard condition
+ * Guard condition - a pure synchronous predicate.
+ * Returns true to allow the transition, false to block it.
+ *
+ * For async validation, use the state machine pattern:
+ * transition to a "validating" state, run the async check as an effect,
+ * then raise an event based on the result.
  */
-export interface SyncGuard<
-  TContext extends MachineContext,
-  TEvent extends MachineEvent,
-> {
-  readonly _tag: "sync";
-  readonly fn: (params: { context: TContext; event: TEvent }) => boolean;
-}
-
-/**
- * Effect guard for async conditions
- */
-export interface EffectGuard<
-  TContext extends MachineContext,
-  TEvent extends MachineEvent,
-  R = never,
-  E = never,
-> {
-  readonly _tag: "effect";
-  readonly fn: (params: { context: TContext; event: TEvent }) => Effect.Effect<boolean, E, R>;
-}
-
 export type Guard<
   TContext extends MachineContext,
   TEvent extends MachineEvent,
-  R = never,
-  E = never,
-> = SyncGuard<TContext, TEvent> | EffectGuard<TContext, TEvent, R, E>;
+> = (params: { context: TContext; event: TEvent }) => boolean;
 
 // ============================================================================
 // Transition Types
@@ -332,7 +294,7 @@ export interface TransitionConfig<
   E = never,
 > {
   readonly target?: TStateValue;
-  readonly guard?: Guard<TContext, TEvent, R, E>;
+  readonly guard?: Guard<TContext, TEvent>;
   readonly actions?: ReadonlyArray<Action<TContext, TEvent, R, E>>;
   /** Optional ID for delayed transitions (used with cancel()) */
   readonly id?: string;
@@ -382,7 +344,7 @@ export interface NarrowedTransitionConfig<
   E = never,
 > {
   readonly target?: TStateValue;
-  readonly guard?: Guard<TContext, EventByTag<TEvent, TEventTag>, R, E>;
+  readonly guard?: Guard<TContext, EventByTag<TEvent, TEventTag>>;
   readonly actions?: ReadonlyArray<Action<TContext, EventByTag<TEvent, TEventTag>, R, E>>;
 }
 

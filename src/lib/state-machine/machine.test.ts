@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { Data, Effect, Ref } from "effect";
 import { createMachine, interpret } from "./machine";
 import { assign, effect, raise, cancel, emit, enqueueActions, spawnChild, stopChild, sendTo, sendParent, forwardTo } from "./actions";
-import { guard, guardEffect, and, or, not } from "./guards";
+import { guard, and, or, not } from "./guards";
 
 // ============================================================================
 // Test Event Types
@@ -1113,116 +1113,6 @@ describe("guard combinators", () => {
 
           const snapshot = actor.getSnapshot();
           expect(snapshot.value).toBe("a"); // NOT true = false
-        }),
-      ),
-    );
-  });
-});
-
-// ============================================================================
-// guardEffect - Async Guards
-// ============================================================================
-
-describe("guardEffect (effect-based guards)", () => {
-  it("allows transition when effect guard resolves to true", async () => {
-    // Note: Effect guards must complete synchronously (no Effect.sleep).
-    // Use for guards that need Effect context (services, refs) but resolve immediately.
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
-      id: "test",
-      initial: "a",
-      context: { count: 10, log: [] },
-      states: {
-        a: {
-          on: {
-            TOGGLE: {
-              target: "b",
-              guard: guardEffect(({ context }) =>
-                Effect.succeed(context.count > 5), // Sync Effect guard
-              ),
-            },
-          },
-        },
-        b: {},
-      },
-    });
-
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const actor = interpret(machine);
-          actor.send(new Toggle());
-
-          const snapshot = actor.getSnapshot();
-          expect(snapshot.value).toBe("b");
-        }),
-      ),
-    );
-  });
-
-  it("blocks transition when async guard resolves to false", async () => {
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
-      id: "test",
-      initial: "a",
-      context: { count: 3, log: [] },
-      states: {
-        a: {
-          on: {
-            TOGGLE: {
-              target: "b",
-              guard: guardEffect(({ context }) =>
-                Effect.gen(function* () {
-                  yield* Effect.sleep("5 millis");
-                  return context.count > 5;
-                }),
-              ),
-            },
-          },
-        },
-        b: {},
-      },
-    });
-
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const actor = interpret(machine);
-          actor.send(new Toggle());
-          yield* Effect.sleep("20 millis");
-
-          const snapshot = actor.getSnapshot();
-          expect(snapshot.value).toBe("a"); // Should NOT transition
-        }),
-      ),
-    );
-  });
-
-  it("blocks transition when async guard fails (error)", async () => {
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
-      id: "test",
-      initial: "a",
-      context: { count: 10, log: [] },
-      states: {
-        a: {
-          on: {
-            TOGGLE: {
-              target: "b",
-              guard: guardEffect(() => Effect.fail("async error").pipe(Effect.orElseSucceed(() => false))),
-            },
-          },
-        },
-        b: {},
-      },
-    });
-
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const actor = interpret(machine);
-          actor.send(new Toggle());
-          yield* Effect.sleep("10 millis");
-
-          const snapshot = actor.getSnapshot();
-          expect(snapshot.value).toBe("a"); // Error = blocked
         }),
       ),
     );
@@ -2809,8 +2699,8 @@ describe("forwardTo (forward current event to another actor)", () => {
 // ============================================================================
 
 describe("onError (error handling)", () => {
-  it("emits ObserverError when observer throws", async () => {
-    const errors: Array<{ _tag: string; message: string }> = [];
+  it("isolates observer errors without crashing other observers", async () => {
+    const calls: string[] = [];
 
     const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
       id: "test",
@@ -2822,79 +2712,24 @@ describe("onError (error handling)", () => {
       },
     });
 
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const actor = interpret(machine);
+    const actor = interpret(machine);
 
-          // Add an observer that throws
-          actor.subscribe(() => {
-            throw new Error("Observer crashed!");
-          });
-
-          // Subscribe to errors
-          actor.onError((error) => {
-            errors.push({ _tag: error._tag, message: error.message });
-          });
-
-          actor.send(new Toggle());
-          yield* Effect.sleep("20 millis");
-
-          expect(errors.length).toBeGreaterThan(0);
-          expect(errors[0]?._tag).toBe("ObserverError");
-          expect(errors[0]?.message).toContain("Observer at index");
-        }),
-      ),
-    );
-  });
-
-  it("emits GuardError when guard effect is async", async () => {
-    const errors: Array<{ _tag: string; message: string }> = [];
-
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
-      id: "test",
-      initial: "a",
-      context: { count: 0, log: [] },
-      states: {
-        a: {
-          on: {
-            TOGGLE: {
-              target: "b",
-              guard: guardEffect(() =>
-                Effect.gen(function* () {
-                  yield* Effect.sleep("10 millis"); // This makes it async
-                  return true;
-                }),
-              ),
-            },
-          },
-        },
-        b: {},
-      },
+    // First observer throws
+    actor.subscribe(() => {
+      calls.push("observer1-before");
+      throw new Error("Observer crashed!");
     });
 
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const actor = interpret(machine);
+    // Second observer should still be called
+    actor.subscribe(() => {
+      calls.push("observer2");
+    });
 
-          actor.onError((error) => {
-            errors.push({ _tag: error._tag, message: error.message });
-          });
+    actor.send(new Toggle());
 
-          actor.send(new Toggle());
-          yield* Effect.sleep("20 millis");
-
-          // Guard should fail because it's async
-          const snapshot = actor.getSnapshot();
-          expect(snapshot.value).toBe("a"); // Transition blocked
-
-          expect(errors.length).toBeGreaterThan(0);
-          expect(errors[0]?._tag).toBe("GuardError");
-          expect(errors[0]?.message).toContain("synchronously");
-        }),
-      ),
-    );
+    // Both observers were attempted, second succeeded
+    expect(calls).toContain("observer1-before");
+    expect(calls).toContain("observer2");
   });
 
   it("emits EffectActionError when effect action fails", async () => {
@@ -2941,13 +2776,27 @@ describe("onError (error handling)", () => {
   it("unsubscribe removes error handler", async () => {
     const errors: string[] = [];
 
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent, never, string>({
       id: "test",
       initial: "a",
       context: { count: 0, log: [] },
       states: {
-        a: { on: { TOGGLE: { target: "b" } } },
-        b: { on: { TOGGLE: { target: "a" } } },
+        a: {
+          on: {
+            TOGGLE: {
+              target: "b",
+              actions: [effect(() => Effect.fail("error1"))],
+            },
+          },
+        },
+        b: {
+          on: {
+            TOGGLE: {
+              target: "a",
+              actions: [effect(() => Effect.fail("error2"))],
+            },
+          },
+        },
       },
     });
 
@@ -2956,24 +2805,21 @@ describe("onError (error handling)", () => {
         Effect.gen(function* () {
           const actor = interpret(machine);
 
-          actor.subscribe(() => {
-            throw new Error("crash");
-          });
-
           const unsub = actor.onError((error) => {
             errors.push(error._tag);
           });
 
           actor.send(new Toggle()); // First error
-          yield* Effect.sleep("20 millis");
+          yield* Effect.sleep("50 millis");
 
           unsub(); // Remove error handler
 
           actor.send(new Toggle()); // Second error - should NOT be caught
-          yield* Effect.sleep("20 millis");
+          yield* Effect.sleep("50 millis");
 
           // Only one error should be recorded
           expect(errors).toHaveLength(1);
+          expect(errors[0]).toBe("EffectActionError");
         }),
       ),
     );

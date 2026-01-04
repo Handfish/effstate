@@ -6,7 +6,6 @@ export type {
   AssignAction,
   CancelAction,
   EffectAction,
-  EffectGuard,
   EmitAction,
   EmittedEvent,
   EnqueueActionsAction,
@@ -27,15 +26,12 @@ export type {
   StateNodeConfig,
   StateMachineError,
   StopChildAction,
-  SyncGuard,
   TransitionConfig,
 } from "./types.js";
 
 // Error types (Effect TaggedErrors)
 export {
-  ObserverError,
   EffectActionError,
-  GuardError,
   ActivityError,
 } from "./types.js";
 
@@ -46,7 +42,7 @@ export { createMachine, interpret, type MachineActor } from "./machine.js";
 export { assign, cancel, effect, emit, enqueueActions, forwardTo, log, raise, sendParent, sendTo, spawnChild, stopChild } from "./actions.js";
 
 // Guards
-export { and, guard, guardEffect, not, or } from "./guards.js";
+export { and, guard, not, or } from "./guards.js";
 
 // Atom integration
 export {
