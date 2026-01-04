@@ -102,11 +102,12 @@ export const interpret = <
 
     const commandQueue = yield* Queue.unbounded<TEvent>();
     const activityFibersRef = yield* Effect.sync(() => new Map<string, Fiber.RuntimeFiber<void, never>>());
+    const send = (event: TEvent) => commandQueue.unsafeOffer(event);
 
     // Run entry actions for initial state
     const initialState = machine.config.states[machine.initialSnapshot.value];
     if (initialState?.entry) {
-      yield* runActions(initialState.entry, machine.initialSnapshot.context, { _tag: "$init" } as TEvent);
+      yield* runActions(initialState.entry, machine.initialSnapshot.context, { _tag: "$init" } as TEvent, send);
     }
 
     // Start activities for initial state
@@ -115,7 +116,7 @@ export const interpret = <
         initialState.activities,
         machine.initialSnapshot.context,
         { _tag: "$init" } as TEvent,
-        (event) => commandQueue.unsafeOffer(event),
+        send,
         activityFibersRef,
       );
     }
@@ -135,6 +136,80 @@ export const interpret = <
         Effect.gen(function* () {
           const snapshot = yield* SubscriptionRef.get(snapshotRef);
           const stateConfig = machine.config.states[snapshot.value];
+
+          // Handle $after events (delayed transitions)
+          if (event._tag === "$after") {
+            const afterEvent = event as unknown as { _tag: "$after"; delay: number | string };
+            const afterConfig = stateConfig?.after;
+            if (!afterConfig) return;
+
+            // Find the matching transition config
+            let transitionConfig: TransitionConfig<TStateValue, TContext, TEvent, R, E> | undefined;
+            if ("delay" in afterConfig && "transition" in afterConfig) {
+              transitionConfig = afterConfig.transition as TransitionConfig<TStateValue, TContext, TEvent, R, E>;
+            } else {
+              const delays = afterConfig as Record<number, TransitionConfig<TStateValue, TContext, TEvent, R, E>>;
+              transitionConfig = delays[Number(afterEvent.delay)];
+            }
+
+            if (!transitionConfig?.target) return;
+
+            const targetState = transitionConfig.target;
+            let newContext = snapshot.context;
+
+            // Run exit actions
+            if (stateConfig?.exit) {
+              yield* runActions(stateConfig.exit, newContext, event, send);
+            }
+
+            // Stop activities
+            yield* stopAllActivities(activityFibersRef);
+
+            // Run transition actions
+            if (transitionConfig.actions) {
+              newContext = yield* runActionsWithContext(
+                transitionConfig.actions as ReadonlyArray<Action<TContext, TEvent, R, E>>,
+                newContext,
+                event,
+                send,
+              );
+            }
+
+            // Run entry actions
+            const targetStateConfig = machine.config.states[targetState];
+            if (targetStateConfig?.entry) {
+              newContext = yield* runActionsWithContext(targetStateConfig.entry, newContext, event, send);
+            }
+
+            // Update snapshot
+            const newSnapshot: MachineSnapshot<TStateValue, TContext> = {
+              value: targetState,
+              context: newContext,
+              event,
+            };
+            yield* SubscriptionRef.set(snapshotRef, newSnapshot);
+
+            // Start activities for new state
+            if (targetStateConfig?.activities) {
+              yield* startActivities(
+                targetStateConfig.activities,
+                newContext,
+                event,
+                send,
+                activityFibersRef,
+              );
+            }
+
+            // Handle delayed transitions for new state
+            if (targetStateConfig?.after) {
+              yield* handleAfterTransition(targetStateConfig.after, newSnapshot, commandQueue);
+            }
+
+            yield* Effect.log(
+              `[${machine.id}] ${snapshot.value} -> ${targetState} ($after)`,
+            );
+            return;
+          }
 
           if (!stateConfig?.on) return;
 
@@ -161,7 +236,7 @@ export const interpret = <
 
           // Run exit actions if transitioning
           if (isTransition && stateConfig.exit) {
-            yield* runActions(stateConfig.exit, newContext, event);
+            yield* runActions(stateConfig.exit, newContext, event, send);
           }
 
           // Stop activities if transitioning
@@ -175,13 +250,14 @@ export const interpret = <
               transitionConfig.actions as ReadonlyArray<Action<TContext, TEvent, R, E>>,
               newContext,
               event,
+              send,
             );
           }
 
           // Run entry actions if transitioning
           const targetStateConfig = machine.config.states[targetState];
           if (isTransition && targetStateConfig?.entry) {
-            newContext = yield* runActionsWithContext(targetStateConfig.entry, newContext, event);
+            newContext = yield* runActionsWithContext(targetStateConfig.entry, newContext, event, send);
           }
 
           // Update snapshot
@@ -198,7 +274,7 @@ export const interpret = <
               targetStateConfig.activities,
               newContext,
               event,
-              (e) => commandQueue.unsafeOffer(e),
+              send,
               activityFibersRef,
             );
           }
@@ -232,6 +308,7 @@ const runActions = <TContext extends MachineContext, TEvent extends MachineEvent
   actions: ReadonlyArray<Action<TContext, TEvent, any, any>>,
   context: TContext,
   event: TEvent,
+  send: (event: TEvent) => void,
 ): Effect.Effect<void, never, any> =>
   Effect.forEach(actions, (action) => {
     switch (action._tag) {
@@ -239,8 +316,13 @@ const runActions = <TContext extends MachineContext, TEvent extends MachineEvent
         return Effect.void;
       case "effect":
         return action.fn({ context, event }).pipe(Effect.catchAll(() => Effect.void));
-      case "raise":
+      case "raise": {
+        const raisedEvent = typeof action.event === "function"
+          ? action.event({ context, event })
+          : action.event;
+        send(raisedEvent);
         return Effect.void;
+      }
     }
   }, { discard: true });
 
@@ -248,6 +330,7 @@ const runActionsWithContext = <TContext extends MachineContext, TEvent extends M
   actions: ReadonlyArray<Action<TContext, TEvent, any, any>>,
   context: TContext,
   event: TEvent,
+  send: (event: TEvent) => void,
 ): Effect.Effect<TContext, never, any> =>
   Effect.reduce(actions, context, (ctx, action) => {
     switch (action._tag) {
@@ -260,8 +343,13 @@ const runActionsWithContext = <TContext extends MachineContext, TEvent extends M
           Effect.catchAll(() => Effect.void),
           Effect.map(() => ctx),
         );
-      case "raise":
+      case "raise": {
+        const raisedEvent = typeof action.event === "function"
+          ? action.event({ context: ctx, event })
+          : action.event;
+        send(raisedEvent);
         return Effect.succeed(ctx);
+      }
     }
   });
 
