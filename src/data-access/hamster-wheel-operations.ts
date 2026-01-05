@@ -252,7 +252,9 @@ const saveState = (actor: MachineActor<HamsterWheelState, HamsterWheelContext, H
 
     // Schema.encodeSync handles Date -> string conversion via DateFromString
     const encoded = Schema.encodeSync(PersistedStateSchema)(state);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(encoded));
+    const json = JSON.stringify(encoded);
+    console.log("[SaveState] Saving to localStorage:", state.parent.value);
+    localStorage.setItem(STORAGE_KEY, json);
   } catch (e) {
     console.warn("Failed to save state:", e);
   }
@@ -302,33 +304,72 @@ const loadState = (): {
 };
 
 // ============================================================================
-// Atom Integration with Cross-Tab Sync
+// Atom Integration with Cross-Tab/Window Sync
 // ============================================================================
 
 // Module-level state for cross-tab sync
 let currentActor: MachineActor<HamsterWheelState, HamsterWheelContext, HamsterWheelEvent> | null = null;
 let isSyncing = false;
 
-// Set up visibility change handler once at module level
-if (typeof document !== "undefined") {
+// Check if this window is the focused one (leader)
+const isLeader = () => typeof document !== "undefined" && document.hasFocus();
+
+if (typeof window !== "undefined") {
+  // Sync from storage when window gains focus
+  const syncFromStorageIfNeeded = () => {
+    if (!currentActor) return;
+    const loaded = loadState();
+    if (loaded) {
+      isSyncing = true;
+      currentActor._syncSnapshot(loaded.snapshot, loaded.childSnapshots);
+      isSyncing = false;
+      console.log("[Sync] Synced from storage, now state:", loaded.snapshot.value);
+    }
+  };
+
+  // Handle window focus - sync when we gain focus
+  window.addEventListener("focus", () => {
+    console.log("[Focus] Window gained focus, syncing from storage...");
+    syncFromStorageIfNeeded();
+  });
+
+  // Handle tab visibility changes
   document.addEventListener("visibilitychange", () => {
     if (!currentActor) return;
 
     if (document.hidden) {
-      // Tab lost focus - save state immediately
-      console.log("[CrossTabSync] Tab lost focus, saving state");
+      // Tab hidden - save state before going to background
+      console.log("[Visibility] Tab hidden, saving state");
       saveState(currentActor);
     } else {
-      // Tab gained focus - sync from storage
-      console.log("[CrossTabSync] Tab gained focus, syncing from storage");
-      const loaded = loadState();
-      if (loaded) {
-        isSyncing = true;
-        currentActor._syncSnapshot(loaded.snapshot, loaded.childSnapshots);
-        isSyncing = false;
-      }
+      // Tab visible - sync from storage
+      console.log("[Visibility] Tab visible, syncing from storage");
+      syncFromStorageIfNeeded();
     }
   });
+
+  // Handle storage changes from OTHER windows/tabs
+  window.addEventListener("storage", (event) => {
+    if (!currentActor) return;
+    if (event.key !== STORAGE_KEY) return;
+
+    // Only sync if we're NOT the focused window
+    // The focused window is the leader and shouldn't sync from followers
+    if (isLeader()) {
+      console.log("[Storage] Ignoring storage event - we are the leader (focused)");
+      return;
+    }
+
+    console.log("[Storage] Storage changed by another window, syncing...");
+    const loaded = loadState();
+    if (loaded) {
+      isSyncing = true;
+      currentActor._syncSnapshot(loaded.snapshot, loaded.childSnapshots);
+      isSyncing = false;
+    }
+  });
+
+  console.log("[CrossTabSync] Event listeners registered");
 }
 
 const actorAtom = appRuntime
@@ -350,13 +391,13 @@ const actorAtom = appRuntime
       // Store reference for cross-tab sync
       currentActor = actor;
 
-      // Throttled save - only when tab is focused, max every 500ms
+      // Throttled save - only when this window is the leader (focused)
       let saveTimeout: ReturnType<typeof setTimeout> | null = null;
       let pendingSave = false;
 
       const throttledSave = () => {
-        // Only save if this tab is focused and not syncing
-        if (typeof document !== "undefined" && document.hidden) return;
+        // Only save if we're the leader (focused window) and not syncing
+        if (!isLeader()) return;
         if (isSyncing) return;
 
         // If a save is already scheduled, just mark pending
@@ -372,12 +413,9 @@ const actorAtom = appRuntime
         saveTimeout = setTimeout(() => {
           saveTimeout = null;
           // If there were pending saves, do one final save
-          if (pendingSave && !isSyncing) {
-            const isActive = typeof document === "undefined" || !document.hidden;
-            if (isActive) {
-              pendingSave = false;
-              saveState(actor);
-            }
+          if (pendingSave && !isSyncing && isLeader()) {
+            pendingSave = false;
+            saveState(actor);
           }
         }, 500);
       };
