@@ -12,7 +12,7 @@ import {
   type MachineSnapshot,
   type MachineActor,
 } from "@/lib/state-machine";
-import { registerSyncCallbacks, useIsTabActive, getIsTabActive } from "@/lib/cross-tab-sync";
+import { useIsTabActive } from "@/lib/cross-tab-sync";
 import { Data, Duration, Effect, Schedule, Schema, Scope, Stream, SubscriptionRef } from "effect";
 import { useCallback } from "react";
 import {
@@ -305,35 +305,31 @@ const loadState = (): {
 // Atom Integration with Cross-Tab Sync
 // ============================================================================
 
-// Reference to the current actor for cross-tab sync
+// Module-level state for cross-tab sync
 let currentActor: MachineActor<HamsterWheelState, HamsterWheelContext, HamsterWheelEvent> | null = null;
-
-// Flag to prevent saving during sync
 let isSyncing = false;
 
-// Sync actor from storage (called when tab gains focus)
-const syncActorFromStorage = () => {
-  if (!currentActor) return;
+// Set up visibility change handler once at module level
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    if (!currentActor) return;
 
-  const persisted = loadState();
-  if (!persisted) return;
-
-  isSyncing = true;
-  currentActor._syncSnapshot(persisted.snapshot, persisted.childSnapshots);
-  isSyncing = false;
-};
-
-// Save current state immediately (called when tab loses focus)
-const saveActorState = () => {
-  if (!currentActor) return;
-  saveState(currentActor);
-};
-
-// Register cross-tab sync callbacks
-registerSyncCallbacks({
-  onFocusGained: syncActorFromStorage,
-  onFocusLost: saveActorState,
-});
+    if (document.hidden) {
+      // Tab lost focus - save state immediately
+      console.log("[CrossTabSync] Tab lost focus, saving state");
+      saveState(currentActor);
+    } else {
+      // Tab gained focus - sync from storage
+      console.log("[CrossTabSync] Tab gained focus, syncing from storage");
+      const loaded = loadState();
+      if (loaded) {
+        isSyncing = true;
+        currentActor._syncSnapshot(loaded.snapshot, loaded.childSnapshots);
+        isSyncing = false;
+      }
+    }
+  });
+}
 
 const actorAtom = appRuntime
   .atom(
@@ -344,7 +340,6 @@ const actorAtom = appRuntime
       const persisted = loadState();
 
       // Create actor with optional restored state
-      // Only pass options if we have persisted state (exactOptionalPropertyTypes requires this)
       const actor = yield* persisted
         ? interpret(hamsterWheelService.definition, {
             snapshot: persisted.snapshot,
@@ -361,11 +356,10 @@ const actorAtom = appRuntime
 
       const throttledSave = () => {
         // Only save if this tab is focused and not syncing
-        if (!getIsTabActive() || isSyncing) {
-          return;
-        }
+        if (typeof document !== "undefined" && document.hidden) return;
+        if (isSyncing) return;
 
-        // If a save is already scheduled, just mark that we have pending changes
+        // If a save is already scheduled, just mark pending
         if (saveTimeout) {
           pendingSave = true;
           return;
@@ -378,9 +372,12 @@ const actorAtom = appRuntime
         saveTimeout = setTimeout(() => {
           saveTimeout = null;
           // If there were pending saves, do one final save
-          if (pendingSave && !isSyncing && getIsTabActive()) {
-            pendingSave = false;
-            saveState(actor);
+          if (pendingSave && !isSyncing) {
+            const isActive = typeof document === "undefined" || !document.hidden;
+            if (isActive) {
+              pendingSave = false;
+              saveState(actor);
+            }
           }
         }, 500);
       };
@@ -390,7 +387,7 @@ const actorAtom = appRuntime
       return actor;
     }).pipe(
       // Provide machine service inline to avoid circular imports with app-runtime
-      Effect.provide(HamsterWheelMachineService.Default)
+      Effect.provide(HamsterWheelMachineService.Default),
     )
   )
   .pipe(Atom.keepAlive);
