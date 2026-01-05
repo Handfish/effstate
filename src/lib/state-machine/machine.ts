@@ -1,9 +1,14 @@
-import { Duration, Effect, Exit, Fiber, Runtime, Scope } from "effect";
+import { Cause, Duration, Effect, Exit, Fiber, Option, Runtime, Scope } from "effect";
 import type {
   Action,
   ActionEnqueuer,
   EmittedEvent,
   Guard,
+  InvokeConfig,
+  InvokeSuccessEvent,
+  InvokeFailureEvent,
+  InvokeDefectEvent,
+  InvokeInterruptEvent,
   MachineConfigSchema,
   MachineContext,
   MachineDefinition,
@@ -221,6 +226,7 @@ function createActor<
   const observers = new Set<(snapshot: MachineSnapshot<TStateValue, TContext>) => void>();
   const errorHandlers = new Set<(error: StateMachineError) => void>();
   const activityCleanups = new Map<string, () => void>();
+  const invokeCleanups = new Map<string, () => void>();
   const delayTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const listenersRef = new Map<string, Set<(event: EmittedEvent) => void>>();
   const childrenRef = new Map<string, MachineActor<any, any, any>>();
@@ -321,6 +327,7 @@ function createActor<
       }
 
       stopAllActivities();
+      stopAllInvokes();
 
       if (transitionConfig.actions) {
         newContext = runActionsSync(
@@ -341,7 +348,268 @@ function createActor<
         startActivities(targetStateConfig.activities, newContext, event);
       }
 
+      if (targetStateConfig?.invoke) {
+        startInvoke(targetStateConfig.invoke, newContext, event);
+      }
+
       if (targetStateConfig?.after) {
+        scheduleAfterTransition(targetStateConfig.after);
+      }
+
+      flushDeferred();
+      notifyObservers();
+      return;
+    }
+
+    // Handle $invoke.success events (also handles legacy $invoke.done)
+    if (event._tag === "$invoke.success") {
+      const successEvent = event as unknown as InvokeSuccessEvent;
+      const invokeConfig = stateConfig?.invoke;
+      const handler = invokeConfig?.onSuccess ?? invokeConfig?.onDone;
+      if (!handler) return;
+
+      // Clean up the invoke
+      invokeCleanups.delete(successEvent.id);
+
+      // Check guard if present
+      if (handler.guard) {
+        if (!handler.guard({ context: snapshot.context, event: successEvent })) {
+          return;
+        }
+      }
+
+      const targetState = handler.target ?? snapshot.value;
+      const isTransition = targetState !== snapshot.value;
+
+      let newContext = snapshot.context;
+
+      if (isTransition && stateConfig?.exit) {
+        newContext = runActionsSync(stateConfig.exit, newContext, event);
+      }
+
+      if (isTransition) {
+        stopAllActivities();
+        stopAllInvokes();
+      }
+
+      if (handler.actions) {
+        newContext = runActionsSync(
+          handler.actions as ReadonlyArray<Action<TContext, TEvent, R, E>>,
+          newContext,
+          successEvent as unknown as TEvent,
+        );
+      }
+
+      const targetStateConfig = machine.config.states[targetState];
+      if (isTransition && targetStateConfig?.entry) {
+        newContext = runActionsSync(targetStateConfig.entry, newContext, event);
+      }
+
+      snapshot = { value: targetState, context: newContext, event };
+
+      if (isTransition && targetStateConfig?.activities) {
+        startActivities(targetStateConfig.activities, newContext, event);
+      }
+
+      if (isTransition && targetStateConfig?.invoke) {
+        startInvoke(targetStateConfig.invoke, newContext, event);
+      }
+
+      if (isTransition && targetStateConfig?.after) {
+        scheduleAfterTransition(targetStateConfig.after);
+      }
+
+      flushDeferred();
+      notifyObservers();
+      return;
+    }
+
+    // Handle $invoke.failure events (typed errors with catchTags support)
+    if (event._tag === "$invoke.failure") {
+      const failureEvent = event as unknown as InvokeFailureEvent;
+      const invokeConfig = stateConfig?.invoke;
+
+      // Clean up the invoke
+      invokeCleanups.delete(failureEvent.id);
+
+      // First, check catchTags if error has _tag
+      let handler: { target?: TStateValue; guard?: Guard<TContext, unknown>; actions?: ReadonlyArray<Action<TContext, unknown, R, E>> } | undefined;
+
+      if (
+        invokeConfig?.catchTags &&
+        typeof failureEvent.error === "object" &&
+        failureEvent.error !== null &&
+        "_tag" in failureEvent.error
+      ) {
+        const errorTag = (failureEvent.error as { _tag: string })._tag;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        handler = (invokeConfig.catchTags as Record<string, any>)[errorTag];
+      }
+
+      // Fall back to onFailure or onError
+      if (!handler) {
+        handler = invokeConfig?.onFailure ?? invokeConfig?.onError;
+      }
+
+      if (!handler) return;
+
+      // Check guard if present
+      if (handler.guard) {
+        if (!(handler.guard as Guard<TContext, InvokeFailureEvent>)({ context: snapshot.context, event: failureEvent })) {
+          return;
+        }
+      }
+
+      const targetState = handler.target ?? snapshot.value;
+      const isTransition = targetState !== snapshot.value;
+
+      let newContext = snapshot.context;
+
+      if (isTransition && stateConfig?.exit) {
+        newContext = runActionsSync(stateConfig.exit, newContext, event);
+      }
+
+      if (isTransition) {
+        stopAllActivities();
+        stopAllInvokes();
+      }
+
+      if (handler.actions) {
+        newContext = runActionsSync(
+          handler.actions as ReadonlyArray<Action<TContext, TEvent, R, E>>,
+          newContext,
+          failureEvent as unknown as TEvent,
+        );
+      }
+
+      const targetStateConfig = machine.config.states[targetState];
+      if (isTransition && targetStateConfig?.entry) {
+        newContext = runActionsSync(targetStateConfig.entry, newContext, event);
+      }
+
+      snapshot = { value: targetState, context: newContext, event };
+
+      if (isTransition && targetStateConfig?.activities) {
+        startActivities(targetStateConfig.activities, newContext, event);
+      }
+
+      if (isTransition && targetStateConfig?.invoke) {
+        startInvoke(targetStateConfig.invoke, newContext, event);
+      }
+
+      if (isTransition && targetStateConfig?.after) {
+        scheduleAfterTransition(targetStateConfig.after);
+      }
+
+      flushDeferred();
+      notifyObservers();
+      return;
+    }
+
+    // Handle $invoke.defect events (unexpected errors)
+    if (event._tag === "$invoke.defect") {
+      const defectEvent = event as unknown as InvokeDefectEvent;
+      const invokeConfig = stateConfig?.invoke;
+
+      // Clean up the invoke
+      invokeCleanups.delete(defectEvent.id);
+
+      if (!invokeConfig?.onDefect) return;
+
+      const targetState = invokeConfig.onDefect.target ?? snapshot.value;
+      const isTransition = targetState !== snapshot.value;
+
+      let newContext = snapshot.context;
+
+      if (isTransition && stateConfig?.exit) {
+        newContext = runActionsSync(stateConfig.exit, newContext, event);
+      }
+
+      if (isTransition) {
+        stopAllActivities();
+        stopAllInvokes();
+      }
+
+      if (invokeConfig.onDefect.actions) {
+        newContext = runActionsSync(
+          invokeConfig.onDefect.actions as ReadonlyArray<Action<TContext, TEvent, R, E>>,
+          newContext,
+          defectEvent as unknown as TEvent,
+        );
+      }
+
+      const targetStateConfig = machine.config.states[targetState];
+      if (isTransition && targetStateConfig?.entry) {
+        newContext = runActionsSync(targetStateConfig.entry, newContext, event);
+      }
+
+      snapshot = { value: targetState, context: newContext, event };
+
+      if (isTransition && targetStateConfig?.activities) {
+        startActivities(targetStateConfig.activities, newContext, event);
+      }
+
+      if (isTransition && targetStateConfig?.invoke) {
+        startInvoke(targetStateConfig.invoke, newContext, event);
+      }
+
+      if (isTransition && targetStateConfig?.after) {
+        scheduleAfterTransition(targetStateConfig.after);
+      }
+
+      flushDeferred();
+      notifyObservers();
+      return;
+    }
+
+    // Handle $invoke.interrupt events
+    if (event._tag === "$invoke.interrupt") {
+      const interruptEvent = event as unknown as InvokeInterruptEvent;
+      const invokeConfig = stateConfig?.invoke;
+
+      // Clean up the invoke
+      invokeCleanups.delete(interruptEvent.id);
+
+      if (!invokeConfig?.onInterrupt) return;
+
+      const targetState = invokeConfig.onInterrupt.target ?? snapshot.value;
+      const isTransition = targetState !== snapshot.value;
+
+      let newContext = snapshot.context;
+
+      if (isTransition && stateConfig?.exit) {
+        newContext = runActionsSync(stateConfig.exit, newContext, event);
+      }
+
+      if (isTransition) {
+        stopAllActivities();
+        stopAllInvokes();
+      }
+
+      if (invokeConfig.onInterrupt.actions) {
+        newContext = runActionsSync(
+          invokeConfig.onInterrupt.actions as ReadonlyArray<Action<TContext, TEvent, R, E>>,
+          newContext,
+          interruptEvent as unknown as TEvent,
+        );
+      }
+
+      const targetStateConfig = machine.config.states[targetState];
+      if (isTransition && targetStateConfig?.entry) {
+        newContext = runActionsSync(targetStateConfig.entry, newContext, event);
+      }
+
+      snapshot = { value: targetState, context: newContext, event };
+
+      if (isTransition && targetStateConfig?.activities) {
+        startActivities(targetStateConfig.activities, newContext, event);
+      }
+
+      if (isTransition && targetStateConfig?.invoke) {
+        startInvoke(targetStateConfig.invoke, newContext, event);
+      }
+
+      if (isTransition && targetStateConfig?.after) {
         scheduleAfterTransition(targetStateConfig.after);
       }
 
@@ -374,6 +642,7 @@ function createActor<
 
     if (isTransition) {
       stopAllActivities();
+      stopAllInvokes();
     }
 
     if (transitionConfig.actions) {
@@ -393,6 +662,10 @@ function createActor<
 
     if (isTransition && targetStateConfig?.activities) {
       startActivities(targetStateConfig.activities, newContext, event);
+    }
+
+    if (isTransition && targetStateConfig?.invoke) {
+      startInvoke(targetStateConfig.invoke, newContext, event);
     }
 
     if (isTransition && targetStateConfig?.after) {
@@ -526,6 +799,13 @@ function createActor<
     activityCleanups.clear();
   };
 
+  const stopAllInvokes = () => {
+    invokeCleanups.forEach((cleanup) => {
+      try { cleanup(); } catch { /* ignore */ }
+    });
+    invokeCleanups.clear();
+  };
+
   const startActivities = (
     activities: ReadonlyArray<{
       readonly id: string;
@@ -564,6 +844,80 @@ function createActor<
     }
   };
 
+  const startInvoke = (
+    invoke: InvokeConfig<TStateValue, TContext, TEvent, unknown, unknown, R>,
+    context: TContext,
+    event: TEvent,
+  ) => {
+    const invokeId = invoke.id ?? `invoke-${Date.now()}`;
+
+    const invokeEffect = invoke.src({ context, event }).pipe(
+      Effect.matchCauseEffect({
+        onSuccess: (output) => {
+          if (!stopped) {
+            mailbox.enqueue({
+              _tag: "$invoke.success",
+              id: invokeId,
+              output,
+            } as unknown as TEvent);
+          }
+          return Effect.void;
+        },
+        onFailure: (cause) => {
+          if (stopped) return Effect.void;
+
+          // Check for interrupt first
+          if (Cause.isInterruptedOnly(cause)) {
+            mailbox.enqueue({
+              _tag: "$invoke.interrupt",
+              id: invokeId,
+            } as unknown as TEvent);
+            return Effect.void;
+          }
+
+          // Check for typed failure (E channel)
+          const failure = Cause.failureOption(cause);
+          if (Option.isSome(failure)) {
+            mailbox.enqueue({
+              _tag: "$invoke.failure",
+              id: invokeId,
+              error: failure.value,
+            } as unknown as TEvent);
+            return Effect.void;
+          }
+
+          // Check for defect (unexpected error)
+          const defect = Cause.dieOption(cause);
+          if (Option.isSome(defect)) {
+            mailbox.enqueue({
+              _tag: "$invoke.defect",
+              id: invokeId,
+              defect: defect.value,
+            } as unknown as TEvent);
+            return Effect.void;
+          }
+
+          // Fallback: treat as defect with the full cause
+          mailbox.enqueue({
+            _tag: "$invoke.defect",
+            id: invokeId,
+            defect: cause,
+          } as unknown as TEvent);
+          return Effect.void;
+        },
+      }),
+    );
+
+    // Fork the invoke effect
+    const fiber = runtime
+      ? Runtime.runFork(runtime)(invokeEffect as Effect.Effect<void, never, R>)
+      : Effect.runFork(invokeEffect as Effect.Effect<void>);
+
+    invokeCleanups.set(invokeId, () => {
+      Effect.runFork(Fiber.interrupt(fiber));
+    });
+  };
+
   const scheduleAfterTransition = (
     after: StateNodeConfig<TStateValue, TContext, TEvent, any, any>["after"],
   ) => {
@@ -600,6 +954,7 @@ function createActor<
   const stop = () => {
     stopped = true;
     stopAllActivities();
+    stopAllInvokes();
     delayTimers.forEach((timer) => clearTimeout(timer));
     delayTimers.clear();
     childrenRef.forEach((child) => child.stop());
@@ -670,6 +1025,11 @@ function createActor<
   // Start activities for initial state
   if (initialState?.activities) {
     startActivities(initialState.activities, snapshot.context, { _tag: "$init" } as TEvent);
+  }
+
+  // Start invoke for initial state
+  if (initialState?.invoke) {
+    startInvoke(initialState.invoke, snapshot.context, { _tag: "$init" } as TEvent);
   }
 
   // Handle delayed transitions for initial state

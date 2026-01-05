@@ -319,6 +319,184 @@ export interface ActivityConfig<
 }
 
 // ============================================================================
+// Invoke Types (for async operations with cause-aware error handling)
+// ============================================================================
+
+/**
+ * Internal event emitted when an invoke completes successfully
+ */
+export interface InvokeSuccessEvent<TOutput = unknown> {
+  readonly _tag: "$invoke.success";
+  readonly id: string;
+  readonly output: TOutput;
+}
+
+/**
+ * Internal event emitted when an invoke fails with a typed error (E channel)
+ */
+export interface InvokeFailureEvent<TError = unknown> {
+  readonly _tag: "$invoke.failure";
+  readonly id: string;
+  readonly error: TError;
+}
+
+/**
+ * Internal event emitted when an invoke fails with an unexpected error (defect)
+ */
+export interface InvokeDefectEvent {
+  readonly _tag: "$invoke.defect";
+  readonly id: string;
+  readonly defect: unknown;
+}
+
+/**
+ * Internal event emitted when an invoke is interrupted
+ */
+export interface InvokeInterruptEvent {
+  readonly _tag: "$invoke.interrupt";
+  readonly id: string;
+}
+
+/** @deprecated Use InvokeSuccessEvent instead */
+export type InvokeDoneEvent<TOutput = unknown> = InvokeSuccessEvent<TOutput>;
+
+/** @deprecated Use InvokeFailureEvent instead */
+export type InvokeErrorEvent<TError = unknown> = InvokeFailureEvent<TError>;
+
+/**
+ * Helper type to extract tagged error types from an error union
+ */
+export type TaggedError = { readonly _tag: string };
+
+/**
+ * Extract the specific error type from a union based on its _tag field
+ */
+export type ErrorByTag<TError, TTag extends string> = Extract<TError, { _tag: TTag }>;
+
+/**
+ * Invoke configuration for async operations.
+ * Uses Effect's Cause to distinguish between typed failures, defects, and interrupts.
+ *
+ * @example Basic usage
+ * ```ts
+ * loading: {
+ *   invoke: {
+ *     id: "fetchUser",
+ *     src: ({ context }) => fetchUser(context.userId),
+ *     onSuccess: {
+ *       target: "ready",
+ *       actions: [assign(({ event }) => ({ user: event.output }))],
+ *     },
+ *     onFailure: {
+ *       target: "error",
+ *       actions: [assign(({ event }) => ({ error: event.error }))],
+ *     },
+ *   },
+ * }
+ * ```
+ *
+ * @example With catchTags for typed error handling
+ * ```ts
+ * loading: {
+ *   invoke: {
+ *     src: () => fetchUser(), // Effect<User, NetworkError | ValidationError, R>
+ *     onSuccess: { target: "ready" },
+ *     catchTags: {
+ *       NetworkError: { target: "retry" },
+ *       ValidationError: { target: "invalid" },
+ *     },
+ *     onFailure: { target: "error" }, // Fallback for unhandled errors
+ *     onDefect: { target: "crashed" }, // Unexpected throws
+ *   },
+ * }
+ * ```
+ */
+export interface InvokeConfig<
+  TStateValue extends string,
+  TContext extends MachineContext,
+  TEvent extends MachineEvent,
+  TOutput = unknown,
+  TError = unknown,
+  R = never,
+> {
+  /** Unique identifier for this invoke (used for cancellation) */
+  readonly id?: string;
+
+  /** Effect to execute - receives context and triggering event */
+  readonly src: (params: {
+    context: TContext;
+    event: TEvent;
+  }) => Effect.Effect<TOutput, TError, R>;
+
+  /**
+   * Transition when Effect succeeds.
+   * Receives InvokeSuccessEvent with the output value.
+   */
+  readonly onSuccess?: {
+    readonly target?: TStateValue;
+    readonly guard?: Guard<TContext, InvokeSuccessEvent<TOutput>>;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeSuccessEvent<TOutput>, R, never>>;
+  };
+
+  /** @deprecated Use onSuccess instead */
+  readonly onDone?: {
+    readonly target?: TStateValue;
+    readonly guard?: Guard<TContext, InvokeSuccessEvent<TOutput>>;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeSuccessEvent<TOutput>, R, never>>;
+  };
+
+  /**
+   * Handle specific tagged error types differently.
+   * Only works with errors that have a `_tag` property (e.g., Data.TaggedError).
+   * Takes precedence over onFailure for matching error tags.
+   */
+  readonly catchTags?: TError extends TaggedError
+    ? {
+        readonly [K in TError["_tag"]]?: {
+          readonly target?: TStateValue;
+          readonly guard?: Guard<TContext, InvokeFailureEvent<ErrorByTag<TError, K>>>;
+          readonly actions?: ReadonlyArray<Action<TContext, InvokeFailureEvent<ErrorByTag<TError, K>>, R, never>>;
+        };
+      }
+    : never;
+
+  /**
+   * Fallback transition for typed errors (E channel) not handled by catchTags.
+   * Receives InvokeFailureEvent with the error value.
+   */
+  readonly onFailure?: {
+    readonly target?: TStateValue;
+    readonly guard?: Guard<TContext, InvokeFailureEvent<TError>>;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeFailureEvent<TError>, R, never>>;
+  };
+
+  /** @deprecated Use onFailure instead */
+  readonly onError?: {
+    readonly target?: TStateValue;
+    readonly guard?: Guard<TContext, InvokeFailureEvent<TError>>;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeFailureEvent<TError>, R, never>>;
+  };
+
+  /**
+   * Transition when Effect fails with an unexpected error (defect/die).
+   * Defects are unexpected errors like thrown exceptions or Effect.die().
+   */
+  readonly onDefect?: {
+    readonly target?: TStateValue;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeDefectEvent, R, never>>;
+  };
+
+  /**
+   * Transition when the invoke fiber is interrupted.
+   * Useful for cleanup or showing cancellation state.
+   */
+  readonly onInterrupt?: {
+    readonly target?: TStateValue;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeInterruptEvent, R, never>>;
+  };
+}
+
+// ============================================================================
 // State Node Config
 // ============================================================================
 
@@ -361,6 +539,9 @@ export interface StateNodeConfig<
     readonly [K in TEvent["_tag"]]?: NarrowedTransitionConfig<TStateValue, TContext, TEvent, K, R, E>;
   };
   readonly activities?: ReadonlyArray<ActivityConfig<TContext, TEvent, R, E>>;
+  /** Invoke an Effect when entering this state. Auto-sends done/error events. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly invoke?: InvokeConfig<TStateValue, TContext, TEvent, any, any, R>;
   /** After delay, auto-transition */
   readonly after?: {
     readonly [delay: number]: TransitionConfig<TStateValue, TContext, TEvent, R, E>;
