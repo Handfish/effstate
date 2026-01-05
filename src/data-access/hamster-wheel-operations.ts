@@ -25,7 +25,6 @@ import {
   initialSnapshot as garageDoorInitialSnapshot,
 } from "./garage-door-operations";
 import { createCrossTabSync } from "@/lib/cross-tab-leader";
-import { useIsTabActive } from "@/lib/cross-tab-sync";
 
 // ============================================================================
 // Types
@@ -428,17 +427,12 @@ export const useHamsterWheel = (): {
   status: HamsterWheelStatus;
   handleToggle: () => void;
   isLoading: boolean;
-  isDisabled: boolean;
 } => {
   const { snapshot, send, isLoading, context } = useHamsterWheelMachine();
-  const isActive = useIsTabActive();
 
   const handleToggle = useCallback(() => {
-    // Only allow sending events if this tab is active
-    if (isActive) {
-      send(new Toggle());
-    }
-  }, [isActive, send]);
+    send(new Toggle());
+  }, [send]);
 
   return {
     status: {
@@ -449,7 +443,6 @@ export const useHamsterWheel = (): {
     },
     handleToggle,
     isLoading,
-    isDisabled: !isActive,
   };
 };
 
