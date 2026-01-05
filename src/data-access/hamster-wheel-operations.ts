@@ -12,7 +12,6 @@ import {
   type MachineSnapshot,
   type MachineActor,
 } from "@/lib/state-machine";
-import { useIsTabActive } from "@/lib/cross-tab-sync";
 import { Data, Duration, Effect, Schedule, Schema, Scope, Stream, SubscriptionRef } from "effect";
 import { useCallback } from "react";
 import {
@@ -25,6 +24,8 @@ import {
   type GarageDoorEvent,
   initialSnapshot as garageDoorInitialSnapshot,
 } from "./garage-door-operations";
+import { createCrossTabSync } from "@/lib/cross-tab-leader";
+import { useIsTabActive } from "@/lib/cross-tab-sync";
 
 // ============================================================================
 // Types
@@ -307,72 +308,22 @@ const loadState = (): {
 // Atom Integration with Cross-Tab/Window Sync
 // ============================================================================
 
-// Module-level state for cross-tab sync
 let currentActor: MachineActor<HamsterWheelState, HamsterWheelContext, HamsterWheelEvent> | null = null;
-let isSyncing = false;
 
-// Leader election - newest window becomes leader
-const LEADER_KEY = "hamsterWheel:leader";
-const windowId = Date.now().toString();
-
-const claimLeadership = () => {
-  localStorage.setItem(LEADER_KEY, windowId);
-};
-
-const checkLeadership = () => {
-  return localStorage.getItem(LEADER_KEY) === windowId;
-};
-
-if (typeof window !== "undefined") {
-  // Sync from storage
-  const syncFromStorage = () => {
+// Cross-tab sync - newest window becomes leader, others sync
+const crossTabSync = createCrossTabSync({
+  storageKey: STORAGE_KEY,
+  onSave: () => {
+    if (currentActor) saveState(currentActor);
+  },
+  onSync: () => {
     if (!currentActor) return;
     const loaded = loadState();
     if (loaded) {
-      isSyncing = true;
       currentActor._syncSnapshot(loaded.snapshot, loaded.childSnapshots);
-      isSyncing = false;
     }
-  };
-
-  // New window claims leadership immediately
-  syncFromStorage(); // Get current state first
-  claimLeadership(); // Then become leader
-
-  // Handle window focus - reclaim leadership
-  window.addEventListener("focus", () => {
-    claimLeadership();
-  });
-
-  // Handle window blur - stay leader but sync on refocus
-  window.addEventListener("blur", () => {
-    // Don't release leadership on blur
-  });
-
-  // Handle storage changes from OTHER windows/tabs
-  window.addEventListener("storage", (event) => {
-    if (!currentActor) return;
-
-    // Ignore leader key changes - we check leadership dynamically
-    if (event.key === LEADER_KEY) return;
-
-    // State changed by another window
-    if (event.key === STORAGE_KEY) {
-      if (isSyncing) return;
-      // Only sync if we're not the leader
-      if (!checkLeadership()) {
-        syncFromStorage();
-      }
-    }
-  });
-
-  // Clean up on unload
-  window.addEventListener("beforeunload", () => {
-    if (checkLeadership()) {
-      localStorage.removeItem(LEADER_KEY);
-    }
-  });
-}
+  },
+});
 
 const actorAtom = appRuntime
   .atom(
@@ -393,40 +344,16 @@ const actorAtom = appRuntime
       // Store reference for cross-tab sync
       currentActor = actor;
 
-      // Throttled save - only when this window is the leader
-      let saveTimeout: ReturnType<typeof setTimeout> | null = null;
-      let pendingSave = false;
+      // Save on state changes (only if leader)
+      actor.subscribe(() => crossTabSync.saveIfLeader());
 
-      const throttledSave = () => {
-        // Only save if we're the leader and not syncing
-        if (!checkLeadership()) return;
-        if (isSyncing) return;
-
-        // If a save is already scheduled, just mark pending
-        if (saveTimeout) {
-          pendingSave = true;
-          return;
-        }
-
-        // Save immediately
-        saveState(actor);
-
-        // Set up throttle - ignore saves for 500ms
-        saveTimeout = setTimeout(() => {
-          saveTimeout = null;
-          // If there were pending saves, do one final save
-          if (pendingSave && !isSyncing && checkLeadership()) {
-            pendingSave = false;
-            saveState(actor);
-          }
-        }, 500);
-      };
-
-      actor.subscribe(() => throttledSave());
+      // Also save when child actors change state
+      actor.children.forEach((child) => {
+        child.subscribe(() => crossTabSync.saveIfLeader());
+      });
 
       return actor;
     }).pipe(
-      // Provide machine service inline to avoid circular imports with app-runtime
       Effect.provide(HamsterWheelMachineService.Default),
     )
   )
