@@ -35,32 +35,19 @@ class AnimationComplete extends Data.TaggedClass("ANIMATION_COMPLETE")<{}> {}
 type GarageDoorEvent = Click | Tick | AnimationComplete;
 
 // ============================================================================
-// Configuration
-// ============================================================================
-
-const FULL_CYCLE_DURATION = Duration.seconds(10);
-const TICK_INTERVAL = Duration.millis(16);
-const POSITION_DELTA_PER_TICK =
-  100 / (Duration.toMillis(FULL_CYCLE_DURATION) / Duration.toMillis(TICK_INTERVAL));
-
-// ============================================================================
 // Animation Activity
 // ============================================================================
 
-const createAnimationActivity = (direction: 1 | -1) => ({
-  id: `animation-${direction === 1 ? "opening" : "closing"}`,
-  src: ({ send }: { send: (event: GarageDoorEvent) => void }) =>
-    Effect.gen(function* () {
-      yield* Effect.log(`Animation activity started: ${direction === 1 ? "opening" : "closing"}`);
+const CYCLE_MS = 10_000;
+const TICK_MS = 16;
+const DELTA = 100 / (CYCLE_MS / TICK_MS);
 
-      yield* Stream.fromSchedule(Schedule.spaced(TICK_INTERVAL)).pipe(
-        Stream.runForEach(() =>
-          Effect.sync(() => {
-            send(new Tick({ delta: direction * POSITION_DELTA_PER_TICK }));
-          }),
-        ),
-      );
-    }),
+const animation = (dir: 1 | -1) => ({
+  id: `animation-${dir}`,
+  src: ({ send }: { send: (e: GarageDoorEvent) => void }) =>
+    Stream.fromSchedule(Schedule.spaced(Duration.millis(TICK_MS))).pipe(
+      Stream.runForEach(() => Effect.sync(() => send(new Tick({ delta: dir * DELTA })))),
+    ),
 });
 
 // ============================================================================
@@ -89,7 +76,7 @@ export const garageDoorMachine = createMachine<
 
     opening: {
       entry: [effect(() => Effect.log("Entering: opening"))],
-      activities: [createAnimationActivity(1)],
+      activities: [animation(1)],
       on: {
         CLICK: { target: "paused-while-opening" },
         TICK: {
@@ -120,7 +107,7 @@ export const garageDoorMachine = createMachine<
 
     closing: {
       entry: [effect(() => Effect.log("Entering: closing"))],
-      activities: [createAnimationActivity(-1)],
+      activities: [animation(-1)],
       on: {
         CLICK: { target: "paused-while-closing" },
         TICK: {
