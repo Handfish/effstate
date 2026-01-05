@@ -1144,13 +1144,27 @@ function createActor<
   const isRestoring = options?.snapshot !== undefined;
   // Use restored state or initial state
   const currentState = machine.config.states[snapshot.value];
+  const initialState = machine.config.states[machine.config.initial];
+
+  // When restoring to a non-initial state, first spawn any children from the initial state's entry actions
+  // This ensures children exist even if we're restoring to a state that doesn't have spawnChild actions
+  const restoringToNonInitialState = isRestoring && snapshot.value !== machine.config.initial;
+  if (restoringToNonInitialState && initialState?.entry) {
+    const spawnActions = initialState.entry.filter((a) => a._tag === "spawnChild");
+    if (spawnActions.length > 0) {
+      runActionsSync(spawnActions, snapshot.context, { _tag: "$init" } as TEvent);
+    }
+  }
 
   // Run entry actions for current state
   if (currentState?.entry) {
     // When restoring, filter out assign actions (context is already restored)
-    // but keep other actions like spawnChild, sendTo, effect, etc.
+    // Only filter out spawnChild if we already handled them above (restoring to non-initial state)
     const actions = isRestoring
-      ? currentState.entry.filter((a) => a._tag !== "assign")
+      ? currentState.entry.filter((a) =>
+          a._tag !== "assign" &&
+          (restoringToNonInitialState ? a._tag !== "spawnChild" : true)
+        )
       : currentState.entry;
     if (actions.length > 0) {
       snapshot = {

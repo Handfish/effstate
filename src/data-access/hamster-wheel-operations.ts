@@ -15,6 +15,7 @@ import {
 import { Data, Duration, Effect, Schedule, Schema, Scope, Stream, SubscriptionRef } from "effect";
 import {
   GarageDoorMachineService,
+  GarageDoorContextSchema,
   PowerOn,
   PowerOff,
   WakeHamster,
@@ -192,25 +193,25 @@ export class HamsterWheelMachineService extends Effect.Service<HamsterWheelMachi
 
 const STORAGE_KEY = "hamsterWheel:state";
 
-interface PersistedState {
-  parent: {
-    value: HamsterWheelState;
-    context: {
-      wheelRotation: number;
-      electricityLevel: number;
-    };
-  };
-  children: {
-    [GARAGE_DOOR_LEFT_ID]?: {
-      value: GarageDoorState;
-      context: typeof garageDoorInitialSnapshot.context;
-    };
-    [GARAGE_DOOR_RIGHT_ID]?: {
-      value: GarageDoorState;
-      context: typeof garageDoorInitialSnapshot.context;
-    };
-  };
-}
+// Schema for garage door snapshot (encoded form for JSON)
+const GarageDoorSnapshotSchema = Schema.Struct({
+  value: Schema.Literal("closed", "opening", "paused-while-opening", "open", "closing", "paused-while-closing"),
+  context: GarageDoorContextSchema,
+});
+
+// Schema for the full persisted state
+const PersistedStateSchema = Schema.Struct({
+  parent: Schema.Struct({
+    value: Schema.Literal("idle", "running", "stopping"),
+    context: HamsterWheelContextSchema,
+  }),
+  children: Schema.Struct({
+    [GARAGE_DOOR_LEFT_ID]: Schema.optional(GarageDoorSnapshotSchema),
+    [GARAGE_DOOR_RIGHT_ID]: Schema.optional(GarageDoorSnapshotSchema),
+  }),
+});
+
+type PersistedState = typeof PersistedStateSchema.Type;
 
 const saveState = (actor: MachineActor<HamsterWheelState, HamsterWheelContext, HamsterWheelEvent>) => {
   try {
@@ -218,58 +219,54 @@ const saveState = (actor: MachineActor<HamsterWheelState, HamsterWheelContext, H
     const leftChild = actor.children.get(GARAGE_DOOR_LEFT_ID);
     const rightChild = actor.children.get(GARAGE_DOOR_RIGHT_ID);
 
+    const children: {
+      [GARAGE_DOOR_LEFT_ID]?: { value: GarageDoorState; context: typeof GarageDoorContextSchema.Type };
+      [GARAGE_DOOR_RIGHT_ID]?: { value: GarageDoorState; context: typeof GarageDoorContextSchema.Type };
+    } = {};
+
+    if (leftChild) {
+      const snap = leftChild.getSnapshot();
+      children[GARAGE_DOOR_LEFT_ID] = {
+        value: snap.value as GarageDoorState,
+        context: snap.context as typeof GarageDoorContextSchema.Type,
+      };
+    }
+
+    if (rightChild) {
+      const snap = rightChild.getSnapshot();
+      children[GARAGE_DOOR_RIGHT_ID] = {
+        value: snap.value as GarageDoorState,
+        context: snap.context as typeof GarageDoorContextSchema.Type,
+      };
+    }
+
     const state: PersistedState = {
       parent: {
         value: parentSnapshot.value,
         context: parentSnapshot.context,
       },
-      children: {},
+      children,
     };
 
-    if (leftChild) {
-      const leftSnapshot = leftChild.getSnapshot();
-      state.children[GARAGE_DOOR_LEFT_ID] = {
-        value: leftSnapshot.value as GarageDoorState,
-        context: {
-          ...leftSnapshot.context,
-          // Serialize Date to string for JSON
-          lastUpdated: (leftSnapshot.context as typeof garageDoorInitialSnapshot.context).lastUpdated,
-        } as typeof garageDoorInitialSnapshot.context,
-      };
-    }
-
-    if (rightChild) {
-      const rightSnapshot = rightChild.getSnapshot();
-      state.children[GARAGE_DOOR_RIGHT_ID] = {
-        value: rightSnapshot.value as GarageDoorState,
-        context: {
-          ...rightSnapshot.context,
-          lastUpdated: (rightSnapshot.context as typeof garageDoorInitialSnapshot.context).lastUpdated,
-        } as typeof garageDoorInitialSnapshot.context,
-      };
-    }
-
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state, (_, value) => {
-      // Convert Date to ISO string
-      if (value instanceof Date) {
-        return value.toISOString();
-      }
-      return value;
-    }));
+    // Schema.encodeSync handles Date -> string conversion via DateFromString
+    const encoded = Schema.encodeSync(PersistedStateSchema)(state);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(encoded));
   } catch (e) {
     console.warn("Failed to save state:", e);
   }
 };
 
 const loadState = (): {
-  snapshot?: HamsterWheelSnapshot;
-  childSnapshots?: Map<string, MachineSnapshot<string, object>>;
+  snapshot: HamsterWheelSnapshot;
+  childSnapshots: Map<string, MachineSnapshot<string, object>>;
 } | null => {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (!stored) return null;
 
-    const state: PersistedState = JSON.parse(stored);
+    const raw = JSON.parse(stored);
+    // Schema.decodeSync handles string -> Date conversion via DateFromString
+    const state = Schema.decodeSync(PersistedStateSchema)(raw);
 
     const snapshot: HamsterWheelSnapshot = {
       value: state.parent.value,
@@ -280,26 +277,17 @@ const loadState = (): {
     const childSnapshots = new Map<string, MachineSnapshot<string, object>>();
 
     if (state.children[GARAGE_DOOR_LEFT_ID]) {
-      const leftState = state.children[GARAGE_DOOR_LEFT_ID];
       childSnapshots.set(GARAGE_DOOR_LEFT_ID, {
-        value: leftState.value,
-        context: {
-          ...leftState.context,
-          // Parse ISO string back to Date
-          lastUpdated: new Date(leftState.context.lastUpdated as unknown as string),
-        },
+        value: state.children[GARAGE_DOOR_LEFT_ID].value,
+        context: state.children[GARAGE_DOOR_LEFT_ID].context,
         event: null,
       });
     }
 
     if (state.children[GARAGE_DOOR_RIGHT_ID]) {
-      const rightState = state.children[GARAGE_DOOR_RIGHT_ID];
       childSnapshots.set(GARAGE_DOOR_RIGHT_ID, {
-        value: rightState.value,
-        context: {
-          ...rightState.context,
-          lastUpdated: new Date(rightState.context.lastUpdated as unknown as string),
-        },
+        value: state.children[GARAGE_DOOR_RIGHT_ID].value,
+        context: state.children[GARAGE_DOOR_RIGHT_ID].context,
         event: null,
       });
     }
@@ -324,10 +312,13 @@ const actorAtom = appRuntime
       const persisted = loadState();
 
       // Create actor with optional restored state
-      const actor = yield* interpret(hamsterWheelService.definition, {
-        snapshot: persisted?.snapshot,
-        childSnapshots: persisted?.childSnapshots,
-      });
+      // Only pass options if we have persisted state (exactOptionalPropertyTypes requires this)
+      const actor = yield* persisted
+        ? interpret(hamsterWheelService.definition, {
+            snapshot: persisted.snapshot,
+            childSnapshots: persisted.childSnapshots,
+          })
+        : interpret(hamsterWheelService.definition);
 
       // Save state on every change
       actor.subscribe(() => saveState(actor));

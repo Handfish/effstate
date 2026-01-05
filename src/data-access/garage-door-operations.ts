@@ -40,7 +40,7 @@ const WeatherDataSchema = Schema.Struct({
   error: Schema.optional(Schema.String),
 });
 
-const GarageDoorContextSchema = Schema.Struct({
+export const GarageDoorContextSchema = Schema.Struct({
   position: Schema.Number,
   lastUpdated: Schema.DateFromString,
   weather: WeatherDataSchema,

@@ -4343,3 +4343,336 @@ describe("invoke (async operations)", () => {
     );
   });
 });
+
+// ============================================================================
+// Snapshot Restoration with Children
+// ============================================================================
+
+describe("interpret with snapshot restoration", () => {
+  // Child machine for testing restoration
+  const ChildContextSchema = Schema.Struct({
+    value: Schema.Number,
+  });
+
+  const createRestorableChildMachine = () =>
+    createMachine({
+      id: "child",
+      initial: "idle",
+      context: ChildContextSchema,
+      initialContext: { value: 0 },
+      states: {
+        idle: {
+          on: {
+            INCREMENT: {
+              actions: [assign(({ context }) => ({ value: context.value + 1 }))],
+            },
+            TOGGLE: { target: "active" },
+          },
+        },
+        active: {
+          on: {
+            INCREMENT: {
+              actions: [assign(({ context }) => ({ value: context.value + 10 }))],
+            },
+            TOGGLE: { target: "idle" },
+          },
+        },
+      },
+    });
+
+  it("restores to initial state with child snapshots", async () => {
+    const childMachine = createRestorableChildMachine();
+
+    const ParentContextSchema = Schema.Struct({ count: Schema.Number });
+
+    const machine = createMachine({
+      id: "parent",
+      initial: "idle",
+      context: ParentContextSchema,
+      initialContext: { count: 0 },
+      states: {
+        idle: {
+          entry: [
+            spawnChild(childMachine, { id: "child1" }),
+            spawnChild(childMachine, { id: "child2" }),
+          ],
+          on: {
+            TOGGLE: { target: "running" },
+          },
+        },
+        running: {
+          on: {
+            TOGGLE: { target: "idle" },
+          },
+        },
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          // Restore to initial state "idle" with child snapshots
+          const actor = yield* interpret(machine, {
+            snapshot: {
+              value: "idle",
+              context: { count: 5 },
+              event: null,
+            },
+            childSnapshots: new Map([
+              ["child1", { value: "active", context: { value: 100 }, event: null }],
+              ["child2", { value: "idle", context: { value: 50 }, event: null }],
+            ]),
+          });
+
+          yield* Effect.sleep("20 millis");
+
+          // Parent should be in idle state with restored context
+          expect(actor.getSnapshot().value).toBe("idle");
+          expect(actor.getSnapshot().context.count).toBe(5);
+
+          // Children should exist and have restored state
+          expect(actor.children.size).toBe(2);
+
+          const child1 = actor.children.get("child1");
+          expect(child1).toBeDefined();
+          expect(child1!.getSnapshot().value).toBe("active");
+          expect(child1!.getSnapshot().context.value).toBe(100);
+
+          const child2 = actor.children.get("child2");
+          expect(child2).toBeDefined();
+          expect(child2!.getSnapshot().value).toBe("idle");
+          expect(child2!.getSnapshot().context.value).toBe(50);
+        }),
+      ),
+    );
+  });
+
+  it("restores to non-initial state with child snapshots", async () => {
+    const childMachine = createRestorableChildMachine();
+
+    const ParentContextSchema = Schema.Struct({ count: Schema.Number });
+
+    const machine = createMachine({
+      id: "parent",
+      initial: "idle",
+      context: ParentContextSchema,
+      initialContext: { count: 0 },
+      states: {
+        idle: {
+          entry: [
+            spawnChild(childMachine, { id: "child1" }),
+            spawnChild(childMachine, { id: "child2" }),
+          ],
+          on: {
+            TOGGLE: { target: "running" },
+          },
+        },
+        running: {
+          on: {
+            TOGGLE: { target: "idle" },
+          },
+        },
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          // Restore to non-initial state "running" with child snapshots
+          const actor = yield* interpret(machine, {
+            snapshot: {
+              value: "running",
+              context: { count: 10 },
+              event: null,
+            },
+            childSnapshots: new Map([
+              ["child1", { value: "active", context: { value: 200 }, event: null }],
+              ["child2", { value: "active", context: { value: 150 }, event: null }],
+            ]),
+          });
+
+          yield* Effect.sleep("20 millis");
+
+          // Parent should be in running state with restored context
+          expect(actor.getSnapshot().value).toBe("running");
+          expect(actor.getSnapshot().context.count).toBe(10);
+
+          // Children should exist and have restored state
+          expect(actor.children.size).toBe(2);
+
+          const child1 = actor.children.get("child1");
+          expect(child1).toBeDefined();
+          expect(child1!.getSnapshot().value).toBe("active");
+          expect(child1!.getSnapshot().context.value).toBe(200);
+
+          const child2 = actor.children.get("child2");
+          expect(child2).toBeDefined();
+          expect(child2!.getSnapshot().value).toBe("active");
+          expect(child2!.getSnapshot().context.value).toBe(150);
+        }),
+      ),
+    );
+  });
+
+  it("restores to initial state without child snapshots - children start fresh", async () => {
+    const childMachine = createRestorableChildMachine();
+
+    const ParentContextSchema = Schema.Struct({ count: Schema.Number });
+
+    const machine = createMachine({
+      id: "parent",
+      initial: "idle",
+      context: ParentContextSchema,
+      initialContext: { count: 0 },
+      states: {
+        idle: {
+          entry: [
+            spawnChild(childMachine, { id: "child1" }),
+          ],
+          on: {
+            TOGGLE: { target: "running" },
+          },
+        },
+        running: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          // Restore to initial state "idle" without child snapshots
+          const actor = yield* interpret(machine, {
+            snapshot: {
+              value: "idle",
+              context: { count: 99 },
+              event: null,
+            },
+            // No childSnapshots provided
+          });
+
+          yield* Effect.sleep("20 millis");
+
+          // Parent should be in idle state with restored context
+          expect(actor.getSnapshot().value).toBe("idle");
+          expect(actor.getSnapshot().context.count).toBe(99);
+
+          // Child should exist but start fresh (initial state)
+          expect(actor.children.size).toBe(1);
+
+          const child1 = actor.children.get("child1");
+          expect(child1).toBeDefined();
+          expect(child1!.getSnapshot().value).toBe("idle");
+          expect(child1!.getSnapshot().context.value).toBe(0); // Initial value
+        }),
+      ),
+    );
+  });
+
+  it("restores to non-initial state without child snapshots - children start fresh", async () => {
+    const childMachine = createRestorableChildMachine();
+
+    const ParentContextSchema = Schema.Struct({ count: Schema.Number });
+
+    const machine = createMachine({
+      id: "parent",
+      initial: "idle",
+      context: ParentContextSchema,
+      initialContext: { count: 0 },
+      states: {
+        idle: {
+          entry: [
+            spawnChild(childMachine, { id: "child1" }),
+          ],
+          on: {
+            TOGGLE: { target: "running" },
+          },
+        },
+        running: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          // Restore to non-initial state "running" without child snapshots
+          const actor = yield* interpret(machine, {
+            snapshot: {
+              value: "running",
+              context: { count: 77 },
+              event: null,
+            },
+            childSnapshots: new Map(), // Empty map
+          });
+
+          yield* Effect.sleep("20 millis");
+
+          // Parent should be in running state with restored context
+          expect(actor.getSnapshot().value).toBe("running");
+          expect(actor.getSnapshot().context.count).toBe(77);
+
+          // Child should exist but start fresh (initial state)
+          // Children are spawned from initial state's entry actions
+          expect(actor.children.size).toBe(1);
+
+          const child1 = actor.children.get("child1");
+          expect(child1).toBeDefined();
+          expect(child1!.getSnapshot().value).toBe("idle");
+          expect(child1!.getSnapshot().context.value).toBe(0); // Initial value
+        }),
+      ),
+    );
+  });
+
+  it("restored children can receive events and update state", async () => {
+    const childMachine = createRestorableChildMachine();
+
+    const ParentContextSchema = Schema.Struct({ count: Schema.Number });
+
+    const machine = createMachine({
+      id: "parent",
+      initial: "idle",
+      context: ParentContextSchema,
+      initialContext: { count: 0 },
+      states: {
+        idle: {
+          entry: [spawnChild(childMachine, { id: "child1" })],
+          on: {
+            TICK: {
+              actions: [sendTo("child1", new Increment())],
+            },
+          },
+        },
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          // Restore with child in active state with value 100
+          const actor = yield* interpret(machine, {
+            snapshot: {
+              value: "idle",
+              context: { count: 0 },
+              event: null,
+            },
+            childSnapshots: new Map([
+              ["child1", { value: "active", context: { value: 100 }, event: null }],
+            ]),
+          });
+
+          yield* Effect.sleep("20 millis");
+
+          const child = actor.children.get("child1")!;
+          expect(child.getSnapshot().value).toBe("active");
+          expect(child.getSnapshot().context.value).toBe(100);
+
+          // Send INCREMENT to child (in active state, adds 10)
+          actor.send(new Tick());
+          yield* Effect.sleep("20 millis");
+
+          expect(child.getSnapshot().context.value).toBe(110);
+        }),
+      ),
+    );
+  });
+});
