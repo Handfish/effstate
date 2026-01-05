@@ -91,200 +91,216 @@ const animation = (dir: 1 | -1) => ({
 });
 
 // ============================================================================
-// Garage Door Machine
+// Garage Door Machine Service
 // ============================================================================
 
 // Default location (San Francisco)
 const DEFAULT_LAT = 37.7749;
 const DEFAULT_LON = -122.4194;
 
-// Machine definition - WeatherService is resolved inside invoke at runtime
-// Exported so HamsterWheel can spawn it as a child
-export const GarageDoorMachine = createMachine<GarageDoorState, GarageDoorEvent, typeof GarageDoorContextSchema, WeatherService>({
-  id: "garageDoor",
-  initial: "closed",
-  context: GarageDoorContextSchema,
-  initialContext: {
-    position: 0,
-    lastUpdated: new Date(),
-    weather: { status: "idle" },
-    isPowered: false,
-  },
-    states: {
-      closed: {
-        entry: [assign(() => ({ position: 0, lastUpdated: new Date(), weather: { status: "idle" } }))],
-        on: {
-          CLICK: { target: "opening", guard: ({ context }) => context.isPowered },
-          POWER_ON: { actions: [assign(() => ({ isPowered: true }))] },
-          POWER_OFF: { actions: [assign(() => ({ isPowered: false }))] },
-        },
-      },
-
-      opening: {
-        entry: [effect(() => Effect.log("Entering: opening"))],
-        activities: [animation(1)],
-        on: {
-          CLICK: { target: "paused-while-opening", guard: ({ context }) => context.isPowered },
-          TICK: {
-            guard: ({ context }) => context.isPowered,
-            actions: [
-              assign<GarageDoorContext, Tick>(({ context, event }) => ({
-                position: Math.min(100, context.position + event.delta),
-                lastUpdated: new Date(),
-              })),
-            ],
-          },
-          ANIMATION_COMPLETE: { target: "open", guard: ({ context }) => context.isPowered },
-          POWER_ON: { actions: [assign(() => ({ isPowered: true }))] },
-          POWER_OFF: { actions: [assign(() => ({ isPowered: false }))] },
-        },
-      },
-
-      "paused-while-opening": {
-        entry: [effect(() => Effect.log("Entering: paused-while-opening"))],
-        on: {
-          CLICK: { target: "closing", guard: ({ context }) => context.isPowered },
-          POWER_ON: { actions: [assign(() => ({ isPowered: true }))] },
-          POWER_OFF: { actions: [assign(() => ({ isPowered: false }))] },
-        },
-      },
-
-      open: {
-        entry: [
-          assign(() => ({ position: 100, lastUpdated: new Date(), weather: { status: "loading" } })),
-          effect(() => Effect.log("Entering: open - fetching weather")),
-        ],
-        invoke: {
-          id: "fetchWeather",
-          src: () => Effect.gen(function* () {
-            const weatherService = yield* WeatherService;
-            return yield* weatherService.getWeather(DEFAULT_LAT, DEFAULT_LON);
-          }),
-          onSuccess: {
-            actions: [
-              assignOnSuccess<GarageDoorContext, Weather>(({ output }) => ({
-                weather: {
-                  status: "loaded",
-                  temp: output.temperature,
-                  desc: output.description,
-                  icon: output.icon,
-                },
-              })),
-            ],
-          },
-          catchTags: {
-            WeatherNetworkError: {
-              actions: [
-                assignOnFailure<GarageDoorContext, { message: string }>(({ error }) => ({
-                  weather: {
-                    status: "error",
-                    error: `Network error: ${error.message}`,
-                  },
-                })),
-              ],
-            },
-            WeatherParseError: {
-              actions: [
-                assignOnFailure<GarageDoorContext, { message: string }>(({ error }) => ({
-                  weather: {
-                    status: "error",
-                    error: `Data error: ${error.message}`,
-                  },
-                })),
-              ],
-            },
-          },
-          onDefect: {
-            actions: [
-              assignOnDefect<GarageDoorContext>(({ defect }) => ({
-                weather: {
-                  status: "error",
-                  error: `Unexpected error: ${String(defect)}`,
-                },
-              })),
-            ],
-          },
-        },
-        on: {
-          CLICK: { target: "closing", guard: ({ context }) => context.isPowered },
-          POWER_ON: { actions: [assign(() => ({ isPowered: true }))] },
-          POWER_OFF: { actions: [assign(() => ({ isPowered: false }))] },
-        },
-      },
-
-      closing: {
-        entry: [
-          effect(() => Effect.log("Entering: closing")),
-          assign(() => ({ weather: { status: "idle" } })),
-        ],
-        activities: [animation(-1)],
-        on: {
-          CLICK: { target: "paused-while-closing", guard: ({ context }) => context.isPowered },
-          TICK: {
-            guard: ({ context }) => context.isPowered,
-            actions: [
-              assign<GarageDoorContext, Tick>(({ context, event }) => ({
-                position: Math.max(0, context.position + event.delta),
-                lastUpdated: new Date(),
-              })),
-            ],
-          },
-          ANIMATION_COMPLETE: { target: "closed", guard: ({ context }) => context.isPowered },
-          POWER_ON: { actions: [assign(() => ({ isPowered: true }))] },
-          POWER_OFF: { actions: [assign(() => ({ isPowered: false }))] },
-        },
-      },
-
-      "paused-while-closing": {
-        entry: [effect(() => Effect.log("Entering: paused-while-closing"))],
-        on: {
-          CLICK: { target: "opening", guard: ({ context }) => context.isPowered },
-          POWER_ON: { actions: [assign(() => ({ isPowered: true }))] },
-          POWER_OFF: { actions: [assign(() => ({ isPowered: false }))] },
-        },
-      },
-    },
-  });
-
-// ============================================================================
-// Machine Service (for automatic R channel composition)
-// ============================================================================
-
 /**
  * GarageDoor machine as an Effect.Service.
  *
- * This service provides:
- * - The machine definition
- * - A factory to create actors
- * - Automatic R channel composition (includes WeatherService via dependencies)
+ * The machine is defined inside the service, capturing WeatherService at creation time.
+ * This provides:
+ * - Clean types (no explicit R parameter needed)
+ * - No type casts
+ * - Automatic R channel composition via `dependencies`
+ *
+ * Parent machines should yield this service to access `.definition` for `spawnChild`.
  *
  * @example
  * ```ts
+ * // Direct usage
  * const program = Effect.gen(function* () {
  *   const garageDoor = yield* GarageDoorMachineService;
  *   const actor = yield* garageDoor.createActor();
  *   actor.send(new Click());
  * });
  *
- * Effect.runPromise(program.pipe(Effect.provide(GarageDoorMachineService.Default)));
+ * // As child machine (in parent service)
+ * const parentService = Effect.gen(function* () {
+ *   const garageDoorService = yield* GarageDoorMachineService;
+ *   const parentMachine = createMachine({
+ *     states: {
+ *       idle: {
+ *         entry: [spawnChild(garageDoorService.definition, { id: "garage" })],
+ *       },
+ *     },
+ *   });
+ *   return { definition: parentMachine };
+ * });
  * ```
  */
 export class GarageDoorMachineService extends Effect.Service<GarageDoorMachineService>()(
   "GarageDoorMachineService",
   {
     effect: Effect.gen(function* () {
+      // Capture WeatherService at service creation time
+      const weatherService = yield* WeatherService;
+
+      // Machine definition with closure over weatherService
+      // No R parameter needed - the service is already captured!
+      const machine = createMachine<
+        GarageDoorState,
+        GarageDoorEvent,
+        typeof GarageDoorContextSchema
+      >({
+        id: "garageDoor",
+        initial: "closed",
+        context: GarageDoorContextSchema,
+        initialContext: {
+          position: 0,
+          lastUpdated: new Date(),
+          weather: { status: "idle" },
+          isPowered: false,
+        },
+        states: {
+          closed: {
+            entry: [assign(() => ({ position: 0, lastUpdated: new Date(), weather: { status: "idle" } }))],
+            on: {
+              CLICK: { target: "opening", guard: ({ context }) => context.isPowered },
+              POWER_ON: { actions: [assign(() => ({ isPowered: true }))] },
+              POWER_OFF: { actions: [assign(() => ({ isPowered: false }))] },
+            },
+          },
+
+          opening: {
+            entry: [effect(() => Effect.log("Entering: opening"))],
+            activities: [animation(1)],
+            on: {
+              CLICK: { target: "paused-while-opening", guard: ({ context }) => context.isPowered },
+              TICK: {
+                guard: ({ context }) => context.isPowered,
+                actions: [
+                  assign<GarageDoorContext, Tick>(({ context, event }) => ({
+                    position: Math.min(100, context.position + event.delta),
+                    lastUpdated: new Date(),
+                  })),
+                ],
+              },
+              ANIMATION_COMPLETE: { target: "open", guard: ({ context }) => context.isPowered },
+              POWER_ON: { actions: [assign(() => ({ isPowered: true }))] },
+              POWER_OFF: { actions: [assign(() => ({ isPowered: false }))] },
+            },
+          },
+
+          "paused-while-opening": {
+            entry: [effect(() => Effect.log("Entering: paused-while-opening"))],
+            on: {
+              CLICK: { target: "closing", guard: ({ context }) => context.isPowered },
+              POWER_ON: { actions: [assign(() => ({ isPowered: true }))] },
+              POWER_OFF: { actions: [assign(() => ({ isPowered: false }))] },
+            },
+          },
+
+          open: {
+            entry: [
+              assign(() => ({ position: 100, lastUpdated: new Date(), weather: { status: "loading" } })),
+              effect(() => Effect.log("Entering: open - fetching weather")),
+            ],
+            invoke: {
+              id: "fetchWeather",
+              // Closure over weatherService - returns Effect<Weather, WeatherError, never>
+              src: () => weatherService.getWeather(DEFAULT_LAT, DEFAULT_LON),
+              onSuccess: {
+                actions: [
+                  assignOnSuccess<GarageDoorContext, Weather>(({ output }) => ({
+                    weather: {
+                      status: "loaded",
+                      temp: output.temperature,
+                      desc: output.description,
+                      icon: output.icon,
+                    },
+                  })),
+                ],
+              },
+              catchTags: {
+                WeatherNetworkError: {
+                  actions: [
+                    assignOnFailure<GarageDoorContext, { message: string }>(({ error }) => ({
+                      weather: {
+                        status: "error",
+                        error: `Network error: ${error.message}`,
+                      },
+                    })),
+                  ],
+                },
+                WeatherParseError: {
+                  actions: [
+                    assignOnFailure<GarageDoorContext, { message: string }>(({ error }) => ({
+                      weather: {
+                        status: "error",
+                        error: `Data error: ${error.message}`,
+                      },
+                    })),
+                  ],
+                },
+              },
+              onDefect: {
+                actions: [
+                  assignOnDefect<GarageDoorContext>(({ defect }) => ({
+                    weather: {
+                      status: "error",
+                      error: `Unexpected error: ${String(defect)}`,
+                    },
+                  })),
+                ],
+              },
+            },
+            on: {
+              CLICK: { target: "closing", guard: ({ context }) => context.isPowered },
+              POWER_ON: { actions: [assign(() => ({ isPowered: true }))] },
+              POWER_OFF: { actions: [assign(() => ({ isPowered: false }))] },
+            },
+          },
+
+          closing: {
+            entry: [
+              effect(() => Effect.log("Entering: closing")),
+              assign(() => ({ weather: { status: "idle" } })),
+            ],
+            activities: [animation(-1)],
+            on: {
+              CLICK: { target: "paused-while-closing", guard: ({ context }) => context.isPowered },
+              TICK: {
+                guard: ({ context }) => context.isPowered,
+                actions: [
+                  assign<GarageDoorContext, Tick>(({ context, event }) => ({
+                    position: Math.max(0, context.position + event.delta),
+                    lastUpdated: new Date(),
+                  })),
+                ],
+              },
+              ANIMATION_COMPLETE: { target: "closed", guard: ({ context }) => context.isPowered },
+              POWER_ON: { actions: [assign(() => ({ isPowered: true }))] },
+              POWER_OFF: { actions: [assign(() => ({ isPowered: false }))] },
+            },
+          },
+
+          "paused-while-closing": {
+            entry: [effect(() => Effect.log("Entering: paused-while-closing"))],
+            on: {
+              CLICK: { target: "opening", guard: ({ context }) => context.isPowered },
+              POWER_ON: { actions: [assign(() => ({ isPowered: true }))] },
+              POWER_OFF: { actions: [assign(() => ({ isPowered: false }))] },
+            },
+          },
+        },
+      });
+
       return {
-        /** The machine definition */
-        definition: GarageDoorMachine,
+        /** The machine definition - use with spawnChild in parent machines */
+        definition: machine,
         /** Create a new actor instance */
         createActor: (): Effect.Effect<
           MachineActor<GarageDoorState, GarageDoorContext, GarageDoorEvent>,
           never,
-          WeatherService | Scope.Scope
-        > => interpret(GarageDoorMachine),
+          Scope.Scope
+        > => interpret(machine),
       };
     }),
-    // Declare WeatherService as a dependency - this ensures the R channel flows
+    // WeatherService is automatically provided via dependencies
     dependencies: [WeatherService.Default],
   }
 ) {}

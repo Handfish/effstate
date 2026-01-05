@@ -14,7 +14,6 @@ import {
 } from "@/lib/state-machine";
 import { Data, Duration, Effect, Schedule, Schema, Scope, Stream, SubscriptionRef } from "effect";
 import {
-  GarageDoorMachine,
   GarageDoorMachineService,
   PowerOn,
   PowerOff,
@@ -67,82 +66,21 @@ const wheelAnimation = {
 };
 
 // ============================================================================
-// Hamster Wheel Machine
+// Hamster Wheel Machine Service
 // ============================================================================
 
 const GARAGE_DOOR_CHILD_ID = "garageDoor";
 
-const HamsterWheelMachine = createMachine<HamsterWheelState, HamsterWheelEvent, typeof HamsterWheelContextSchema>({
-  id: "hamsterWheel",
-  initial: "idle",
-  context: HamsterWheelContextSchema,
-  initialContext: {
-    wheelRotation: 0,
-    electricityLevel: 0,
-  },
-  states: {
-    idle: {
-      entry: [
-        effect(() => Effect.log("Hamster is resting - lights out")),
-        assign(() => ({ electricityLevel: 0 })),
-        // Spawn garage door as child using the machine definition
-        // The R channel (WeatherService) is handled by the service layer dependencies
-        spawnChild(GarageDoorMachine, { id: GARAGE_DOOR_CHILD_ID }),
-        // Send POWER_OFF to garage door child
-        sendTo(GARAGE_DOOR_CHILD_ID, new PowerOff()),
-      ],
-      on: {
-        TOGGLE: { target: "running" },
-      },
-    },
-
-    running: {
-      entry: [
-        effect(() => Effect.log("Hamster is running! Generating electricity")),
-        assign(() => ({ electricityLevel: 100 })),
-        // Send POWER_ON to garage door child
-        sendTo(GARAGE_DOOR_CHILD_ID, new PowerOn()),
-      ],
-      activities: [wheelAnimation],
-      on: {
-        TOGGLE: { target: "stopping" },
-        TICK: {
-          actions: [
-            assign<HamsterWheelContext, Tick>(({ context, event }) => ({
-              wheelRotation: (context.wheelRotation + event.delta) % 360,
-            })),
-          ],
-        },
-      },
-    },
-
-    stopping: {
-      entry: [
-        effect(() => Effect.log("Hamster stopped - electricity draining in 2 seconds...")),
-        // Power stays on during stopping - only turns off when entering idle
-      ],
-      after: {
-        delay: Duration.seconds(2),
-        transition: { target: "idle" },
-      },
-      on: {
-        TOGGLE: { target: "running" },
-      },
-    },
-  },
-});
-
-// ============================================================================
-// Machine Service (for automatic R channel composition)
-// ============================================================================
-
 /**
  * HamsterWheel machine as an Effect.Service.
  *
- * This service:
- * - Provides the machine definition
- * - Provides a factory to create actors
- * - Depends on GarageDoorMachineService, which automatically includes WeatherService
+ * The machine is defined inside the service, yielding GarageDoorMachineService
+ * to access its `.definition` for spawning as a child.
+ *
+ * This provides:
+ * - Clean types (no explicit R parameter needed)
+ * - No type casts
+ * - Automatic R channel composition via `dependencies`
  *
  * The dependency chain ensures the R channel flows:
  * HamsterWheelMachineService -> GarageDoorMachineService -> WeatherService
@@ -162,15 +100,78 @@ export class HamsterWheelMachineService extends Effect.Service<HamsterWheelMachi
   "HamsterWheelMachineService",
   {
     effect: Effect.gen(function* () {
+      // Yield child service to get its machine definition
+      const garageDoorService = yield* GarageDoorMachineService;
+
+      // Machine definition with closure over child service
+      const machine = createMachine<HamsterWheelState, HamsterWheelEvent, typeof HamsterWheelContextSchema>({
+        id: "hamsterWheel",
+        initial: "idle",
+        context: HamsterWheelContextSchema,
+        initialContext: {
+          wheelRotation: 0,
+          electricityLevel: 0,
+        },
+        states: {
+          idle: {
+            entry: [
+              effect(() => Effect.log("Hamster is resting - lights out")),
+              assign(() => ({ electricityLevel: 0 })),
+              // Spawn garage door using the service's definition - clean types!
+              spawnChild(garageDoorService.definition, { id: GARAGE_DOOR_CHILD_ID }),
+              // Send POWER_OFF to garage door child
+              sendTo(GARAGE_DOOR_CHILD_ID, new PowerOff()),
+            ],
+            on: {
+              TOGGLE: { target: "running" },
+            },
+          },
+
+          running: {
+            entry: [
+              effect(() => Effect.log("Hamster is running! Generating electricity")),
+              assign(() => ({ electricityLevel: 100 })),
+              // Send POWER_ON to garage door child
+              sendTo(GARAGE_DOOR_CHILD_ID, new PowerOn()),
+            ],
+            activities: [wheelAnimation],
+            on: {
+              TOGGLE: { target: "stopping" },
+              TICK: {
+                actions: [
+                  assign<HamsterWheelContext, Tick>(({ context, event }) => ({
+                    wheelRotation: (context.wheelRotation + event.delta) % 360,
+                  })),
+                ],
+              },
+            },
+          },
+
+          stopping: {
+            entry: [
+              effect(() => Effect.log("Hamster stopped - electricity draining in 2 seconds...")),
+              // Power stays on during stopping - only turns off when entering idle
+            ],
+            after: {
+              delay: Duration.seconds(2),
+              transition: { target: "idle" },
+            },
+            on: {
+              TOGGLE: { target: "running" },
+            },
+          },
+        },
+      });
+
       return {
         /** The machine definition */
-        definition: HamsterWheelMachine,
+        definition: machine,
         /** Create a new actor instance */
         createActor: (): Effect.Effect<
           MachineActor<HamsterWheelState, HamsterWheelContext, HamsterWheelEvent>,
           never,
           Scope.Scope
-        > => interpret(HamsterWheelMachine),
+        > => interpret(machine),
       };
     }),
     // Depend on GarageDoorMachineService - this chains the dependency on WeatherService
@@ -183,7 +184,15 @@ export class HamsterWheelMachineService extends Effect.Service<HamsterWheelMachi
 // ============================================================================
 
 const actorAtom = appRuntime
-  .atom(interpret(HamsterWheelMachine))
+  .atom(
+    Effect.gen(function* () {
+      const hamsterWheelService = yield* HamsterWheelMachineService;
+      return yield* hamsterWheelService.createActor();
+    }).pipe(
+      // Provide machine service inline to avoid circular imports with app-runtime
+      Effect.provide(HamsterWheelMachineService.Default)
+    )
+  )
   .pipe(Atom.keepAlive);
 
 const snapshotAtom = appRuntime

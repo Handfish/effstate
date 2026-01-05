@@ -17,6 +17,8 @@ const ServicesLayer = Layer.mergeAll(
 const MachineLayer = MachineRegistry.Default;
 
 // Combined app layer
+// Note: Machine services (GarageDoorMachineService, HamsterWheelMachineService)
+// are provided inline where needed to avoid circular imports
 const AppLayer = Layer.mergeAll(
   ServicesLayer,
   MachineLayer,

@@ -13,6 +13,8 @@ export type {
   EnqueueActionsParams,
   ErrorByTag,
   EventByTag,
+  ExtractStatesE,
+  ExtractStatesR,
   ForwardToAction,
   Guard,
   InvokeConfig,
@@ -48,7 +50,7 @@ export {
 } from "./types.js";
 
 // Machine creation
-export { createMachine, interpret, interpretSync, type MachineActor } from "./machine.js";
+export { createMachine, interpret, interpretSync, withRequirements, type MachineActor } from "./machine.js";
 
 // Actions
 export { assign, assignOnDefect, assignOnFailure, assignOnSuccess, cancel, effect, emit, enqueueActions, forwardTo, log, raise, sendParent, sendTo, spawnChild, stopChild } from "./actions.js";

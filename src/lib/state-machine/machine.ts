@@ -87,7 +87,6 @@ export function createMachine<
   readonly initial: TStateValue;
   readonly context: TContextSchema;
   readonly initialContext: import("effect").Schema.Schema.Type<TContextSchema>;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly states: Record<TStateValue, StateNodeConfig<TStateValue, import("effect").Schema.Schema.Type<TContextSchema>, TEvent, R, E>>;
 }): MachineDefinition<
   string,
@@ -98,8 +97,8 @@ export function createMachine<
   E,
   import("effect").Schema.Schema.Encoded<TContextSchema>
 > {
-  return {
-    _tag: "MachineDefinition",
+  const definition = {
+    _tag: "MachineDefinition" as const,
     id: config.id,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     config: config as any,
@@ -110,6 +109,47 @@ export function createMachine<
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     contextSchema: config.context as any,
+  };
+
+  return definition;
+}
+
+/**
+ * Narrow the R channel (requirements) of a machine definition.
+ *
+ * Use this when your machine uses services via `invoke.src` or `effect()` actions
+ * that return Effects requiring services. This is a type-only operation that
+ * helps TypeScript understand the machine's service dependencies.
+ *
+ * @example
+ * ```ts
+ * // Machine that uses WeatherService in its invoke
+ * const GarageDoorMachine = withRequirements<WeatherService>()(
+ *   createMachine({
+ *     id: "garageDoor",
+ *     // ...states that use WeatherService
+ *   })
+ * );
+ *
+ * // Now GarageDoorMachine has R = WeatherService
+ * type R = MachineDefinitionR<typeof GarageDoorMachine>;
+ * // => WeatherService
+ * ```
+ */
+export function withRequirements<R>() {
+  return <
+    TId extends string,
+    TStateValue extends string,
+    TContext extends MachineContext,
+    TEvent extends MachineEvent,
+    _R,
+    E,
+    TContextEncoded,
+  >(
+    machine: MachineDefinition<TId, TStateValue, TContext, TEvent, _R, E, TContextEncoded>,
+  ): MachineDefinition<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded> => {
+    // Type-only operation - the machine is returned unchanged at runtime
+    return machine as unknown as MachineDefinition<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded>;
   };
 }
 
@@ -751,7 +791,9 @@ function createActor<
           // Only spawn if child doesn't already exist (idempotent)
           if (!childrenRef.has(childId)) {
             // Spawn child synchronously, inherit runtime for service access
-            const childActor = createActor(action.src, {
+            // Cast AnyMachineDefinition back to full MachineDefinition for createActor
+            const childMachine = action.src as unknown as MachineDefinition<string, string, MachineContext, MachineEvent, unknown, unknown, unknown>;
+            const childActor = createActor(childMachine, {
               parent: actor as unknown as MachineActor<string, MachineContext, MachineEvent>,
               runtime: runtime as Runtime.Runtime<unknown>,
             });

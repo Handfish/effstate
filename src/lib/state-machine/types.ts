@@ -734,3 +734,144 @@ export type MachineDefinitionE<T> = T extends MachineDefinition<
   : T extends AnyMachineDefinition<unknown, infer E>
     ? E
     : never;
+
+// ============================================================================
+// Config R/E Inference Helpers
+// ============================================================================
+
+/**
+ * Extract the R channel from an EffectAction.
+ */
+type _ExtractEffectActionR<T> = T extends EffectAction<MachineContext, MachineEvent, infer R, unknown>
+  ? R
+  : never;
+
+/**
+ * Extract the R channel from an array of actions.
+ */
+type ExtractActionsR<T> = T extends ReadonlyArray<infer TAction>
+  ? TAction extends EffectAction<MachineContext, MachineEvent, infer R, unknown>
+    ? R
+    : never
+  : never;
+
+/**
+ * Extract the R channel from an InvokeConfig.
+ */
+type ExtractInvokeR<T> = T extends InvokeConfig<string, MachineContext, MachineEvent, unknown, unknown, infer R>
+  ? R
+  : never;
+
+/**
+ * Extract the R channel from an ActivityConfig.
+ */
+type ExtractActivityR<T> = T extends ActivityConfig<MachineContext, MachineEvent, infer R, unknown>
+  ? R
+  : never;
+
+/**
+ * Extract the R channel from an array of activities.
+ */
+type ExtractActivitiesR<T> = T extends ReadonlyArray<infer TActivity>
+  ? ExtractActivityR<TActivity>
+  : never;
+
+/**
+ * Extract the R channel from a single StateNodeConfig.
+ * Combines R from entry, exit, invoke, activities, and transitions.
+ */
+type ExtractStateNodeR<T> = T extends {
+  entry?: infer TEntry;
+  exit?: infer TExit;
+  invoke?: infer TInvoke;
+  activities?: infer TActivities;
+  on?: infer TOn;
+  after?: infer TAfter;
+}
+  ? ExtractActionsR<TEntry> |
+    ExtractActionsR<TExit> |
+    ExtractInvokeR<TInvoke> |
+    ExtractActivitiesR<TActivities> |
+    ExtractTransitionsR<TOn> |
+    ExtractAfterR<TAfter>
+  : never;
+
+/**
+ * Extract R from transition configs (the "on" handler).
+ */
+type ExtractTransitionsR<T> = T extends Record<string, infer TTransition>
+  ? TTransition extends { actions?: infer TActions }
+    ? ExtractActionsR<TActions>
+    : never
+  : never;
+
+/**
+ * Extract R from after configs.
+ */
+type ExtractAfterR<T> = T extends { transition?: { actions?: infer TActions } }
+  ? ExtractActionsR<TActions>
+  : T extends Record<number, { actions?: infer TActions }>
+    ? ExtractActionsR<TActions>
+    : never;
+
+/**
+ * Extract the R channel from all states in a machine config.
+ * This is the union of R from all state nodes.
+ */
+export type ExtractStatesR<TStates> = TStates extends Record<string, infer TState>
+  ? ExtractStateNodeR<TState>
+  : never;
+
+/**
+ * Similar helpers for E channel extraction.
+ */
+type _ExtractEffectActionE<T> = T extends EffectAction<MachineContext, MachineEvent, unknown, infer E>
+  ? E
+  : never;
+
+type ExtractActionsE<T> = T extends ReadonlyArray<infer TAction>
+  ? TAction extends EffectAction<MachineContext, MachineEvent, unknown, infer E>
+    ? E
+    : never
+  : never;
+
+type ExtractActivityE<T> = T extends ActivityConfig<MachineContext, MachineEvent, unknown, infer E>
+  ? E
+  : never;
+
+type ExtractActivitiesE<T> = T extends ReadonlyArray<infer TActivity>
+  ? ExtractActivityE<TActivity>
+  : never;
+
+type ExtractStateNodeE<T> = T extends {
+  entry?: infer TEntry;
+  exit?: infer TExit;
+  activities?: infer TActivities;
+  on?: infer TOn;
+  after?: infer TAfter;
+}
+  ? ExtractActionsE<TEntry> |
+    ExtractActionsE<TExit> |
+    ExtractActivitiesE<TActivities> |
+    ExtractTransitionsE<TOn> |
+    ExtractAfterE<TAfter>
+  : never;
+
+type ExtractTransitionsE<T> = T extends Record<string, infer TTransition>
+  ? TTransition extends { actions?: infer TActions }
+    ? ExtractActionsE<TActions>
+    : never
+  : never;
+
+type ExtractAfterE<T> = T extends { transition?: { actions?: infer TActions } }
+  ? ExtractActionsE<TActions>
+  : T extends Record<number, { actions?: infer TActions }>
+    ? ExtractActionsE<TActions>
+    : never;
+
+/**
+ * Extract the E channel from all states in a machine config.
+ */
+export type ExtractStatesE<TStates> = TStates extends Record<string, infer TState>
+  ? ExtractStateNodeE<TState>
+  : never;
