@@ -4,10 +4,12 @@ import {
   assign,
   createMachine,
   createUseMachineHook,
+  decodeSnapshotSync,
   effect,
+  encodeSnapshotSync,
   interpret,
 } from "@/lib/state-machine";
-import { Data, Duration, Effect, Match, Schedule, Stream, SubscriptionRef } from "effect";
+import { Data, Duration, Effect, Match, Schedule, Schema, Stream, SubscriptionRef } from "effect";
 
 // ============================================================================
 // Types
@@ -21,9 +23,13 @@ export type GarageDoorState =
   | "closing"
   | "paused-while-closing";
 
-interface GarageDoorContext {
-  readonly position: number;
-}
+// Schema-based context for serialization (Date <-> string)
+const GarageDoorContextSchema = Schema.Struct({
+  position: Schema.Number,
+  lastUpdated: Schema.DateFromString,
+});
+
+type GarageDoorContext = Schema.Schema.Type<typeof GarageDoorContextSchema>;
 
 // Events using Effect's Data.TaggedClass for structural equality and type safety
 class Click extends Data.TaggedClass("CLICK")<{}> {}
@@ -65,20 +71,27 @@ const createAnimationActivity = (direction: 1 | -1) => ({
 // Garage Door Machine
 // ============================================================================
 
+// Encoded context type for serialization (Date -> string)
+type GarageDoorContextEncoded = typeof GarageDoorContextSchema.Encoded;
+
 export const garageDoorMachine = createMachine<
   "garageDoor",
   GarageDoorState,
   GarageDoorContext,
+  GarageDoorContextEncoded,
   GarageDoorEvent
 >({
   id: "garageDoor",
   initial: "closed",
-  context: {
+  // Schema-based context enables automatic serialization
+  context: GarageDoorContextSchema,
+  initialContext: {
     position: 0,
+    lastUpdated: new Date(),
   },
   states: {
     closed: {
-      entry: [assign({ position: 0 })],
+      entry: [assign({ position: 0, lastUpdated: new Date() })],
       on: {
         CLICK: { target: "opening" },
       },
@@ -95,6 +108,7 @@ export const garageDoorMachine = createMachine<
           actions: [
             assign(({ context, event }) => ({
               position: Math.min(100, context.position + event.delta),
+              lastUpdated: new Date(),
             })),
           ],
         },
@@ -110,7 +124,7 @@ export const garageDoorMachine = createMachine<
     },
 
     open: {
-      entry: [assign({ position: 100 })],
+      entry: [assign({ position: 100, lastUpdated: new Date() })],
       on: {
         CLICK: { target: "closing" },
       },
@@ -125,6 +139,7 @@ export const garageDoorMachine = createMachine<
           actions: [
             assign(({ context, event }) => ({
               position: Math.max(0, context.position + event.delta),
+              lastUpdated: new Date(),
             })),
           ],
         },
@@ -142,6 +157,39 @@ export const garageDoorMachine = createMachine<
 });
 
 // ============================================================================
+// Persistence (localStorage)
+// ============================================================================
+
+const STORAGE_KEY = "garageDoor:snapshot";
+
+/**
+ * Load saved snapshot from localStorage (if any)
+ * Use this to restore state on app start.
+ */
+export const loadSnapshot = (): typeof garageDoorMachine.initialSnapshot | null => {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (!stored) return null;
+    const encoded = JSON.parse(stored);
+    return decodeSnapshotSync(garageDoorMachine, encoded);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Save snapshot to localStorage
+ */
+const saveSnapshot = (snapshot: typeof garageDoorMachine.initialSnapshot): void => {
+  try {
+    const encoded = encodeSnapshotSync(garageDoorMachine, snapshot);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(encoded));
+  } catch {
+    // Ignore storage errors
+  }
+};
+
+// ============================================================================
 // Atom Integration
 // ============================================================================
 
@@ -152,15 +200,18 @@ const actorAtom = appRuntime
   .pipe(Atom.keepAlive);
 
 // Create a SubscriptionRef that stays in sync with the actor's snapshot
+// Also persists to localStorage on every change
 const snapshotAtom = appRuntime
   .subscriptionRef((get) =>
     Effect.gen(function* () {
       const actor = yield* get.result(actorAtom);
       // Create a SubscriptionRef with the current snapshot
       const ref = yield* SubscriptionRef.make(actor.getSnapshot());
-      // Subscribe to actor changes and update the ref
+      // Subscribe to actor changes, update ref, and persist
       actor.subscribe((snapshot) => {
         Effect.runSync(SubscriptionRef.set(ref, snapshot));
+        // Persist to localStorage (Date automatically becomes string)
+        saveSnapshot(snapshot);
       });
       return ref;
     })

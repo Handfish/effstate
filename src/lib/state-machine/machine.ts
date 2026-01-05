@@ -1,4 +1,4 @@
-import { Duration, Effect, Exit, Fiber, Runtime, Schema, Scope } from "effect";
+import { Duration, Effect, Exit, Fiber, Runtime, Scope } from "effect";
 import type {
   Action,
   ActionEnqueuer,
@@ -54,6 +54,30 @@ import {
  * });
  * ```
  */
+// Overload for Schema-based context
+export function createMachine<
+  TId extends string,
+  TStateValue extends string,
+  TContext extends MachineContext,
+  TContextEncoded,
+  TEvent extends MachineEvent,
+  R = never,
+  E = never,
+>(
+  config: MachineConfigSchema<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded>,
+): MachineDefinition<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded>;
+// Overload for plain context
+export function createMachine<
+  TId extends string,
+  TStateValue extends string,
+  TContext extends MachineContext,
+  TEvent extends MachineEvent,
+  R = never,
+  E = never,
+>(
+  config: MachineConfigPlain<TId, TStateValue, TContext, TEvent, R, E>,
+): MachineDefinition<TId, TStateValue, TContext, TEvent, R, E, TContext>;
+// Implementation
 export function createMachine<
   TId extends string,
   TStateValue extends string,
@@ -194,8 +218,9 @@ function createActor<
   TEvent extends MachineEvent,
   R,
   E,
+  TContextEncoded,
 >(
-  machine: MachineDefinition<TId, TStateValue, TContext, TEvent, R, E>,
+  machine: MachineDefinition<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded>,
   options?: {
     parent?: MachineActor<string, MachineContext, MachineEvent>;
     runtime?: Runtime.Runtime<R>;
@@ -705,8 +730,9 @@ export const interpret = <
   TEvent extends MachineEvent,
   R,
   E,
+  TContextEncoded,
 >(
-  machine: MachineDefinition<TId, TStateValue, TContext, TEvent, R, E>,
+  machine: MachineDefinition<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded>,
   options?: {
     parent?: MachineActor<string, MachineContext, MachineEvent>;
   },
@@ -751,8 +777,9 @@ export function interpretSync<
   TEvent extends MachineEvent,
   R,
   E,
+  TContextEncoded,
 >(
-  machine: MachineDefinition<TId, TStateValue, TContext, TEvent, R, E>,
+  machine: MachineDefinition<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded>,
   options?: {
     parent?: MachineActor<string, MachineContext, MachineEvent>;
   },

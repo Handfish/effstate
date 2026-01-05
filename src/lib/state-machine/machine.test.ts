@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { Data, Effect, Exit, Fiber, Ref } from "effect";
 import { createMachine, interpret, interpretSync } from "./machine";
 import { assign, effect, raise, cancel, emit, enqueueActions, spawnChild, stopChild, sendTo, sendParent, forwardTo } from "./actions";
+import type { MachineEvent } from "./types";
 import { guard, and, or, not } from "./guards";
 
 // ============================================================================
@@ -3356,10 +3357,17 @@ describe("Schema Context", () => {
     lastUpdated: Schema.DateFromString,
   });
 
-  type CounterContext = Schema.Schema.Type<typeof CounterContextSchema>;
+  type CounterContext = typeof CounterContextSchema.Type;
+  type CounterContextEncoded = typeof CounterContextSchema.Encoded;
 
   it("creates machine with Schema context", () => {
-    const machine = createMachine({
+    const machine = createMachine<
+      "counter",
+      "idle",
+      CounterContext,
+      CounterContextEncoded,
+      Increment
+    >({
       id: "counter",
       initial: "idle",
       context: CounterContextSchema,
@@ -3387,7 +3395,13 @@ describe("Schema Context", () => {
   });
 
   it("encodes snapshot with Date to JSON-safe format", () => {
-    const machine = createMachine({
+    const machine = createMachine<
+      "counter",
+      "idle",
+      CounterContext,
+      CounterContextEncoded,
+      MachineEvent
+    >({
       id: "counter",
       initial: "idle",
       context: CounterContextSchema,
@@ -3438,7 +3452,13 @@ describe("Schema Context", () => {
   });
 
   it("roundtrip encode/decode preserves data", () => {
-    const machine = createMachine({
+    const machine = createMachine<
+      "counter",
+      "idle",
+      CounterContext,
+      CounterContextEncoded,
+      Increment
+    >({
       id: "counter",
       initial: "idle",
       context: CounterContextSchema,

@@ -201,13 +201,13 @@ npx tsx src/lib/state-machine/machine.bench.ts
 
 | Metric | Pre-Refactor | Final (All Phases) |
 |--------|--------------|-------------------|
-| createMachine | 49x faster | **48x faster** |
+| createMachine | 49x faster | **47x faster** |
 | send 1000 events | 30x faster | **30x faster** |
 | with subscribers | 16x faster | **15x faster** |
-| full lifecycle | 2.5x faster | **2.5x faster** |
-| interpret/createActor | - | XState 1.1x faster* |
-| Bundle (min) | 13.7kB | TBD |
-| Bundle (gzip) | 5.4kB | TBD |
+| full lifecycle | 2.5x faster | **2.3x faster** |
+| interpret/createActor | - | XState 1.15x faster* |
+| Bundle (min) | 13.7kB | 498.76kB (app total) |
+| Bundle (gzip) | 5.4kB | 157.28kB (app total) |
 
 *Note: `interpretSync` matches original performance. The Effect-native `interpret` adds minimal overhead for runtime capture.
 
