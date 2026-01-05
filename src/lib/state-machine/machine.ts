@@ -1,5 +1,4 @@
-import { Duration, Effect, Exit, Fiber, Scope } from "effect";
-// Note: Exit is still used for effect action error handling
+import { Duration, Effect, Exit, Fiber, Runtime, Scope } from "effect";
 import type {
   Action,
   ActionEnqueuer,
@@ -131,10 +130,13 @@ export interface MachineActor<
 }
 
 // ============================================================================
-// Interpreter Implementation - SYNCHRONOUS like XState
+// Interpreter Implementation
 // ============================================================================
 
-export function interpret<
+/**
+ * Internal actor creation - used by both interpret and interpretSync
+ */
+function createActor<
   TId extends string,
   TStateValue extends string,
   TContext extends MachineContext,
@@ -145,8 +147,10 @@ export function interpret<
   machine: MachineDefinition<TId, TStateValue, TContext, TEvent, R, E>,
   options?: {
     parent?: MachineActor<string, MachineContext, MachineEvent>;
+    runtime?: Runtime.Runtime<R>;
   },
 ): MachineActor<TStateValue, TContext, TEvent> {
+  const runtime = options?.runtime;
   // Mutable state
   let snapshot: MachineSnapshot<TStateValue, TContext> = machine.initialSnapshot;
   let stopped = false;
@@ -351,9 +355,14 @@ export function interpret<
         }
         case "effect": {
           // Defer effect - run async with Exit-based error handling
-          const eff = action.fn({ context: ctx, event }) as Effect.Effect<void>;
+          const eff = action.fn({ context: ctx, event });
           deferredEffects.push(() => {
-            Effect.runPromiseExit(eff).then((exit) => {
+            // Use runtime if available (from interpret), otherwise run directly (interpretSync)
+            const runEffect = runtime
+              ? Runtime.runPromiseExit(runtime)(eff as Effect.Effect<void, unknown, R>)
+              : Effect.runPromiseExit(eff as Effect.Effect<void>);
+
+            runEffect.then((exit) => {
               Exit.match(exit, {
                 onFailure: (cause) => {
                   emitError(new EffectActionError({
@@ -399,8 +408,11 @@ export function interpret<
           const childId = typeof action.id === "function"
             ? action.id({ context: ctx, event })
             : action.id;
-          // Spawn child synchronously
-          const childActor = interpret(action.src, { parent: actor as unknown as MachineActor<string, MachineContext, MachineEvent> });
+          // Spawn child synchronously, inherit runtime for service access
+          const childActor = createActor(action.src, {
+            parent: actor as unknown as MachineActor<string, MachineContext, MachineEvent>,
+            runtime: runtime as Runtime.Runtime<unknown>,
+          });
           childrenRef.set(childId, childActor);
           break;
         }
@@ -466,19 +478,22 @@ export function interpret<
 
       // Fork the activity and store the fiber for interruption
       const activityId = activity.id;
-      const fiber = Effect.runFork(
-        activity.src({ context, event, send }).pipe(
-          // catchAllCause handles both typed errors and defects
-          Effect.catchAllCause((cause) => {
-            emitError(new ActivityError({
-              message: `Activity "${activityId}" failed`,
-              activityId,
-              cause,
-            }));
-            return Effect.void;
-          }),
-        ) as Effect.Effect<void>
+      const activityEffect = activity.src({ context, event, send }).pipe(
+        // catchAllCause handles both typed errors and defects
+        Effect.catchAllCause((cause) => {
+          emitError(new ActivityError({
+            message: `Activity "${activityId}" failed`,
+            activityId,
+            cause,
+          }));
+          return Effect.void;
+        }),
       );
+
+      // Use runtime if available, otherwise run directly
+      const fiber = runtime
+        ? Runtime.runFork(runtime)(activityEffect as Effect.Effect<void, never, R>)
+        : Effect.runFork(activityEffect as Effect.Effect<void>);
 
       activityCleanups.set(activity.id, () => {
         Effect.runFork(Fiber.interrupt(fiber));
@@ -605,10 +620,34 @@ export function interpret<
 }
 
 // ============================================================================
-// Effect-wrapped interpret (for Effect users who want Scope integration)
+// Public API
 // ============================================================================
 
-export const interpretEffect = <
+/**
+ * Interpret a machine, returning an Effect that creates the actor.
+ *
+ * This is the primary API for Effect users. It:
+ * - Captures the current Effect runtime to run effect actions with services
+ * - Integrates with Scope for automatic cleanup
+ * - Supports dependency injection via Effect.provideService
+ *
+ * @example
+ * ```ts
+ * const program = Effect.gen(function* () {
+ *   const actor = yield* interpret(machine)
+ *   actor.send(new MyEvent())
+ *   const result = yield* actor.waitFor(s => s.value === "done")
+ * })
+ *
+ * Effect.runPromise(
+ *   program.pipe(
+ *     Effect.provideService(ApiService, liveApi),
+ *     Effect.scoped
+ *   )
+ * )
+ * ```
+ */
+export const interpret = <
   TId extends string,
   TStateValue extends string,
   TContext extends MachineContext,
@@ -620,11 +659,55 @@ export const interpretEffect = <
   options?: {
     parent?: MachineActor<string, MachineContext, MachineEvent>;
   },
-): Effect.Effect<MachineActor<TStateValue, TContext, TEvent>, never, Scope.Scope> =>
-  Effect.acquireRelease(
-    Effect.sync(() => interpret(machine, options)),
-    (actor) => Effect.sync(() => actor.stop()),
-  );
+): Effect.Effect<MachineActor<TStateValue, TContext, TEvent>, never, R | Scope.Scope> =>
+  Effect.gen(function* () {
+    // Capture runtime to run effects with the current context (services)
+    const runtime = yield* Effect.runtime<R>();
+
+    const actor = createActor(machine, {
+      ...options,
+      runtime,
+    });
+
+    // Register cleanup when scope closes
+    yield* Effect.addFinalizer(() => Effect.sync(() => actor.stop()));
+
+    return actor;
+  });
+
+/**
+ * Synchronously interpret a machine without Effect context.
+ *
+ * This is the escape hatch for:
+ * - React components that manage lifecycle themselves
+ * - Simple use cases that don't need services
+ * - Backwards compatibility
+ *
+ * Note: Effect actions that require services (R !== never) will fail at runtime.
+ *
+ * @example
+ * ```ts
+ * const actor = interpretSync(machine)
+ * actor.send(new MyEvent())
+ * // Don't forget to clean up!
+ * actor.stop()
+ * ```
+ */
+export function interpretSync<
+  TId extends string,
+  TStateValue extends string,
+  TContext extends MachineContext,
+  TEvent extends MachineEvent,
+  R,
+  E,
+>(
+  machine: MachineDefinition<TId, TStateValue, TContext, TEvent, R, E>,
+  options?: {
+    parent?: MachineActor<string, MachineContext, MachineEvent>;
+  },
+): MachineActor<TStateValue, TContext, TEvent> {
+  return createActor(machine, options);
+}
 
 // ============================================================================
 // Internal Helpers

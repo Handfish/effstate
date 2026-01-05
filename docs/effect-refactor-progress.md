@@ -1,6 +1,6 @@
 # Effect-Native Refactor Progress
 
-## Current Status: Planning Complete
+## Current Status: Phase 1 Complete ✅
 
 **Last Updated**: 2026-01-04
 
@@ -28,47 +28,58 @@
 
 ---
 
-## Phase 1: Services in Actions
+## Phase 1: Services in Actions ✅
 
 ### Tasks
-- [ ] Design R propagation through machine config
-- [ ] Update `effect()` action to properly type R
-- [ ] Update `interpret` to return `Effect<MachineActor, never, R>`
-- [ ] Thread R through effect action execution
-- [ ] Thread R through activity execution
-- [ ] Add tests for service injection
-- [ ] Benchmark performance impact
+- [x] Design R propagation through machine config
+- [x] Update `effect()` action to properly type R
+- [x] Update `interpret` to return `Effect<MachineActor, never, R | Scope.Scope>`
+- [x] Thread R through effect action execution
+- [x] Thread R through activity execution
+- [x] Add tests for service injection
+- [x] Benchmark performance impact
 
-### Files to Modify
-- `src/lib/state-machine/types.ts` - Update action types for R
-- `src/lib/state-machine/actions.ts` - Update effect() creator
-- `src/lib/state-machine/machine.ts` - Update interpret, effect execution
-- `src/lib/state-machine/machine.test.ts` - Add service injection tests
+### Implementation Summary
+- `interpret` now returns `Effect<MachineActor, never, R | Scope.Scope>`
+- Added `interpretSync` as escape hatch for React/simple cases
+- Runtime captured via `Effect.runtime<R>()` and passed to `createActor`
+- Effects/activities use `Runtime.runPromiseExit(runtime)` when runtime available
+- Child actors inherit runtime for service access
+- Scoped cleanup via `Effect.addFinalizer`
 
-### Blockers
-- None
+### Files Modified
+- `src/lib/state-machine/machine.ts` - Core implementation
+- `src/lib/state-machine/index.ts` - Export `interpretSync`
+- `src/lib/state-machine/machine.test.ts` - Service injection tests (4 new tests)
+- `src/lib/state-machine/machine.bench.ts` - Updated to use `interpretSync`
+
+### Tests Added
+- `provides services to effect actions` - CounterService in transition actions
+- `auto-stops actor when scope closes` - Scope.close triggers cleanup
+- `provides services to activities` - CounterService in activities
+- `provides services to child actors` - Runtime inheritance to children
 
 ---
 
-## Phase 2: Scoped Interpretation
+## Phase 2: Scoped Interpretation (Mostly Complete)
 
 ### Tasks
-- [ ] Rename `interpret` -> `interpretSync`
-- [ ] Rename `interpretEffect` -> `interpret`
-- [ ] Update `interpret` to use `Effect.acquireRelease`
-- [ ] Update all internal usages
-- [ ] Update tests
-- [ ] Update React integration (`atom.ts`)
+- [x] Rename `interpret` -> `interpretSync` (done in Phase 1)
+- [x] Create new `interpret` returning `Effect<MachineActor, never, R | Scope.Scope>` (done in Phase 1)
+- [x] Update `interpret` to use `Effect.addFinalizer` for cleanup (done in Phase 1)
+- [x] Update all internal usages (done in Phase 1)
+- [x] Update tests to use `interpretSync` (done in Phase 1)
+- [ ] Update React integration (`atom.ts`) to use `interpretSync`
 - [ ] Add migration guide to docs
 
 ### Files to Modify
-- `src/lib/state-machine/machine.ts` - Rename functions
-- `src/lib/state-machine/index.ts` - Update exports
-- `src/lib/state-machine/atom.ts` - Use interpretSync for React
-- `src/lib/state-machine/machine.test.ts` - Update all tests
+- [x] `src/lib/state-machine/machine.ts` - Done
+- [x] `src/lib/state-machine/index.ts` - Done
+- [ ] `src/lib/state-machine/atom.ts` - Use interpretSync for React
+- [x] `src/lib/state-machine/machine.test.ts` - Done
 
 ### Blockers
-- Phase 1 should complete first (interpret needs R parameter)
+- None (Phase 1 completed)
 
 ---
 
@@ -113,12 +124,15 @@ npx tsx src/lib/state-machine/machine.bench.ts
 
 | Metric | Pre-Refactor | Phase 1 | Phase 2 | Phase 3 |
 |--------|--------------|---------|---------|---------|
-| createMachine | 49x faster | - | - | - |
-| send 1000 events | 30x faster | - | - | - |
-| with subscribers | 16x faster | - | - | - |
-| full lifecycle | 2.5x faster | - | - | - |
-| Bundle (min) | 13.7kB | - | - | - |
-| Bundle (gzip) | 5.4kB | - | - | - |
+| createMachine | 49x faster | 38x faster | - | - |
+| send 1000 events | 30x faster | 30x faster | - | - |
+| with subscribers | 16x faster | 15x faster | - | - |
+| full lifecycle | 2.5x faster | 2.3x faster | - | - |
+| interpret/createActor | - | XState 1.2x faster* | - | - |
+| Bundle (min) | 13.7kB | TBD | - | - |
+| Bundle (gzip) | 5.4kB | TBD | - | - |
+
+*Note: `interpret` now captures Effect runtime, adding slight overhead. `interpretSync` matches original performance.
 
 ---
 

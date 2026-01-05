@@ -2,7 +2,7 @@ import { Bench, type Task } from "tinybench";
 import { Data } from "effect";
 
 // Our Effect-first state machine
-import { createMachine, interpret, assign } from "./index.js";
+import { createMachine, interpretSync, assign } from "./index.js";
 
 // XState
 import {
@@ -157,7 +157,7 @@ function verifyImplementations() {
 
   // Test 1: Context updates work
   {
-    const effectActor = interpret(effectMachine);
+    const effectActor = interpretSync(effectMachine);
     effectActor.send(incrementEvent);
     effectActor.send(incrementEvent);
     effectActor.send(decrementEvent);
@@ -180,7 +180,7 @@ function verifyImplementations() {
     let effectCalls = 0;
     let xstateCalls = 0;
 
-    const effectActor = interpret(effectMachine);
+    const effectActor = interpretSync(effectMachine);
     effectActor.subscribe(() => effectCalls++);
     effectActor.send(incrementEvent);
     effectActor.send(incrementEvent);
@@ -199,7 +199,7 @@ function verifyImplementations() {
 
   // Test 3: State transitions work
   {
-    const effectActor = interpret(effectMachine);
+    const effectActor = interpretSync(effectMachine);
     const effectState1 = effectActor.getSnapshot().value;
     effectActor.send(incrementEvent);
     const effectState2 = effectActor.getSnapshot().value;
@@ -295,7 +295,7 @@ async function main() {
   const lifecycleBench = new Bench({ time: 200, warmupTime: 50 });
 
   lifecycleBench.add("Effect: interpret + stop", () => {
-    const actor = interpret(effectMachine);
+    const actor = interpretSync(effectMachine);
     actor.stop();
   });
 
@@ -329,7 +329,7 @@ async function main() {
   const eventBench = new Bench({ time: 200, warmupTime: 50 });
 
   eventBench.add("Effect: send 1000 events", () => {
-    const actor = interpret(effectMachine);
+    const actor = interpretSync(effectMachine);
     for (let i = 0; i < 500; i++) {
       actor.send(incrementEvent);
       actor.send(decrementEvent);
@@ -371,7 +371,7 @@ async function main() {
   const subscriberBench = new Bench({ time: 200, warmupTime: 50 });
 
   subscriberBench.add("Effect: with 5 subscribers", () => {
-    const actor = interpret(effectMachine);
+    const actor = interpretSync(effectMachine);
     const unsubs: Array<() => void> = [];
     for (let i = 0; i < 5; i++) {
       unsubs.push(actor.subscribe(() => {}));
@@ -423,7 +423,7 @@ async function main() {
   const fullBench = new Bench({ time: 200, warmupTime: 50 });
 
   fullBench.add("Effect: full lifecycle", () => {
-    const actor = interpret(effectMachine);
+    const actor = interpretSync(effectMachine);
     actor.send(incrementEvent);
     actor.send(incrementEvent);
     actor.send(decrementEvent);
