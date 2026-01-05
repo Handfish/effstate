@@ -1,10 +1,12 @@
-import { Duration, Effect, Exit, Fiber, Runtime, Scope } from "effect";
+import { Duration, Effect, Exit, Fiber, Runtime, Schema, Scope } from "effect";
 import type {
   Action,
   ActionEnqueuer,
   EmittedEvent,
   Guard,
   MachineConfig,
+  MachineConfigPlain,
+  MachineConfigSchema,
   MachineContext,
   MachineDefinition,
   MachineEvent,
@@ -16,12 +18,42 @@ import type {
 import {
   EffectActionError,
   ActivityError,
+  isSchema,
 } from "./types.js";
 
 // ============================================================================
 // Machine Creation
 // ============================================================================
 
+/**
+ * Create a state machine definition.
+ *
+ * @example Plain context (backwards compatible)
+ * ```ts
+ * const machine = createMachine({
+ *   id: "counter",
+ *   initial: "idle",
+ *   context: { count: 0 },
+ *   states: { ... }
+ * });
+ * ```
+ *
+ * @example Schema context (with serialization)
+ * ```ts
+ * const ContextSchema = Schema.Struct({
+ *   count: Schema.Number,
+ *   lastUpdated: Schema.DateFromString,
+ * });
+ *
+ * const machine = createMachine({
+ *   id: "counter",
+ *   initial: "idle",
+ *   context: ContextSchema,
+ *   initialContext: { count: 0, lastUpdated: new Date() },
+ *   states: { ... }
+ * });
+ * ```
+ */
 export function createMachine<
   TId extends string,
   TStateValue extends string,
@@ -29,16 +61,35 @@ export function createMachine<
   TEvent extends MachineEvent,
   R = never,
   E = never,
+  TContextEncoded = TContext,
 >(
-  config: MachineConfig<TId, TStateValue, TContext, TEvent, R, E>,
-): MachineDefinition<TId, TStateValue, TContext, TEvent, R, E> {
+  config: MachineConfig<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded>,
+): MachineDefinition<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded> {
+  // Check if using Schema-based context
+  if (isSchema(config.context)) {
+    const schemaConfig = config as MachineConfigSchema<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded>;
+    return {
+      _tag: "MachineDefinition",
+      id: config.id,
+      config,
+      initialSnapshot: {
+        value: config.initial,
+        context: schemaConfig.initialContext,
+        event: null,
+      },
+      contextSchema: schemaConfig.context,
+    };
+  }
+
+  // Plain context
+  const plainConfig = config as MachineConfigPlain<TId, TStateValue, TContext, TEvent, R, E>;
   return {
     _tag: "MachineDefinition",
     id: config.id,
     config,
     initialSnapshot: {
       value: config.initial,
-      context: config.context,
+      context: plainConfig.context,
       event: null,
     },
   };

@@ -1,4 +1,4 @@
-import { Data, type Duration, type Effect } from "effect";
+import { Data, type Duration, type Effect, type Schema } from "effect";
 
 // ============================================================================
 // Core Types
@@ -371,10 +371,32 @@ export interface StateNodeConfig<
 }
 
 // ============================================================================
+// Schema Context Types
+// ============================================================================
+
+/**
+ * Context can be provided as either:
+ * - A plain object (backwards compatible)
+ * - A Schema for validation and serialization
+ */
+export type ContextInput<TContext extends MachineContext, TContextEncoded = TContext> =
+  | TContext
+  | Schema.Schema<TContext, TContextEncoded>;
+
+/**
+ * Helper to check if a value is a Schema.
+ * Uses Effect's built-in Schema.isSchema check.
+ */
+export { isSchema } from "effect/Schema";
+
+// ============================================================================
 // Machine Config
 // ============================================================================
 
-export interface MachineConfig<
+/**
+ * Machine config when using a plain context object
+ */
+export interface MachineConfigPlain<
   TId extends string,
   TStateValue extends string,
   TContext extends MachineContext,
@@ -390,6 +412,44 @@ export interface MachineConfig<
   };
 }
 
+/**
+ * Machine config when using a Schema for context
+ */
+export interface MachineConfigSchema<
+  TId extends string,
+  TStateValue extends string,
+  TContext extends MachineContext,
+  TEvent extends MachineEvent,
+  R = never,
+  E = never,
+  TContextEncoded = unknown,
+> {
+  readonly id: TId;
+  readonly initial: TStateValue;
+  /** Schema for context validation and serialization */
+  readonly context: Schema.Schema<TContext, TContextEncoded>;
+  /** Initial context value (required when using Schema) */
+  readonly initialContext: TContext;
+  readonly states: {
+    readonly [K in TStateValue]: StateNodeConfig<TStateValue, TContext, TEvent, R, E>;
+  };
+}
+
+/**
+ * Machine config - supports both plain objects and Schema-based context
+ */
+export type MachineConfig<
+  TId extends string,
+  TStateValue extends string,
+  TContext extends MachineContext,
+  TEvent extends MachineEvent,
+  R = never,
+  E = never,
+  TContextEncoded = TContext,
+> =
+  | MachineConfigPlain<TId, TStateValue, TContext, TEvent, R, E>
+  | MachineConfigSchema<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded>;
+
 // ============================================================================
 // Machine Definition (output of createMachine)
 // ============================================================================
@@ -401,9 +461,12 @@ export interface MachineDefinition<
   TEvent extends MachineEvent,
   R = never,
   E = never,
+  TContextEncoded = TContext,
 > {
   readonly _tag: "MachineDefinition";
   readonly id: TId;
-  readonly config: MachineConfig<TId, TStateValue, TContext, TEvent, R, E>;
+  readonly config: MachineConfig<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded>;
   readonly initialSnapshot: MachineSnapshot<TStateValue, TContext>;
+  /** Schema for context serialization (if provided) */
+  readonly contextSchema?: Schema.Schema<TContext, TContextEncoded>;
 }

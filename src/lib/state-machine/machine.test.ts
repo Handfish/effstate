@@ -3337,3 +3337,177 @@ describe("Type Safety", () => {
     _actor.stop();
   });
 });
+
+// ============================================================================
+// Schema Context
+// ============================================================================
+
+import { Schema } from "effect";
+import {
+  createSnapshotSchema,
+  encodeSnapshotSync,
+  decodeSnapshotSync,
+} from "./serialization";
+
+describe("Schema Context", () => {
+  // Define a Schema for context with a Date field
+  const CounterContextSchema = Schema.Struct({
+    count: Schema.Number,
+    lastUpdated: Schema.DateFromString,
+  });
+
+  type CounterContext = Schema.Schema.Type<typeof CounterContextSchema>;
+
+  it("creates machine with Schema context", () => {
+    const machine = createMachine({
+      id: "counter",
+      initial: "idle",
+      context: CounterContextSchema,
+      initialContext: { count: 0, lastUpdated: new Date("2024-01-01") },
+      states: {
+        idle: {
+          on: {
+            INCREMENT: {
+              actions: [
+                assign(({ context }) => ({
+                  count: context.count + 1,
+                  lastUpdated: new Date(),
+                })),
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    expect(machine._tag).toBe("MachineDefinition");
+    expect(machine.contextSchema).toBeDefined();
+    expect(machine.initialSnapshot.context.count).toBe(0);
+    expect(machine.initialSnapshot.context.lastUpdated).toBeInstanceOf(Date);
+  });
+
+  it("encodes snapshot with Date to JSON-safe format", () => {
+    const machine = createMachine({
+      id: "counter",
+      initial: "idle",
+      context: CounterContextSchema,
+      initialContext: { count: 42, lastUpdated: new Date("2024-06-15T12:00:00Z") },
+      states: {
+        idle: {},
+      },
+    });
+
+    const actor = interpretSync(machine);
+    const snapshot = actor.getSnapshot();
+
+    const encoded = encodeSnapshotSync(machine, snapshot);
+
+    expect(encoded.value).toBe("idle");
+    expect(encoded.context.count).toBe(42);
+    expect(encoded.context.lastUpdated).toBe("2024-06-15T12:00:00.000Z");
+    expect(typeof encoded.context.lastUpdated).toBe("string");
+
+    actor.stop();
+  });
+
+  it("decodes snapshot from JSON-safe format", () => {
+    const machine = createMachine({
+      id: "counter",
+      initial: "idle",
+      context: CounterContextSchema,
+      initialContext: { count: 0, lastUpdated: new Date() },
+      states: {
+        idle: {},
+      },
+    });
+
+    const encoded = {
+      value: "idle" as const,
+      context: {
+        count: 100,
+        lastUpdated: "2024-12-25T00:00:00.000Z",
+      },
+    };
+
+    const decoded = decodeSnapshotSync(machine, encoded);
+
+    expect(decoded.value).toBe("idle");
+    expect(decoded.context.count).toBe(100);
+    expect(decoded.context.lastUpdated).toBeInstanceOf(Date);
+    expect(decoded.context.lastUpdated.toISOString()).toBe("2024-12-25T00:00:00.000Z");
+  });
+
+  it("roundtrip encode/decode preserves data", () => {
+    const machine = createMachine({
+      id: "counter",
+      initial: "idle",
+      context: CounterContextSchema,
+      initialContext: { count: 0, lastUpdated: new Date() },
+      states: {
+        idle: {
+          on: {
+            INCREMENT: {
+              actions: [
+                assign(({ context }) => ({
+                  count: context.count + 1,
+                  lastUpdated: new Date("2024-07-04T15:30:00Z"),
+                })),
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const actor = interpretSync(machine);
+    actor.send(new Increment());
+
+    const original = actor.getSnapshot();
+    const encoded = encodeSnapshotSync(machine, original);
+    const decoded = decodeSnapshotSync(machine, encoded);
+
+    expect(decoded.value).toBe(original.value);
+    expect(decoded.context.count).toBe(original.context.count);
+    expect(decoded.context.lastUpdated.getTime()).toBe(original.context.lastUpdated.getTime());
+
+    actor.stop();
+  });
+
+  it("works with plain context (backwards compatible)", () => {
+    const machine = createMachine({
+      id: "simple",
+      initial: "idle",
+      context: { count: 0 },
+      states: {
+        idle: {},
+      },
+    });
+
+    expect(machine.contextSchema).toBeUndefined();
+
+    const actor = interpretSync(machine);
+    expect(actor.getSnapshot().context.count).toBe(0);
+    actor.stop();
+  });
+
+  it("creates snapshot schema for machines", () => {
+    const machine = createMachine({
+      id: "counter",
+      initial: "idle",
+      context: CounterContextSchema,
+      initialContext: { count: 0, lastUpdated: new Date() },
+      states: {
+        idle: {},
+      },
+    });
+
+    const snapshotSchema = createSnapshotSchema(machine);
+
+    // Schema should be usable for encoding
+    const snapshot = machine.initialSnapshot;
+    const encoded = Schema.encodeSync(snapshotSchema)(snapshot);
+
+    expect(encoded.value).toBe("idle");
+    expect(typeof encoded.context.lastUpdated).toBe("string");
+  });
+});

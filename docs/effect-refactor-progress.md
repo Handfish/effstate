@@ -125,6 +125,59 @@ const machine = createMachine<
 
 ---
 
+## Schema Context ✅
+
+### Overview
+Context can now be defined using Effect Schema for automatic serialization/deserialization.
+
+### API
+```typescript
+// Define a Schema for context
+const CounterContextSchema = Schema.Struct({
+  count: Schema.Number,
+  lastUpdated: Schema.DateFromString,  // Auto-transforms Date <-> string
+});
+
+// Use Schema in machine definition
+const machine = createMachine({
+  id: "counter",
+  initial: "idle",
+  context: CounterContextSchema,      // Schema instead of plain object
+  initialContext: { count: 0, lastUpdated: new Date() },
+  states: { ... },
+});
+
+// Serialize snapshot (Date -> string)
+const encoded = encodeSnapshotSync(machine, actor.getSnapshot());
+localStorage.setItem("state", JSON.stringify(encoded));
+
+// Deserialize snapshot (string -> Date)
+const stored = JSON.parse(localStorage.getItem("state")!);
+const snapshot = decodeSnapshotSync(machine, stored);
+```
+
+### Features
+- **Backwards compatible** - Plain object context still works
+- **Automatic transforms** - `DateFromString`, `BigintFromString`, etc.
+- **Type-safe encoding** - Encoded type inferred from Schema
+- **Effect integration** - Async versions return `Effect<..., ParseError>`
+
+### Files Added/Modified
+- `src/lib/state-machine/types.ts` - `MachineConfigSchema`, `ContextInput`
+- `src/lib/state-machine/machine.ts` - Schema detection in `createMachine`
+- `src/lib/state-machine/serialization.ts` - New file with encode/decode utilities
+- `src/lib/state-machine/index.ts` - Export serialization utilities
+
+### Tests Added (6 new tests)
+- `creates machine with Schema context`
+- `encodes snapshot with Date to JSON-safe format`
+- `decodes snapshot from JSON-safe format`
+- `roundtrip encode/decode preserves data`
+- `works with plain context (backwards compatible)`
+- `creates snapshot schema for machines`
+
+---
+
 ## Test Coverage Checkpoints
 
 | Phase | Tests Required |

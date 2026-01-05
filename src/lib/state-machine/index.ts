@@ -5,6 +5,7 @@ export type {
   ActivityConfig,
   AssignAction,
   CancelAction,
+  ContextInput,
   EffectAction,
   EmitAction,
   EmittedEvent,
@@ -14,6 +15,8 @@ export type {
   ForwardToAction,
   Guard,
   MachineConfig,
+  MachineConfigPlain,
+  MachineConfigSchema,
   MachineContext,
   MachineDefinition,
   MachineEvent,
@@ -33,6 +36,7 @@ export type {
 export {
   EffectActionError,
   ActivityError,
+  isSchema,
 } from "./types.js";
 
 // Machine creation
@@ -43,6 +47,15 @@ export { assign, cancel, effect, emit, enqueueActions, forwardTo, log, raise, se
 
 // Guards
 export { and, guard, not, or } from "./guards.js";
+
+// Serialization (Schema-based context)
+export {
+  createSnapshotSchema,
+  decodeSnapshot,
+  decodeSnapshotSync,
+  encodeSnapshot,
+  encodeSnapshotSync,
+} from "./serialization.js";
 
 // Atom integration
 export {
