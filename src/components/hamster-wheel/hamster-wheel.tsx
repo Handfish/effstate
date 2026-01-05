@@ -112,10 +112,17 @@ const HamsterWheelContent = ({
           )}
           style={{
             transform: `translate(-50%, -50%) ${isRunning ? "" : "scale(0.9)"}`,
+            animation: status.state === "idle" ? "breathe 3s ease-in-out infinite" : undefined,
           }}
         >
           {status.state === "idle" ? "😴" : isRunning ? "🐹" : "🐹"}
         </div>
+        <style>{`
+          @keyframes breathe {
+            0%, 100% { transform: translate(-50%, -50%) scale(0.85); }
+            50% { transform: translate(-50%, -50%) scale(0.95); }
+          }
+        `}</style>
 
         {/* Running indicator */}
         {isRunning && (

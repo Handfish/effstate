@@ -187,6 +187,131 @@ export class HamsterWheelMachineService extends Effect.Service<HamsterWheelMachi
 ) {}
 
 // ============================================================================
+// Persistence
+// ============================================================================
+
+const STORAGE_KEY = "hamsterWheel:state";
+
+interface PersistedState {
+  parent: {
+    value: HamsterWheelState;
+    context: {
+      wheelRotation: number;
+      electricityLevel: number;
+    };
+  };
+  children: {
+    [GARAGE_DOOR_LEFT_ID]?: {
+      value: GarageDoorState;
+      context: typeof garageDoorInitialSnapshot.context;
+    };
+    [GARAGE_DOOR_RIGHT_ID]?: {
+      value: GarageDoorState;
+      context: typeof garageDoorInitialSnapshot.context;
+    };
+  };
+}
+
+const saveState = (actor: MachineActor<HamsterWheelState, HamsterWheelContext, HamsterWheelEvent>) => {
+  try {
+    const parentSnapshot = actor.getSnapshot();
+    const leftChild = actor.children.get(GARAGE_DOOR_LEFT_ID);
+    const rightChild = actor.children.get(GARAGE_DOOR_RIGHT_ID);
+
+    const state: PersistedState = {
+      parent: {
+        value: parentSnapshot.value,
+        context: parentSnapshot.context,
+      },
+      children: {},
+    };
+
+    if (leftChild) {
+      const leftSnapshot = leftChild.getSnapshot();
+      state.children[GARAGE_DOOR_LEFT_ID] = {
+        value: leftSnapshot.value as GarageDoorState,
+        context: {
+          ...leftSnapshot.context,
+          // Serialize Date to string for JSON
+          lastUpdated: (leftSnapshot.context as typeof garageDoorInitialSnapshot.context).lastUpdated,
+        } as typeof garageDoorInitialSnapshot.context,
+      };
+    }
+
+    if (rightChild) {
+      const rightSnapshot = rightChild.getSnapshot();
+      state.children[GARAGE_DOOR_RIGHT_ID] = {
+        value: rightSnapshot.value as GarageDoorState,
+        context: {
+          ...rightSnapshot.context,
+          lastUpdated: (rightSnapshot.context as typeof garageDoorInitialSnapshot.context).lastUpdated,
+        } as typeof garageDoorInitialSnapshot.context,
+      };
+    }
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state, (_, value) => {
+      // Convert Date to ISO string
+      if (value instanceof Date) {
+        return value.toISOString();
+      }
+      return value;
+    }));
+  } catch (e) {
+    console.warn("Failed to save state:", e);
+  }
+};
+
+const loadState = (): {
+  snapshot?: HamsterWheelSnapshot;
+  childSnapshots?: Map<string, MachineSnapshot<string, object>>;
+} | null => {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (!stored) return null;
+
+    const state: PersistedState = JSON.parse(stored);
+
+    const snapshot: HamsterWheelSnapshot = {
+      value: state.parent.value,
+      context: state.parent.context,
+      event: null,
+    };
+
+    const childSnapshots = new Map<string, MachineSnapshot<string, object>>();
+
+    if (state.children[GARAGE_DOOR_LEFT_ID]) {
+      const leftState = state.children[GARAGE_DOOR_LEFT_ID];
+      childSnapshots.set(GARAGE_DOOR_LEFT_ID, {
+        value: leftState.value,
+        context: {
+          ...leftState.context,
+          // Parse ISO string back to Date
+          lastUpdated: new Date(leftState.context.lastUpdated as unknown as string),
+        },
+        event: null,
+      });
+    }
+
+    if (state.children[GARAGE_DOOR_RIGHT_ID]) {
+      const rightState = state.children[GARAGE_DOOR_RIGHT_ID];
+      childSnapshots.set(GARAGE_DOOR_RIGHT_ID, {
+        value: rightState.value,
+        context: {
+          ...rightState.context,
+          lastUpdated: new Date(rightState.context.lastUpdated as unknown as string),
+        },
+        event: null,
+      });
+    }
+
+    return { snapshot, childSnapshots };
+  } catch (e) {
+    console.warn("Failed to load state:", e);
+    return null;
+  }
+};
+
+// ============================================================================
 // Atom Integration
 // ============================================================================
 
@@ -194,7 +319,20 @@ const actorAtom = appRuntime
   .atom(
     Effect.gen(function* () {
       const hamsterWheelService = yield* HamsterWheelMachineService;
-      return yield* hamsterWheelService.createActor();
+
+      // Try to load persisted state
+      const persisted = loadState();
+
+      // Create actor with optional restored state
+      const actor = yield* interpret(hamsterWheelService.definition, {
+        snapshot: persisted?.snapshot,
+        childSnapshots: persisted?.childSnapshots,
+      });
+
+      // Save state on every change
+      actor.subscribe(() => saveState(actor));
+
+      return actor;
     }).pipe(
       // Provide machine service inline to avoid circular imports with app-runtime
       Effect.provide(HamsterWheelMachineService.Default)

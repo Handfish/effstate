@@ -258,11 +258,16 @@ function createActor<
   options?: {
     parent?: MachineActor<string, MachineContext, MachineEvent>;
     runtime?: Runtime.Runtime<R>;
+    /** Initial snapshot to restore from (for persistence) */
+    snapshot?: MachineSnapshot<TStateValue, TContext>;
+    /** Child snapshots to restore (keyed by child ID) */
+    childSnapshots?: ReadonlyMap<string, MachineSnapshot<string, MachineContext>>;
   },
 ): MachineActor<TStateValue, TContext, TEvent> {
   const runtime = options?.runtime;
-  // Mutable state
-  let snapshot: MachineSnapshot<TStateValue, TContext> = machine.initialSnapshot;
+  const childSnapshots = options?.childSnapshots;
+  // Mutable state - use provided snapshot or initial
+  let snapshot: MachineSnapshot<TStateValue, TContext> = options?.snapshot ?? machine.initialSnapshot;
   let stopped = false;
 
   const observers = new Set<(snapshot: MachineSnapshot<TStateValue, TContext>) => void>();
@@ -863,9 +868,12 @@ function createActor<
             // Spawn child synchronously, inherit runtime for service access
             // Cast AnyMachineDefinition back to full MachineDefinition for createActor
             const childMachine = action.src as unknown as MachineDefinition<string, string, MachineContext, MachineEvent, unknown, unknown, unknown>;
+            // Check if we have a saved snapshot for this child
+            const childSnapshot = childSnapshots?.get(childId);
             const childActor = createActor(childMachine, {
               parent: actor as unknown as MachineActor<string, MachineContext, MachineEvent>,
               runtime: runtime as Runtime.Runtime<unknown>,
+              snapshot: childSnapshot,
             });
             childrenRef.set(childId, childActor);
           }
@@ -1132,28 +1140,39 @@ function createActor<
     ...(options?.parent ? { _parent: options.parent } : {}),
   };
 
-  // Run entry actions for initial state
-  const initialState = machine.config.states[machine.initialSnapshot.value];
-  if (initialState?.entry) {
-    snapshot = {
-      ...snapshot,
-      context: runActionsSync(initialState.entry, snapshot.context, { _tag: "$init" } as TEvent),
-    };
+  // Determine if we're restoring from a saved snapshot
+  const isRestoring = options?.snapshot !== undefined;
+  // Use restored state or initial state
+  const currentState = machine.config.states[snapshot.value];
+
+  // Run entry actions for current state
+  if (currentState?.entry) {
+    // When restoring, filter out assign actions (context is already restored)
+    // but keep other actions like spawnChild, sendTo, effect, etc.
+    const actions = isRestoring
+      ? currentState.entry.filter((a) => a._tag !== "assign")
+      : currentState.entry;
+    if (actions.length > 0) {
+      snapshot = {
+        ...snapshot,
+        context: runActionsSync(actions, snapshot.context, { _tag: "$init" } as TEvent),
+      };
+    }
   }
 
-  // Start activities for initial state
-  if (initialState?.activities) {
-    startActivities(initialState.activities, snapshot.context, { _tag: "$init" } as TEvent);
+  // Start activities for current state (always needed, even when restoring)
+  if (currentState?.activities) {
+    startActivities(currentState.activities, snapshot.context, { _tag: "$init" } as TEvent);
   }
 
-  // Start invoke for initial state
-  if (initialState?.invoke) {
-    startInvoke(initialState.invoke, snapshot.context, { _tag: "$init" } as TEvent);
+  // Start invoke for current state (always needed, even when restoring)
+  if (currentState?.invoke) {
+    startInvoke(currentState.invoke, snapshot.context, { _tag: "$init" } as TEvent);
   }
 
-  // Handle delayed transitions for initial state
-  if (initialState?.after) {
-    scheduleAfterTransition(initialState.after);
+  // Handle delayed transitions for current state (always needed, even when restoring)
+  if (currentState?.after) {
+    scheduleAfterTransition(currentState.after);
   }
 
   flushDeferred();
@@ -1201,6 +1220,10 @@ export const interpret = <
   machine: MachineDefinition<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded>,
   options?: {
     parent?: MachineActor<string, MachineContext, MachineEvent>;
+    /** Initial snapshot to restore from (for persistence) */
+    snapshot?: MachineSnapshot<TStateValue, TContext>;
+    /** Child snapshots to restore (keyed by child ID) */
+    childSnapshots?: ReadonlyMap<string, MachineSnapshot<string, MachineContext>>;
   },
 ): Effect.Effect<MachineActor<TStateValue, TContext, TEvent>, never, R | Scope.Scope> =>
   Effect.gen(function* () {
