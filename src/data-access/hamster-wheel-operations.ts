@@ -311,65 +311,67 @@ const loadState = (): {
 let currentActor: MachineActor<HamsterWheelState, HamsterWheelContext, HamsterWheelEvent> | null = null;
 let isSyncing = false;
 
-// Check if this window is the focused one (leader)
-const isLeader = () => typeof document !== "undefined" && document.hasFocus();
+// Leader election - newest window becomes leader
+const LEADER_KEY = "hamsterWheel:leader";
+const windowId = Date.now().toString();
+
+const claimLeadership = () => {
+  localStorage.setItem(LEADER_KEY, windowId);
+};
+
+const checkLeadership = () => {
+  return localStorage.getItem(LEADER_KEY) === windowId;
+};
 
 if (typeof window !== "undefined") {
-  // Sync from storage when window gains focus
-  const syncFromStorageIfNeeded = () => {
+  // Sync from storage
+  const syncFromStorage = () => {
     if (!currentActor) return;
     const loaded = loadState();
     if (loaded) {
       isSyncing = true;
       currentActor._syncSnapshot(loaded.snapshot, loaded.childSnapshots);
       isSyncing = false;
-      console.log("[Sync] Synced from storage, now state:", loaded.snapshot.value);
     }
   };
 
-  // Handle window focus - sync when we gain focus
+  // New window claims leadership immediately
+  syncFromStorage(); // Get current state first
+  claimLeadership(); // Then become leader
+
+  // Handle window focus - reclaim leadership
   window.addEventListener("focus", () => {
-    console.log("[Focus] Window gained focus, syncing from storage...");
-    syncFromStorageIfNeeded();
+    claimLeadership();
   });
 
-  // Handle tab visibility changes
-  document.addEventListener("visibilitychange", () => {
-    if (!currentActor) return;
-
-    if (document.hidden) {
-      // Tab hidden - save state before going to background
-      console.log("[Visibility] Tab hidden, saving state");
-      saveState(currentActor);
-    } else {
-      // Tab visible - sync from storage
-      console.log("[Visibility] Tab visible, syncing from storage");
-      syncFromStorageIfNeeded();
-    }
+  // Handle window blur - stay leader but sync on refocus
+  window.addEventListener("blur", () => {
+    // Don't release leadership on blur
   });
 
   // Handle storage changes from OTHER windows/tabs
   window.addEventListener("storage", (event) => {
     if (!currentActor) return;
-    if (event.key !== STORAGE_KEY) return;
 
-    // Only sync if we're NOT the focused window
-    // The focused window is the leader and shouldn't sync from followers
-    if (isLeader()) {
-      console.log("[Storage] Ignoring storage event - we are the leader (focused)");
-      return;
-    }
+    // Ignore leader key changes - we check leadership dynamically
+    if (event.key === LEADER_KEY) return;
 
-    console.log("[Storage] Storage changed by another window, syncing...");
-    const loaded = loadState();
-    if (loaded) {
-      isSyncing = true;
-      currentActor._syncSnapshot(loaded.snapshot, loaded.childSnapshots);
-      isSyncing = false;
+    // State changed by another window
+    if (event.key === STORAGE_KEY) {
+      if (isSyncing) return;
+      // Only sync if we're not the leader
+      if (!checkLeadership()) {
+        syncFromStorage();
+      }
     }
   });
 
-  console.log("[CrossTabSync] Event listeners registered");
+  // Clean up on unload
+  window.addEventListener("beforeunload", () => {
+    if (checkLeadership()) {
+      localStorage.removeItem(LEADER_KEY);
+    }
+  });
 }
 
 const actorAtom = appRuntime
@@ -391,13 +393,13 @@ const actorAtom = appRuntime
       // Store reference for cross-tab sync
       currentActor = actor;
 
-      // Throttled save - only when this window is the leader (focused)
+      // Throttled save - only when this window is the leader
       let saveTimeout: ReturnType<typeof setTimeout> | null = null;
       let pendingSave = false;
 
       const throttledSave = () => {
-        // Only save if we're the leader (focused window) and not syncing
-        if (!isLeader()) return;
+        // Only save if we're the leader and not syncing
+        if (!checkLeadership()) return;
         if (isSyncing) return;
 
         // If a save is already scheduled, just mark pending
@@ -413,7 +415,7 @@ const actorAtom = appRuntime
         saveTimeout = setTimeout(() => {
           saveTimeout = null;
           // If there were pending saves, do one final save
-          if (pendingSave && !isSyncing && isLeader()) {
+          if (pendingSave && !isSyncing && checkLeadership()) {
             pendingSave = false;
             saveState(actor);
           }

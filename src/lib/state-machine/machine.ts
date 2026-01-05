@@ -250,6 +250,11 @@ export interface MachineActor<
    * Used when tab loses focus to prevent background updates.
    */
   readonly _pauseActivities: () => void;
+  /**
+   * Resume activities for the current state.
+   * Used when tab regains focus to restart animations.
+   */
+  readonly _resumeActivities: () => void;
 }
 
 // ============================================================================
@@ -1152,6 +1157,21 @@ function createActor<
     });
   };
 
+  // Resume activities for the current state (for when window regains focus)
+  const resumeActivities = () => {
+    const currentState = machine.config.states[snapshot.value];
+    if (currentState?.activities) {
+      startActivities(currentState.activities, snapshot.context, { _tag: "$resume" } as TEvent);
+    }
+    if (currentState?.after) {
+      scheduleAfterTransition(currentState.after);
+    }
+    // Recursively resume children
+    childrenRef.forEach((child) => {
+      child._resumeActivities();
+    });
+  };
+
   // Sync snapshot from external source (e.g., cross-tab sync)
   const syncSnapshot = (
     newSnapshot: MachineSnapshot<TStateValue, TContext>,
@@ -1214,6 +1234,7 @@ function createActor<
     stop,
     _syncSnapshot: syncSnapshot,
     _pauseActivities: pauseActivities,
+    _resumeActivities: resumeActivities,
     ...(options?.parent ? { _parent: options.parent } : {}),
   };
 
