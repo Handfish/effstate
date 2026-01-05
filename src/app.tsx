@@ -1,14 +1,10 @@
 // import { ChatContainer } from "./components/chat";
-import { GarageDoor } from "@/components/garage-door/garage-door";
+// import { GarageDoor } from "@/components/garage-door/garage-door";
+import { HamsterWheel } from "@/components/hamster-wheel/hamster-wheel";
 
 function App() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
-      <div className="h-screen w-full max-w-md">
-        <GarageDoor />
-        {/*  <ChatContainer />  */}
-      </div>
-    </div>
+    <HamsterWheel />
   );
 }
 

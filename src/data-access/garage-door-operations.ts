@@ -16,6 +16,8 @@ import {
   type Weather,
 } from "@/lib/services/weather-service";
 import { Data, Duration, Effect, Schedule, Schema, Stream, SubscriptionRef } from "effect";
+import { useRef, useEffect } from "react";
+import { useElectricity } from "./hamster-wheel-operations";
 
 // ============================================================================
 // Types
@@ -48,13 +50,16 @@ const GarageDoorContextSchema = Schema.Struct({
   position: Schema.Number,
   lastUpdated: Schema.DateFromString,
   weather: WeatherDataSchema,
+  isPowered: Schema.Boolean,
 });
 
 class Click extends Data.TaggedClass("CLICK")<{}> {}
 class Tick extends Data.TaggedClass("TICK")<{ readonly delta: number }> {}
 class AnimationComplete extends Data.TaggedClass("ANIMATION_COMPLETE")<{}> {}
+class PowerOn extends Data.TaggedClass("POWER_ON")<{}> {}
+class PowerOff extends Data.TaggedClass("POWER_OFF")<{}> {}
 
-type GarageDoorEvent = Click | Tick | AnimationComplete;
+type GarageDoorEvent = Click | Tick | AnimationComplete | PowerOn | PowerOff;
 
 // Type alias for snapshot
 type GarageDoorContext = typeof GarageDoorContextSchema.Type;
@@ -67,6 +72,7 @@ const initialSnapshot: GarageDoorSnapshot = {
     position: 0,
     lastUpdated: new Date(),
     weather: { status: "idle" },
+    isPowered: false,
   },
   event: null,
 };
@@ -108,12 +114,15 @@ const GarageDoorMachine = Effect.gen(function* () {
       position: 0,
       lastUpdated: new Date(),
       weather: { status: "idle" },
+      isPowered: false,
     },
     states: {
       closed: {
         entry: [assign(() => ({ position: 0, lastUpdated: new Date(), weather: { status: "idle" } }))],
         on: {
-          CLICK: { target: "opening" },
+          CLICK: { target: "opening", guard: ({ context }) => context.isPowered },
+          POWER_ON: { actions: [assign(() => ({ isPowered: true }))] },
+          POWER_OFF: { actions: [assign(() => ({ isPowered: false }))] },
         },
       },
 
@@ -121,8 +130,9 @@ const GarageDoorMachine = Effect.gen(function* () {
         entry: [effect(() => Effect.log("Entering: opening"))],
         activities: [animation(1)],
         on: {
-          CLICK: { target: "paused-while-opening" },
+          CLICK: { target: "paused-while-opening", guard: ({ context }) => context.isPowered },
           TICK: {
+            guard: ({ context }) => context.isPowered,
             actions: [
               assign<GarageDoorContext, Tick>(({ context, event }) => ({
                 position: Math.min(100, context.position + event.delta),
@@ -130,14 +140,18 @@ const GarageDoorMachine = Effect.gen(function* () {
               })),
             ],
           },
-          ANIMATION_COMPLETE: { target: "open" },
+          ANIMATION_COMPLETE: { target: "open", guard: ({ context }) => context.isPowered },
+          POWER_ON: { actions: [assign(() => ({ isPowered: true }))] },
+          POWER_OFF: { actions: [assign(() => ({ isPowered: false }))] },
         },
       },
 
       "paused-while-opening": {
         entry: [effect(() => Effect.log("Entering: paused-while-opening"))],
         on: {
-          CLICK: { target: "closing" },
+          CLICK: { target: "closing", guard: ({ context }) => context.isPowered },
+          POWER_ON: { actions: [assign(() => ({ isPowered: true }))] },
+          POWER_OFF: { actions: [assign(() => ({ isPowered: false }))] },
         },
       },
 
@@ -195,7 +209,9 @@ const GarageDoorMachine = Effect.gen(function* () {
           },
         },
         on: {
-          CLICK: { target: "closing" },
+          CLICK: { target: "closing", guard: ({ context }) => context.isPowered },
+          POWER_ON: { actions: [assign(() => ({ isPowered: true }))] },
+          POWER_OFF: { actions: [assign(() => ({ isPowered: false }))] },
         },
       },
 
@@ -206,8 +222,9 @@ const GarageDoorMachine = Effect.gen(function* () {
         ],
         activities: [animation(-1)],
         on: {
-          CLICK: { target: "paused-while-closing" },
+          CLICK: { target: "paused-while-closing", guard: ({ context }) => context.isPowered },
           TICK: {
+            guard: ({ context }) => context.isPowered,
             actions: [
               assign<GarageDoorContext, Tick>(({ context, event }) => ({
                 position: Math.max(0, context.position + event.delta),
@@ -215,14 +232,18 @@ const GarageDoorMachine = Effect.gen(function* () {
               })),
             ],
           },
-          ANIMATION_COMPLETE: { target: "closed" },
+          ANIMATION_COMPLETE: { target: "closed", guard: ({ context }) => context.isPowered },
+          POWER_ON: { actions: [assign(() => ({ isPowered: true }))] },
+          POWER_OFF: { actions: [assign(() => ({ isPowered: false }))] },
         },
       },
 
       "paused-while-closing": {
         entry: [effect(() => Effect.log("Entering: paused-while-closing"))],
         on: {
-          CLICK: { target: "opening" },
+          CLICK: { target: "opening", guard: ({ context }) => context.isPowered },
+          POWER_ON: { actions: [assign(() => ({ isPowered: true }))] },
+          POWER_OFF: { actions: [assign(() => ({ isPowered: false }))] },
         },
       },
     },
@@ -325,16 +346,39 @@ export const useGarageDoor = (): {
   status: GarageDoorStatus;
   handleButtonClick: () => void;
   isLoading: boolean;
+  hasElectricity: boolean;
+  isPausedDueToNoPower: boolean;
 } => {
   const { snapshot, send, isLoading, matches, context } = useMachine();
+  const hasElectricity = useElectricity();
+  const prevElectricityRef = useRef(hasElectricity);
 
-  const handleButtonClick = () => send(new Click());
+  // Send POWER_ON/POWER_OFF events when electricity changes
+  useEffect(() => {
+    if (hasElectricity !== prevElectricityRef.current) {
+      if (hasElectricity) {
+        send(new PowerOn());
+      } else {
+        send(new PowerOff());
+      }
+      prevElectricityRef.current = hasElectricity;
+    }
+  }, [hasElectricity, send]);
 
+  const handleButtonClick = () => {
+    send(new Click());
+  };
+
+  // Complete animations when position reaches bounds
   if (context.position >= 100 && matches("opening")) {
     send(new AnimationComplete());
   } else if (context.position <= 0 && matches("closing")) {
     send(new AnimationComplete());
   }
+
+  // Determine if paused due to no power
+  const isAnimating = matches("opening") || matches("closing");
+  const isPausedDueToNoPower = !context.isPowered && isAnimating;
 
   return {
     status: {
@@ -344,6 +388,8 @@ export const useGarageDoor = (): {
     },
     handleButtonClick,
     isLoading,
+    hasElectricity: context.isPowered,
+    isPausedDueToNoPower,
   };
 };
 

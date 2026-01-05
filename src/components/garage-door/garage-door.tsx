@@ -51,7 +51,7 @@ const WeatherDisplay = ({ weather }: { weather: WeatherStatus }) => {
 };
 
 export const GarageDoor = () => {
-  const { status, handleButtonClick, isLoading } = useGarageDoor();
+  const { status, handleButtonClick, isLoading, hasElectricity, isPausedDueToNoPower } = useGarageDoor();
 
   if (isLoading) {
     return (
@@ -65,8 +65,16 @@ export const GarageDoor = () => {
   const doorHeight = 100 - status.position;
 
   return (
-    <div className="flex flex-col items-center gap-6 p-8">
-      <h2 className="text-2xl font-bold">Garage Door Simulator</h2>
+    <div className={cn(
+      "flex flex-col items-center gap-6 p-8 rounded-lg transition-all duration-500",
+      !hasElectricity && "opacity-70"
+    )}>
+      <div className="flex items-center gap-2">
+        <h2 className="text-2xl font-bold">Garage Door</h2>
+        {!hasElectricity && (
+          <span className="text-red-500 text-xl" title="No Power">🔌</span>
+        )}
+      </div>
 
       {/* Garage Frame */}
       <div className="relative w-64 h-48 border-4 border-gray-700 rounded-t-lg bg-gray-900 overflow-hidden">
@@ -122,6 +130,11 @@ export const GarageDoor = () => {
         <div className="text-sm text-muted-foreground">
           Position: {status.position.toFixed(0)}%
         </div>
+        {isPausedDueToNoPower && (
+          <div className="text-sm text-orange-500 animate-pulse">
+            Paused - No Power
+          </div>
+        )}
       </div>
 
       {/* Control Button */}
@@ -136,14 +149,17 @@ export const GarageDoor = () => {
               : "default"
         }
         className="min-w-32"
+        disabled={!hasElectricity}
       >
-        {getButtonLabel(status.state)}
+        {!hasElectricity ? "No Power" : getButtonLabel(status.state)}
       </Button>
 
       {/* State Machine Debug Info */}
       <div className="text-xs text-muted-foreground mt-4 p-4 bg-muted rounded-lg font-mono">
         <div>State: {status.state}</div>
         <div>Position: {status.position.toFixed(2)}%</div>
+        <div>Power: {hasElectricity ? "On" : "Off"}</div>
+        {isPausedDueToNoPower && <div className="text-orange-400">Animation Paused (no power)</div>}
         <div className="mt-2 text-[10px]">
           Click behavior:
           {status.state === "closed" && " Start opening"}
