@@ -9,10 +9,7 @@ import {
   getStateLabel,
   getWeatherStatus,
 } from "@/data-access/garage-door-operations";
-import {
-  useGarageDoorLeft,
-  useGarageDoorRight,
-} from "@/data-access/hamster-wheel-operations";
+import { useGarageDoorLeft } from "@/data-access/hamster-wheel-operations";
 import { cn } from "@/lib/utils";
 
 type GarageDoorHook = typeof useGarageDoorLeft;
@@ -106,7 +103,10 @@ export const GarageDoor = ({ useHook = useGarageDoorLeft, title = "Garage Door" 
       !hasElectricity && "opacity-70"
     )}>
       <div className="flex items-center gap-2">
-        <h2 className="text-2xl font-bold">{title}</h2>
+        <h2 className={cn(
+          "text-2xl font-bold transition-colors duration-500",
+          hasElectricity ? "text-gray-100" : "text-gray-300"
+        )}>{title}</h2>
         {!hasElectricity && (
           <span className="text-red-500 text-xl" title="No Power">🔌</span>
         )}
@@ -161,9 +161,12 @@ export const GarageDoor = ({ useHook = useGarageDoorLeft, title = "Garage Door" 
       <div className="w-64 h-4 bg-gray-600 -mt-6 rounded-b" />
 
       {/* Status Display */}
-      <div className="text-center space-y-1">
+      <div className={cn(
+        "text-center space-y-1 transition-colors duration-500",
+        hasElectricity ? "text-gray-100" : "text-gray-300"
+      )}>
         <div className="text-lg font-medium">{getStateLabel(status.state)}</div>
-        <div className="text-sm text-muted-foreground">
+        <div className="text-sm opacity-70">
           Position: {status.position.toFixed(0)}%
         </div>
         {isPausedDueToNoPower && (
@@ -203,7 +206,10 @@ export const GarageDoor = ({ useHook = useGarageDoorLeft, title = "Garage Door" 
       )}
 
       {/* State Machine Debug Info */}
-      <div className="text-xs text-muted-foreground mt-4 p-4 bg-muted rounded-lg font-mono">
+      <div className={cn(
+        "text-xs mt-4 p-4 rounded-lg font-mono transition-colors duration-500",
+        hasElectricity ? "bg-gray-700 text-gray-100" : "bg-gray-800 text-gray-300"
+      )}>
         <div>State: {status.state}</div>
         <div>Position: {status.position.toFixed(2)}%</div>
         <div>Power: {hasElectricity ? "On" : "Off"}</div>

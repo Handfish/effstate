@@ -13,7 +13,7 @@ const ElectricityBolt = ({ active, delay }: { active: boolean; delay: number }) 
   <div
     className={cn(
       "text-2xl transition-all duration-300",
-      active ? "text-yellow-400 animate-pulse" : "text-gray-600 opacity-50"
+      active ? "text-amber-400 animate-pulse" : "text-gray-600 opacity-50"
     )}
     style={{ animationDelay: `${delay}ms` }}
   >
@@ -24,7 +24,7 @@ const ElectricityBolt = ({ active, delay }: { active: boolean; delay: number }) 
 const LightBulb = ({ on }: { on: boolean }) => (
   <div className={cn(
     "text-4xl transition-all duration-500",
-    on ? "text-yellow-300 drop-shadow-[0_0_15px_rgba(253,224,71,0.8)]" : "text-gray-600"
+    on ? "text-amber-300 drop-shadow-[0_0_10px_rgba(251,191,36,0.5)]" : "text-gray-600"
   )}>
     💡
   </div>
@@ -45,7 +45,7 @@ const HamsterWheelContent = ({
     <div className="flex flex-col items-center justify-center p-8">
       <h2 className={cn(
         "text-2xl font-bold mb-8 transition-colors duration-500",
-        status.isDark ? "text-gray-400" : "text-gray-800"
+        status.isDark ? "text-gray-300" : "text-gray-100"
       )}>
         Hamster Power Generator
       </h2>
@@ -75,7 +75,7 @@ const HamsterWheelContent = ({
           className={cn(
             "w-48 h-48 rounded-full border-8 relative",
             hasElectricity
-              ? "border-amber-600 bg-amber-100"
+              ? "border-amber-700 bg-amber-100/80"
               : "border-gray-600 bg-gray-800"
           )}
           style={{
@@ -129,7 +129,7 @@ const HamsterWheelContent = ({
       <div className={cn(
         "w-32 h-16 rounded-lg flex items-center justify-center text-2xl mb-8 transition-all duration-500",
         hasElectricity
-          ? "bg-green-500 shadow-lg shadow-green-500/50"
+          ? "bg-emerald-600 shadow-md shadow-emerald-600/30"
           : "bg-gray-700"
       )}>
         {hasElectricity ? "🔋" : "🪫"}
@@ -138,7 +138,7 @@ const HamsterWheelContent = ({
       {/* Status Display */}
       <div className={cn(
         "text-center space-y-1 mb-6",
-        status.isDark ? "text-gray-400" : "text-gray-700"
+        status.isDark ? "text-gray-300" : "text-gray-100"
       )}>
         <div className="text-lg font-medium">{getStateLabel(status.state)}</div>
         <div className="text-sm">
@@ -196,24 +196,24 @@ export const HamsterWheel = () => {
       className={cn(
         "min-h-screen w-full transition-all duration-1000",
         status.isDark
-          ? "bg-gray-900"
+          ? "bg-gray-800"
           : hasElectricity
-            ? "bg-gradient-to-b from-sky-200 to-sky-100"
-            : "bg-gray-900"
+            ? "bg-gray-600"
+            : "bg-gray-800"
       )}
     >
       {/* Side by side layout: Garage Door (left) | Hamster Wheel (center) | Garage Door (right) */}
       <div className="flex flex-row items-center justify-center min-h-screen gap-8">
         <div className={cn(
           "rounded-lg transition-colors duration-500",
-          hasElectricity ? "bg-white/50" : "bg-gray-800/50"
+          hasElectricity ? "bg-gray-500/50" : "bg-gray-700/50"
         )}>
           <GarageDoor useHook={useGarageDoorLeft} title="Left Garage" />
         </div>
         <HamsterWheelContent status={status} handleToggle={handleToggle} />
         <div className={cn(
           "rounded-lg transition-colors duration-500",
-          hasElectricity ? "bg-white/50" : "bg-gray-800/50"
+          hasElectricity ? "bg-gray-500/50" : "bg-gray-700/50"
         )}>
           <GarageDoor useHook={useGarageDoorRight} title="Right Garage" />
         </div>
