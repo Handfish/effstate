@@ -5,13 +5,15 @@ import {
   assignOnSuccess,
   createMachine,
   effect,
+  interpret,
   type MachineSnapshot,
+  type MachineActor,
 } from "@/lib/state-machine";
 import {
   WeatherService,
   type Weather,
 } from "@/lib/services/weather-service";
-import { Data, Duration, Effect, Schedule, Schema, Stream } from "effect";
+import { Data, Duration, Effect, Schedule, Schema, Scope, Stream } from "effect";
 
 // ============================================================================
 // Types
@@ -98,7 +100,7 @@ const DEFAULT_LON = -122.4194;
 
 // Machine definition - WeatherService is resolved inside invoke at runtime
 // Exported so HamsterWheel can spawn it as a child
-export const GarageDoorMachine = createMachine<GarageDoorState, GarageDoorEvent, typeof GarageDoorContextSchema>({
+export const GarageDoorMachine = createMachine<GarageDoorState, GarageDoorEvent, typeof GarageDoorContextSchema, WeatherService>({
   id: "garageDoor",
   initial: "closed",
   context: GarageDoorContextSchema,
@@ -245,6 +247,49 @@ export const GarageDoorMachine = createMachine<GarageDoorState, GarageDoorEvent,
   });
 
 // ============================================================================
+// Machine Service (for automatic R channel composition)
+// ============================================================================
+
+/**
+ * GarageDoor machine as an Effect.Service.
+ *
+ * This service provides:
+ * - The machine definition
+ * - A factory to create actors
+ * - Automatic R channel composition (includes WeatherService via dependencies)
+ *
+ * @example
+ * ```ts
+ * const program = Effect.gen(function* () {
+ *   const garageDoor = yield* GarageDoorMachineService;
+ *   const actor = yield* garageDoor.createActor();
+ *   actor.send(new Click());
+ * });
+ *
+ * Effect.runPromise(program.pipe(Effect.provide(GarageDoorMachineService.Default)));
+ * ```
+ */
+export class GarageDoorMachineService extends Effect.Service<GarageDoorMachineService>()(
+  "GarageDoorMachineService",
+  {
+    effect: Effect.gen(function* () {
+      return {
+        /** The machine definition */
+        definition: GarageDoorMachine,
+        /** Create a new actor instance */
+        createActor: (): Effect.Effect<
+          MachineActor<GarageDoorState, GarageDoorContext, GarageDoorEvent>,
+          never,
+          WeatherService | Scope.Scope
+        > => interpret(GarageDoorMachine),
+      };
+    }),
+    // Declare WeatherService as a dependency - this ensures the R channel flows
+    dependencies: [WeatherService.Default],
+  }
+) {}
+
+// ============================================================================
 // Persistence
 // ============================================================================
 
@@ -265,18 +310,6 @@ export const loadSnapshot = (): GarageDoorSnapshot | null => {
   }
 };
 
-const saveSnapshot = (snapshot: GarageDoorSnapshot): void => {
-  try {
-    const encoded = {
-      value: snapshot.value,
-      context: Schema.encodeSync(GarageDoorContextSchema)(snapshot.context),
-    };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(encoded));
-  } catch {
-    // Ignore storage errors
-  }
-};
-
 // ============================================================================
 // Exported Events (for component use)
 // ============================================================================
@@ -293,7 +326,7 @@ export interface GarageDoorStatus {
   readonly weather: WeatherStatus;
 }
 
-export const getWeatherStatus = (context: { weather: { status: string; temp?: number; desc?: string; icon?: string; error?: string } }): WeatherStatus => {
+export const getWeatherStatus = (context: { weather: { status: "idle" | "loading" | "loaded" | "error"; temp?: number | undefined; desc?: string | undefined; icon?: string | undefined; error?: string | undefined } }): WeatherStatus => {
   switch (context.weather.status) {
     case "loading":
       return { _tag: "loading" };

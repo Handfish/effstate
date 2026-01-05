@@ -54,7 +54,7 @@ const WeatherDisplay = ({ weather }: { weather: WeatherStatus }) => {
 };
 
 export const GarageDoor = () => {
-  const { snapshot, send, isLoading, context, state } = useGarageDoor();
+  const { send, isLoading, context, state } = useGarageDoor();
 
   // Handle animation completion
   const isOpening = state === "opening";

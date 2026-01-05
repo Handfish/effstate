@@ -10,10 +10,12 @@ import {
   sendTo,
   spawnChild,
   type MachineSnapshot,
+  type MachineActor,
 } from "@/lib/state-machine";
-import { Data, Duration, Effect, Schedule, Schema, Stream, SubscriptionRef } from "effect";
+import { Data, Duration, Effect, Schedule, Schema, Scope, Stream, SubscriptionRef } from "effect";
 import {
   GarageDoorMachine,
+  GarageDoorMachineService,
   PowerOn,
   PowerOff,
   type GarageDoorState,
@@ -83,7 +85,8 @@ const HamsterWheelMachine = createMachine<HamsterWheelState, HamsterWheelEvent, 
       entry: [
         effect(() => Effect.log("Hamster is resting - lights out")),
         assign(() => ({ electricityLevel: 0 })),
-        // Spawn garage door as child (only spawns once, subsequent entries are no-op if child exists)
+        // Spawn garage door as child using the machine definition
+        // The R channel (WeatherService) is handled by the service layer dependencies
         spawnChild(GarageDoorMachine, { id: GARAGE_DOOR_CHILD_ID }),
         // Send POWER_OFF to garage door child
         sendTo(GARAGE_DOOR_CHILD_ID, new PowerOff()),
@@ -128,6 +131,52 @@ const HamsterWheelMachine = createMachine<HamsterWheelState, HamsterWheelEvent, 
     },
   },
 });
+
+// ============================================================================
+// Machine Service (for automatic R channel composition)
+// ============================================================================
+
+/**
+ * HamsterWheel machine as an Effect.Service.
+ *
+ * This service:
+ * - Provides the machine definition
+ * - Provides a factory to create actors
+ * - Depends on GarageDoorMachineService, which automatically includes WeatherService
+ *
+ * The dependency chain ensures the R channel flows:
+ * HamsterWheelMachineService -> GarageDoorMachineService -> WeatherService
+ *
+ * @example
+ * ```ts
+ * const program = Effect.gen(function* () {
+ *   const hamsterWheel = yield* HamsterWheelMachineService;
+ *   const actor = yield* hamsterWheel.createActor();
+ *   actor.send(new Toggle());
+ * });
+ *
+ * Effect.runPromise(program.pipe(Effect.provide(HamsterWheelMachineService.Default)));
+ * ```
+ */
+export class HamsterWheelMachineService extends Effect.Service<HamsterWheelMachineService>()(
+  "HamsterWheelMachineService",
+  {
+    effect: Effect.gen(function* () {
+      return {
+        /** The machine definition */
+        definition: HamsterWheelMachine,
+        /** Create a new actor instance */
+        createActor: (): Effect.Effect<
+          MachineActor<HamsterWheelState, HamsterWheelContext, HamsterWheelEvent>,
+          never,
+          Scope.Scope
+        > => interpret(HamsterWheelMachine),
+      };
+    }),
+    // Depend on GarageDoorMachineService - this chains the dependency on WeatherService
+    dependencies: [GarageDoorMachineService.Default],
+  }
+) {}
 
 // ============================================================================
 // Atom Integration

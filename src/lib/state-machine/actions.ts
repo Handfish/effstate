@@ -13,7 +13,8 @@ import type {
   InvokeFailureEvent,
   InvokeSuccessEvent,
   MachineContext,
-  MachineDefinition,
+  MachineDefinitionE,
+  MachineDefinitionR,
   MachineEvent,
   RaiseAction,
   SendParentAction,
@@ -282,31 +283,46 @@ export function enqueueActions<
 }
 
 /**
+ * Minimal constraint for machine definitions - avoids deep structural checking
+ * that causes contravariance issues with `exactOptionalPropertyTypes`.
+ */
+interface MachineDefinitionLike {
+  readonly _tag: "MachineDefinition";
+  readonly id: string;
+}
+
+/**
  * Spawn a child actor from a machine definition.
+ *
+ * The child machine's R channel (requirements) is preserved for dependency composition.
+ * Internal TContext/TEvent types are erased to avoid TypeScript contravariance issues.
+ *
+ * For automatic R channel composition, use Effect.Service with dependencies instead.
  *
  * @example
  * ```ts
  * // Static ID
- * spawnChild(childMachine, { id: "myChild" })
+ * spawnChild(GarageDoorMachine, { id: "myChild" })
  *
  * // Dynamic ID from context
- * spawnChild(childMachine, { id: ({ context }) => `child-${context.count}` })
+ * spawnChild(GarageDoorMachine, { id: ({ context }) => `child-${context.count}` })
  * ```
  */
 export function spawnChild<
   TContext extends MachineContext,
   TEvent extends MachineEvent = MachineEvent,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  TChildMachine extends MachineDefinition<string, string, any, any, unknown, unknown> = MachineDefinition<string, string, any, any, unknown, unknown>,
+  // Use minimal constraint to avoid contravariance issues, but infer full type
+  TDef extends MachineDefinitionLike = MachineDefinitionLike,
 >(
-  src: TChildMachine,
+  src: TDef,
   options: {
     id: string | ((params: { context: TContext; event: TEvent }) => string);
   },
-): SpawnChildAction<TContext, TEvent, TChildMachine> {
+): SpawnChildAction<TContext, TEvent, MachineDefinitionR<TDef>, MachineDefinitionE<TDef>> {
   return {
     _tag: "spawnChild",
-    src,
+    // Cast through unknown to convert from specific MachineDefinition to type-erased AnyMachineDefinition
+    src: src as unknown as import("./types.js").AnyMachineDefinition<MachineDefinitionR<TDef>, MachineDefinitionE<TDef>>,
     id: options.id,
   };
 }

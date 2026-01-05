@@ -187,21 +187,26 @@ export interface EnqueueActionsAction<
 /**
  * SpawnChild action to dynamically create a child actor.
  *
- * Note: Child machines use `any` for context/event types due to TypeScript's
- * contravariance in function parameters. The child's action functions have
- * signatures like `(ctx: ChildContext) => ...` which can't be assigned to
- * `(ctx: object) => ...`. This is a known limitation when composing machines.
+ * The child machine's R channel (requirements) is preserved for dependency composition,
+ * while internal TContext/TEvent types are erased to avoid contravariance issues.
  *
- * Use type assertions when accessing child actor state for specific typing.
+ * For automatic R channel composition, use Effect.Service with dependencies instead.
+ *
+ * @example
+ * ```ts
+ * entry: [
+ *   spawnChild(GarageDoorMachine, { id: "garage-door" }),
+ * ]
+ * ```
  */
 export interface SpawnChildAction<
   TContext extends MachineContext,
   TEvent extends MachineEvent,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  TChildMachine extends MachineDefinition<string, string, any, any, unknown, unknown> = MachineDefinition<string, string, any, any, unknown, unknown>,
+  TChildR = unknown,
+  TChildE = unknown,
 > {
   readonly _tag: "spawnChild";
-  readonly src: TChildMachine;
+  readonly src: AnyMachineDefinition<TChildR, TChildE>;
   readonly id: string | ((params: { context: TContext; event: TEvent }) => string);
 }
 
@@ -264,7 +269,7 @@ export type Action<
   | CancelAction<TContext, TEvent>
   | EmitAction<TContext, TEvent>
   | EnqueueActionsAction<TContext, TEvent, R, E>
-  | SpawnChildAction<TContext, TEvent>
+  | SpawnChildAction<TContext, TEvent, unknown, unknown>
   | StopChildAction<TContext, TEvent>
   | SendToAction<TContext, TEvent>
   | SendParentAction<TContext, TEvent>
@@ -666,3 +671,66 @@ export interface MachineDefinition<
   /** Schema for context serialization (only present for Schema-based configs) */
   readonly contextSchema?: Schema.Schema<TContext, TContextEncoded>;
 }
+
+// ============================================================================
+// Type-Erased Machine Reference (for parent-child composition)
+// ============================================================================
+
+/**
+ * Type-erased machine definition that preserves only the R and E channels.
+ *
+ * This type is used for parent-child machine composition where:
+ * - R (requirements) must be preserved for dependency injection
+ * - E (errors) must be preserved for error handling
+ * - TContext and TEvent are erased to avoid contravariance issues
+ *
+ * The internal context/event types don't matter to the parent - only
+ * the child's service dependencies (R) and potential errors (E).
+ */
+export interface AnyMachineDefinition<R = unknown, E = unknown> {
+  readonly _tag: "MachineDefinition";
+  readonly id: string;
+  readonly config: {
+    readonly id: string;
+    readonly initial: string;
+    readonly states: Record<string, StateNodeConfig<string, MachineContext, MachineEvent, R, E>>;
+    readonly context?: Schema.Schema.Any | MachineContext;
+    readonly initialContext?: MachineContext;
+  };
+  readonly initialSnapshot: MachineSnapshot<string, MachineContext>;
+  readonly contextSchema?: Schema.Schema.Any;
+}
+
+/**
+ * Extract the R channel from a MachineDefinition type.
+ */
+export type MachineDefinitionR<T> = T extends MachineDefinition<
+  string,
+  string,
+  MachineContext,
+  MachineEvent,
+  infer R,
+  unknown,
+  unknown
+>
+  ? R
+  : T extends AnyMachineDefinition<infer R, unknown>
+    ? R
+    : never;
+
+/**
+ * Extract the E channel from a MachineDefinition type.
+ */
+export type MachineDefinitionE<T> = T extends MachineDefinition<
+  string,
+  string,
+  MachineContext,
+  MachineEvent,
+  unknown,
+  infer E,
+  unknown
+>
+  ? E
+  : T extends AnyMachineDefinition<unknown, infer E>
+    ? E
+    : never;

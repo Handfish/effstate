@@ -3,6 +3,7 @@ export type {
   Action,
   ActionEnqueuer,
   ActivityConfig,
+  AnyMachineDefinition,
   AssignAction,
   CancelAction,
   EffectAction,
@@ -24,6 +25,8 @@ export type {
   MachineConfig,
   MachineContext,
   MachineDefinition,
+  MachineDefinitionE,
+  MachineDefinitionR,
   MachineEvent,
   MachineSnapshot,
   NarrowedTransitionConfig,
@@ -70,3 +73,20 @@ export {
   selectState,
   type UseMachineResult,
 } from "./atom.js";
+
+// Machine service type utilities (for automatic R channel composition)
+export {
+  type MachineServiceR,
+  type MachineServiceE,
+  type MachineServiceState,
+  type MachineServiceContext,
+  type MachineServiceEvent,
+  type ChildrenServicesR,
+} from "./service.js";
+
+// Machine registry (for managing actor instances)
+export {
+  MachineRegistry,
+  type ActorInstance,
+  type MachineRegistryService,
+} from "./registry.js";
