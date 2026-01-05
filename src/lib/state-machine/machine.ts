@@ -81,19 +81,22 @@ export function createMachine<
   TStateValue extends string,
   TEvent extends MachineEvent,
   TContextSchema extends import("effect").Schema.Schema.Any,
+  R = never,
+  E = never,
 >(config: {
   readonly id: string;
   readonly initial: TStateValue;
   readonly context: TContextSchema;
   readonly initialContext: import("effect").Schema.Schema.Type<TContextSchema>;
-  readonly states: Record<TStateValue, StateNodeConfig<TStateValue, import("effect").Schema.Schema.Type<TContextSchema>, TEvent, never, never>>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly states: Record<TStateValue, StateNodeConfig<TStateValue, import("effect").Schema.Schema.Type<TContextSchema>, TEvent, R, E>>;
 }): MachineDefinition<
   string,
   TStateValue,
   import("effect").Schema.Schema.Type<TContextSchema>,
   TEvent,
-  never,
-  never,
+  R,
+  E,
   import("effect").Schema.Schema.Encoded<TContextSchema>
 > {
   return {

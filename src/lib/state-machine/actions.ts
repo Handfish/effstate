@@ -40,12 +40,11 @@ export function assign<
     | Partial<TContext>
     | ((params: { context: TContext; event: TEvent }) => Partial<TContext>),
 ): AssignAction<TContext, TEvent> {
-  return {
-    _tag: "assign",
-    fn: typeof assignment === "function"
-      ? assignment
-      : () => assignment,
-  };
+  // Cast to the base types for storage - the machine will pass the actual types at runtime
+  const fn = typeof assignment === "function"
+    ? assignment as (params: { context: MachineContext; event: MachineEvent }) => Partial<TContext>
+    : () => assignment;
+  return { _tag: "assign", fn };
 }
 
 /**

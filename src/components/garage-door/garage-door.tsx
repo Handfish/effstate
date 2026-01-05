@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import {
   type GarageDoorState,
+  type WeatherStatus,
   getButtonLabel,
   getStateLabel,
   useGarageDoor,
@@ -12,6 +13,42 @@ const isPaused = (state: GarageDoorState): boolean =>
 
 const isAnimating = (state: GarageDoorState): boolean =>
   state === "opening" || state === "closing";
+
+const WeatherDisplay = ({ weather }: { weather: WeatherStatus }) => {
+  switch (weather._tag) {
+    case "loading":
+      return (
+        <div className="text-gray-400 text-sm animate-pulse">
+          Loading weather...
+        </div>
+      );
+    case "loaded":
+      return (
+        <div className="flex flex-col items-center gap-1">
+          <div className="text-3xl">{weather.weather.icon}</div>
+          <div className="text-white text-lg font-bold">
+            {weather.weather.temperature}°F
+          </div>
+          <div className="text-gray-300 text-xs">
+            {weather.weather.description}
+          </div>
+        </div>
+      );
+    case "error":
+      return (
+        <div className="flex flex-col items-center gap-1">
+          <div className="text-2xl">⚠️</div>
+          <div className="text-red-400 text-xs text-center px-2">
+            {weather.error}
+          </div>
+        </div>
+      );
+    default:
+      return (
+        <div className="text-gray-600 text-sm">Garage Interior</div>
+      );
+  }
+};
 
 export const GarageDoor = () => {
   const { status, handleButtonClick, isLoading } = useGarageDoor();
@@ -35,7 +72,7 @@ export const GarageDoor = () => {
       <div className="relative w-64 h-48 border-4 border-gray-700 rounded-t-lg bg-gray-900 overflow-hidden">
         {/* Inside of garage (visible when door opens) */}
         <div className="absolute inset-0 bg-gray-800 flex items-center justify-center">
-          <div className="text-gray-600 text-sm">Garage Interior</div>
+          <WeatherDisplay weather={status.weather} />
         </div>
 
         {/* Door Panels */}

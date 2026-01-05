@@ -9,6 +9,10 @@ import {
   encodeSnapshotSync,
   interpret,
 } from "@/lib/state-machine";
+import {
+  WeatherService,
+  type Weather,
+} from "@/lib/services/weather-service";
 import { Data, Duration, Effect, Schedule, Schema, Stream, SubscriptionRef } from "effect";
 
 // ============================================================================
@@ -23,9 +27,22 @@ export type GarageDoorState =
   | "closing"
   | "paused-while-closing";
 
+// Weather status for the UI
+export type WeatherStatus =
+  | { readonly _tag: "idle" }
+  | { readonly _tag: "loading" }
+  | { readonly _tag: "loaded"; readonly weather: Weather }
+  | { readonly _tag: "error"; readonly error: string };
+
 const GarageDoorContextSchema = Schema.Struct({
   position: Schema.Number,
   lastUpdated: Schema.DateFromString,
+  // Weather data (stored as primitives for serialization)
+  weatherStatus: Schema.Literal("idle", "loading", "loaded", "error"),
+  weatherTemp: Schema.optional(Schema.Number),
+  weatherDesc: Schema.optional(Schema.String),
+  weatherIcon: Schema.optional(Schema.String),
+  weatherError: Schema.optional(Schema.String),
 });
 
 class Click extends Data.TaggedClass("CLICK")<{}> {}
@@ -54,10 +71,15 @@ const animation = (dir: 1 | -1) => ({
 // Garage Door Machine
 // ============================================================================
 
+// Default location (San Francisco)
+const DEFAULT_LAT = 37.7749;
+const DEFAULT_LON = -122.4194;
+
 export const garageDoorMachine = createMachine<
   GarageDoorState,
   GarageDoorEvent,
-  typeof GarageDoorContextSchema
+  typeof GarageDoorContextSchema,
+  WeatherService // R - service requirements
 >({
   id: "garageDoor",
   initial: "closed",
@@ -65,10 +87,11 @@ export const garageDoorMachine = createMachine<
   initialContext: {
     position: 0,
     lastUpdated: new Date(),
+    weatherStatus: "idle",
   },
   states: {
     closed: {
-      entry: [assign({ position: 0, lastUpdated: new Date() })],
+      entry: [assign(() => ({ position: 0, lastUpdated: new Date(), weatherStatus: "idle" as const }))],
       on: {
         CLICK: { target: "opening" },
       },
@@ -99,14 +122,74 @@ export const garageDoorMachine = createMachine<
     },
 
     open: {
-      entry: [assign({ position: 100, lastUpdated: new Date() })],
+      entry: [
+        assign(() => ({ position: 100, lastUpdated: new Date(), weatherStatus: "loading" as const })),
+        effect(() => Effect.log("Entering: open - fetching weather")),
+      ],
+      invoke: {
+        id: "fetchWeather",
+        src: () =>
+          Effect.gen(function* () {
+            const weatherService = yield* WeatherService;
+            return yield* weatherService.getWeather(DEFAULT_LAT, DEFAULT_LON);
+          }),
+        onSuccess: {
+          actions: [
+            assign(({ event }) => ({
+              weatherStatus: "loaded" as const,
+              weatherTemp: event.output.temperature,
+              weatherDesc: event.output.description,
+              weatherIcon: event.output.icon,
+              weatherError: undefined,
+            })),
+          ],
+        },
+        catchTags: {
+          WeatherNetworkError: {
+            actions: [
+              assign(({ event }) => ({
+                weatherStatus: "error" as const,
+                weatherError: `Network error: ${event.error.message}`,
+                weatherTemp: undefined,
+                weatherDesc: undefined,
+                weatherIcon: undefined,
+              })),
+            ],
+          },
+          WeatherParseError: {
+            actions: [
+              assign(({ event }) => ({
+                weatherStatus: "error" as const,
+                weatherError: `Data error: ${event.error.message}`,
+                weatherTemp: undefined,
+                weatherDesc: undefined,
+                weatherIcon: undefined,
+              })),
+            ],
+          },
+        },
+        onDefect: {
+          actions: [
+            assign(({ event }) => ({
+              weatherStatus: "error" as const,
+              weatherError: `Unexpected error: ${String(event.defect)}`,
+              weatherTemp: undefined,
+              weatherDesc: undefined,
+              weatherIcon: undefined,
+            })),
+          ],
+        },
+      },
       on: {
         CLICK: { target: "closing" },
       },
     },
 
     closing: {
-      entry: [effect(() => Effect.log("Entering: closing"))],
+      entry: [
+        effect(() => Effect.log("Entering: closing")),
+        assign(() => ({ weatherStatus: "idle" as const, weatherTemp: undefined, weatherDesc: undefined, weatherIcon: undefined, weatherError: undefined })),
+      ],
       activities: [animation(-1)],
       on: {
         CLICK: { target: "paused-while-closing" },
@@ -190,7 +273,28 @@ const useMachine = createUseMachineHook(
 export interface GarageDoorStatus {
   readonly state: GarageDoorState;
   readonly position: number;
+  readonly weather: WeatherStatus;
 }
+
+const getWeatherStatus = (context: typeof GarageDoorContextSchema.Type): WeatherStatus => {
+  switch (context.weatherStatus) {
+    case "loading":
+      return { _tag: "loading" };
+    case "loaded":
+      return {
+        _tag: "loaded",
+        weather: {
+          temperature: context.weatherTemp!,
+          description: context.weatherDesc!,
+          icon: context.weatherIcon!,
+        },
+      };
+    case "error":
+      return { _tag: "error", error: context.weatherError! };
+    default:
+      return { _tag: "idle" };
+  }
+};
 
 export const useGarageDoor = (): {
   status: GarageDoorStatus;
@@ -208,7 +312,11 @@ export const useGarageDoor = (): {
   }
 
   return {
-    status: { state: snapshot.value, position: context.position },
+    status: {
+      state: snapshot.value,
+      position: context.position,
+      weather: getWeatherStatus(context),
+    },
     handleButtonClick,
     isLoading,
   };

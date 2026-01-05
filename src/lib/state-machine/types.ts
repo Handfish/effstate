@@ -34,14 +34,18 @@ export interface MachineSnapshot<
 // ============================================================================
 
 /**
- * Sync action that can modify context
+ * Sync action that can modify context.
+ *
+ * Note: The fn parameter uses MachineContext/MachineEvent in contravariant position
+ * to allow narrower assign actions to be used where wider ones are expected.
+ * This is safe because the machine always passes the full context.
  */
 export interface AssignAction<
   TContext extends MachineContext,
   TEvent extends MachineEvent,
 > {
   readonly _tag: "assign";
-  readonly fn: (params: { context: TContext; event: TEvent }) => Partial<TContext>;
+  readonly fn: (params: { context: MachineContext; event: MachineEvent }) => Partial<TContext>;
 }
 
 /**
