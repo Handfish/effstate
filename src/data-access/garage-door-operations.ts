@@ -9,30 +9,25 @@ import {
   encodeSnapshotSync,
   interpret,
 } from "@/lib/state-machine";
-import { Data, Duration, Effect, Match, Schedule, Schema, Stream, SubscriptionRef } from "effect";
+import { Data, Duration, Effect, Schedule, Schema, Stream, SubscriptionRef } from "effect";
 
 // ============================================================================
-// Types (all Schema-based for full Effect integration)
+// Types
 // ============================================================================
 
-// State schema using Schema.Literal for type-safe state values
-const GarageDoorStateSchema = Schema.Literal(
-  "closed",
-  "opening",
-  "paused-while-opening",
-  "open",
-  "closing",
-  "paused-while-closing",
-);
-export type GarageDoorState = typeof GarageDoorStateSchema.Type;
+export type GarageDoorState =
+  | "closed"
+  | "opening"
+  | "paused-while-opening"
+  | "open"
+  | "closing"
+  | "paused-while-closing";
 
-// Context schema for serialization (Date <-> string)
 const GarageDoorContextSchema = Schema.Struct({
   position: Schema.Number,
   lastUpdated: Schema.DateFromString,
 });
 
-// Events using Effect's Data.TaggedClass for structural equality and type safety
 class Click extends Data.TaggedClass("CLICK")<{}> {}
 class Tick extends Data.TaggedClass("TICK")<{ readonly delta: number }> {}
 class AnimationComplete extends Data.TaggedClass("ANIMATION_COMPLETE")<{}> {}
@@ -79,7 +74,6 @@ export const garageDoorMachine = createMachine<
 >({
   id: "garageDoor",
   initial: "closed",
-  // Schema-based context enables automatic serialization
   context: GarageDoorContextSchema,
   initialContext: {
     position: 0,
@@ -94,9 +88,7 @@ export const garageDoorMachine = createMachine<
     },
 
     opening: {
-      entry: [
-        effect(() => Effect.log("Entering: opening")),
-      ],
+      entry: [effect(() => Effect.log("Entering: opening"))],
       activities: [createAnimationActivity(1)],
       on: {
         CLICK: { target: "paused-while-opening" },
@@ -153,33 +145,24 @@ export const garageDoorMachine = createMachine<
 });
 
 // ============================================================================
-// Persistence (localStorage)
+// Persistence
 // ============================================================================
 
 const STORAGE_KEY = "garageDoor:snapshot";
 
-/**
- * Load saved snapshot from localStorage (if any)
- * Use this to restore state on app start.
- */
 export const loadSnapshot = (): typeof garageDoorMachine.initialSnapshot | null => {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (!stored) return null;
-    const encoded = JSON.parse(stored);
-    return decodeSnapshotSync(garageDoorMachine, encoded);
+    return decodeSnapshotSync(garageDoorMachine, JSON.parse(stored));
   } catch {
     return null;
   }
 };
 
-/**
- * Save snapshot to localStorage
- */
 const saveSnapshot = (snapshot: typeof garageDoorMachine.initialSnapshot): void => {
   try {
-    const encoded = encodeSnapshotSync(garageDoorMachine, snapshot);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(encoded));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(encodeSnapshotSync(garageDoorMachine, snapshot)));
   } catch {
     // Ignore storage errors
   }
@@ -189,24 +172,17 @@ const saveSnapshot = (snapshot: typeof garageDoorMachine.initialSnapshot): void 
 // Atom Integration
 // ============================================================================
 
-// Create atoms with full type inference from appRuntime
-// interpret() returns Effect<MachineActor, never, Scope.Scope> with auto-cleanup
 const actorAtom = appRuntime
   .atom(interpret(garageDoorMachine))
   .pipe(Atom.keepAlive);
 
-// Create a SubscriptionRef that stays in sync with the actor's snapshot
-// Also persists to localStorage on every change
 const snapshotAtom = appRuntime
   .subscriptionRef((get) =>
     Effect.gen(function* () {
       const actor = yield* get.result(actorAtom);
-      // Create a SubscriptionRef with the current snapshot
       const ref = yield* SubscriptionRef.make(actor.getSnapshot());
-      // Subscribe to actor changes, update ref, and persist
       actor.subscribe((snapshot) => {
         Effect.runSync(SubscriptionRef.set(ref, snapshot));
-        // Persist to localStorage (Date automatically becomes string)
         saveSnapshot(snapshot);
       });
       return ref;
@@ -214,7 +190,6 @@ const snapshotAtom = appRuntime
   )
   .pipe(Atom.keepAlive);
 
-// Create the hook with full type safety
 const useMachine = createUseMachineHook(
   actorAtom,
   snapshotAtom,
@@ -222,17 +197,13 @@ const useMachine = createUseMachineHook(
 );
 
 // ============================================================================
-// Status type for UI consumption
+// React Hook
 // ============================================================================
 
 export interface GarageDoorStatus {
   readonly state: GarageDoorState;
   readonly position: number;
 }
-
-// ============================================================================
-// React Hook
-// ============================================================================
 
 export const useGarageDoor = (): {
   status: GarageDoorStatus;
@@ -241,11 +212,8 @@ export const useGarageDoor = (): {
 } => {
   const { snapshot, send, isLoading, matches, context } = useMachine();
 
-  const handleButtonClick = () => {
-    send(new Click());
-  };
+  const handleButtonClick = () => send(new Click());
 
-  // Check for animation completion
   if (context.position >= 100 && matches("opening")) {
     send(new AnimationComplete());
   } else if (context.position <= 0 && matches("closing")) {
@@ -253,41 +221,34 @@ export const useGarageDoor = (): {
   }
 
   return {
-    status: {
-      state: snapshot.value,
-      position: context.position,
-    },
+    status: { state: snapshot.value, position: context.position },
     handleButtonClick,
     isLoading,
   };
 };
 
 // ============================================================================
-// UI Helpers (using Effect Match for exhaustive pattern matching)
+// UI Helpers
 // ============================================================================
 
-const StateLabelMatcher = Match.type<GarageDoorState>().pipe(
-  Match.when("closed", () => "Closed"),
-  Match.when("opening", () => "Opening..."),
-  Match.when("paused-while-opening", () => "Paused (was opening)"),
-  Match.when("open", () => "Open"),
-  Match.when("closing", () => "Closing..."),
-  Match.when("paused-while-closing", () => "Paused (was closing)"),
-  Match.exhaustive,
-);
+const stateLabels: Record<GarageDoorState, string> = {
+  closed: "Closed",
+  opening: "Opening...",
+  "paused-while-opening": "Paused (was opening)",
+  open: "Open",
+  closing: "Closing...",
+  "paused-while-closing": "Paused (was closing)",
+};
 
-export const getStateLabel = (state: GarageDoorState): string =>
-  StateLabelMatcher(state);
+export const getStateLabel = (state: GarageDoorState) => stateLabels[state];
 
-const ButtonLabelMatcher = Match.type<GarageDoorState>().pipe(
-  Match.when("closed", () => "Open Door"),
-  Match.when("opening", () => "Pause"),
-  Match.when("paused-while-opening", () => "Close Door"),
-  Match.when("open", () => "Close Door"),
-  Match.when("closing", () => "Pause"),
-  Match.when("paused-while-closing", () => "Open Door"),
-  Match.exhaustive,
-);
+const buttonLabels: Record<GarageDoorState, string> = {
+  closed: "Open Door",
+  opening: "Pause",
+  "paused-while-opening": "Close Door",
+  open: "Close Door",
+  closing: "Pause",
+  "paused-while-closing": "Open Door",
+};
 
-export const getButtonLabel = (state: GarageDoorState): string =>
-  ButtonLabelMatcher(state);
+export const getButtonLabel = (state: GarageDoorState) => buttonLabels[state];
