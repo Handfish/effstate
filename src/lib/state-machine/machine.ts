@@ -748,12 +748,15 @@ function createActor<
           const childId = typeof action.id === "function"
             ? action.id({ context: ctx, event })
             : action.id;
-          // Spawn child synchronously, inherit runtime for service access
-          const childActor = createActor(action.src, {
-            parent: actor as unknown as MachineActor<string, MachineContext, MachineEvent>,
-            runtime: runtime as Runtime.Runtime<unknown>,
-          });
-          childrenRef.set(childId, childActor);
+          // Only spawn if child doesn't already exist (idempotent)
+          if (!childrenRef.has(childId)) {
+            // Spawn child synchronously, inherit runtime for service access
+            const childActor = createActor(action.src, {
+              parent: actor as unknown as MachineActor<string, MachineContext, MachineEvent>,
+              runtime: runtime as Runtime.Runtime<unknown>,
+            });
+            childrenRef.set(childId, childActor);
+          }
           break;
         }
         case "stopChild": {

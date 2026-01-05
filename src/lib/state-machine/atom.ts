@@ -1,4 +1,5 @@
 import { Atom, Result, useAtomValue } from "@effect-atom/atom-react";
+import { Effect, SubscriptionRef } from "effect";
 import React from "react";
 import type { MachineActor } from "./machine.js";
 import type { MachineContext, MachineEvent, MachineSnapshot } from "./types.js";
@@ -123,3 +124,124 @@ export const selectState =
   <TStateValue extends string>(state: TStateValue) =>
   <TContext extends MachineContext>(snapshot: MachineSnapshot<TStateValue, TContext>): boolean =>
     snapshot.value === state;
+
+// ============================================================================
+// Child Machine Hook Factory
+// ============================================================================
+
+/**
+ * Create a React hook for using a child state machine spawned by a parent.
+ *
+ * This provides the same interface as createUseMachineHook but derives the
+ * child actor from the parent's children map. The child's snapshot is
+ * automatically subscribed to when the child becomes available.
+ *
+ * @example
+ * ```ts
+ * // Parent spawns child in its machine definition:
+ * // spawnChild(ChildMachine, { id: "myChild" })
+ *
+ * // Create hook for the child
+ * const useChildMachine = createUseChildMachineHook(
+ *   appRuntime,
+ *   parentActorAtom,
+ *   "myChild",
+ *   childInitialSnapshot,
+ * );
+ *
+ * // Use in component
+ * const { snapshot, send, matches } = useChildMachine();
+ * ```
+ */
+export const createUseChildMachineHook = <
+  TParentStateValue extends string,
+  TParentContext extends MachineContext,
+  TParentEvent extends MachineEvent,
+  TChildStateValue extends string,
+  TChildContext extends MachineContext,
+  TChildEvent extends MachineEvent,
+>(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  runtime: { atom: (effect: Effect.Effect<any, any, any>) => Atom.Atom<any>; subscriptionRef: (fn: (get: any) => Effect.Effect<SubscriptionRef.SubscriptionRef<any>, any, any>) => Atom.Atom<any> },
+  parentActorAtom: Atom.Atom<Result.Result<MachineActor<TParentStateValue, TParentContext, TParentEvent>, never>>,
+  childId: string,
+  initialSnapshot: MachineSnapshot<TChildStateValue, TChildContext>,
+): (() => UseMachineResult<TChildStateValue, TChildContext, TChildEvent>) => {
+  // Create atom that derives child actor from parent
+  const childActorAtom = runtime
+    .subscriptionRef((get: { result: (atom: Atom.Atom<Result.Result<MachineActor<TParentStateValue, TParentContext, TParentEvent>, never>>) => Effect.Effect<MachineActor<TParentStateValue, TParentContext, TParentEvent>, never, never> }) =>
+      Effect.gen(function* () {
+        const parentActor = yield* get.result(parentActorAtom);
+
+        // Create a ref that tracks the child actor
+        const childActor = parentActor.children.get(childId) as MachineActor<TChildStateValue, TChildContext, TChildEvent> | undefined;
+        const ref = yield* SubscriptionRef.make<MachineActor<TChildStateValue, TChildContext, TChildEvent> | undefined>(childActor);
+
+        // Subscribe to parent changes to detect when child is spawned
+        parentActor.subscribe(() => {
+          const child = parentActor.children.get(childId) as MachineActor<TChildStateValue, TChildContext, TChildEvent> | undefined;
+          Effect.runSync(SubscriptionRef.set(ref, child));
+        });
+
+        return ref;
+      })
+    )
+    .pipe(Atom.keepAlive);
+
+  // Create atom that subscribes to child's snapshot
+  const childSnapshotAtom = runtime
+    .subscriptionRef((get: { result: (atom: Atom.Atom<Result.Result<MachineActor<TChildStateValue, TChildContext, TChildEvent> | undefined, never>>) => Effect.Effect<MachineActor<TChildStateValue, TChildContext, TChildEvent> | undefined, never, never> }) =>
+      Effect.gen(function* () {
+        const childActor = yield* get.result(childActorAtom);
+
+        const currentSnapshot = childActor?.getSnapshot() ?? initialSnapshot;
+        const ref = yield* SubscriptionRef.make<MachineSnapshot<TChildStateValue, TChildContext>>(currentSnapshot);
+
+        // Subscribe to child snapshot changes if child exists
+        if (childActor) {
+          childActor.subscribe((snapshot) => {
+            Effect.runSync(SubscriptionRef.set(ref, snapshot));
+          });
+        }
+
+        return ref;
+      })
+    )
+    .pipe(Atom.keepAlive);
+
+  // Return hook that uses these atoms
+  return function useChildMachine(): UseMachineResult<TChildStateValue, TChildContext, TChildEvent> {
+    const childActorResult = useAtomValue(childActorAtom);
+    const snapshotResult = useAtomValue(childSnapshotAtom);
+
+    const send = React.useCallback(
+      (event: TChildEvent) => {
+        if (childActorResult._tag === "Success" && childActorResult.value) {
+          childActorResult.value.send(event);
+        }
+      },
+      [childActorResult],
+    );
+
+    const isLoading = childActorResult._tag !== "Success" ||
+                      snapshotResult._tag !== "Success" ||
+                      !childActorResult.value;
+
+    const snapshot: MachineSnapshot<TChildStateValue, TChildContext> =
+      snapshotResult._tag === "Success" ? snapshotResult.value : initialSnapshot;
+
+    const matches = React.useCallback(
+      (state: TChildStateValue) => snapshot.value === state,
+      [snapshot.value],
+    );
+
+    return {
+      snapshot,
+      send,
+      isLoading,
+      matches,
+      state: snapshot.value,
+      context: snapshot.context,
+    };
+  };
+};

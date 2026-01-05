@@ -64,6 +64,7 @@ export {
 
 // Atom integration
 export {
+  createUseChildMachineHook,
   createUseMachineHook,
   selectContext,
   selectState,

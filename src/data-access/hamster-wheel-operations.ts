@@ -1,14 +1,25 @@
-import { Atom, useAtomValue } from "@effect-atom/atom-react";
+import { Atom } from "@effect-atom/atom-react";
 import { appRuntime } from "@/lib/app-runtime";
 import {
   assign,
   createMachine,
+  createUseChildMachineHook,
   createUseMachineHook,
   effect,
   interpret,
+  sendTo,
+  spawnChild,
   type MachineSnapshot,
 } from "@/lib/state-machine";
 import { Data, Duration, Effect, Schedule, Schema, Stream, SubscriptionRef } from "effect";
+import {
+  GarageDoorMachine,
+  PowerOn,
+  PowerOff,
+  type GarageDoorState,
+  type GarageDoorEvent,
+  initialSnapshot as garageDoorInitialSnapshot,
+} from "./garage-door-operations";
 
 // ============================================================================
 // Types
@@ -57,6 +68,8 @@ const wheelAnimation = {
 // Hamster Wheel Machine
 // ============================================================================
 
+const GARAGE_DOOR_CHILD_ID = "garageDoor";
+
 const HamsterWheelMachine = createMachine<HamsterWheelState, HamsterWheelEvent, typeof HamsterWheelContextSchema>({
   id: "hamsterWheel",
   initial: "idle",
@@ -70,6 +83,10 @@ const HamsterWheelMachine = createMachine<HamsterWheelState, HamsterWheelEvent, 
       entry: [
         effect(() => Effect.log("Hamster is resting - lights out")),
         assign(() => ({ electricityLevel: 0 })),
+        // Spawn garage door as child (only spawns once, subsequent entries are no-op if child exists)
+        spawnChild(GarageDoorMachine, { id: GARAGE_DOOR_CHILD_ID }),
+        // Send POWER_OFF to garage door child
+        sendTo(GARAGE_DOOR_CHILD_ID, new PowerOff()),
       ],
       on: {
         TOGGLE: { target: "running" },
@@ -80,6 +97,8 @@ const HamsterWheelMachine = createMachine<HamsterWheelState, HamsterWheelEvent, 
       entry: [
         effect(() => Effect.log("Hamster is running! Generating electricity")),
         assign(() => ({ electricityLevel: 100 })),
+        // Send POWER_ON to garage door child
+        sendTo(GARAGE_DOOR_CHILD_ID, new PowerOn()),
       ],
       activities: [wheelAnimation],
       on: {
@@ -97,6 +116,7 @@ const HamsterWheelMachine = createMachine<HamsterWheelState, HamsterWheelEvent, 
     stopping: {
       entry: [
         effect(() => Effect.log("Hamster stopped - electricity draining in 2 seconds...")),
+        // Power stays on during stopping - only turns off when entering idle
       ],
       after: {
         delay: Duration.seconds(2),
@@ -130,10 +150,31 @@ const snapshotAtom = appRuntime
   )
   .pipe(Atom.keepAlive);
 
-const useMachine = createUseMachineHook(
+const useHamsterWheelMachine = createUseMachineHook(
   actorAtom,
   snapshotAtom,
   initialSnapshot,
+);
+
+// ============================================================================
+// Child Machine Hook (Garage Door)
+// ============================================================================
+
+// Type for garage door context (inferred from schema)
+type GarageDoorContext = typeof garageDoorInitialSnapshot.context;
+
+export const useGarageDoor = createUseChildMachineHook<
+  HamsterWheelState,
+  HamsterWheelContext,
+  HamsterWheelEvent,
+  GarageDoorState,
+  GarageDoorContext,
+  GarageDoorEvent
+>(
+  appRuntime,
+  actorAtom,
+  GARAGE_DOOR_CHILD_ID,
+  garageDoorInitialSnapshot,
 );
 
 // ============================================================================
@@ -152,7 +193,7 @@ export const useHamsterWheel = (): {
   handleToggle: () => void;
   isLoading: boolean;
 } => {
-  const { snapshot, send, isLoading, context } = useMachine();
+  const { snapshot, send, isLoading, context } = useHamsterWheelMachine();
 
   const handleToggle = () => send(new Toggle());
 
@@ -166,28 +207,6 @@ export const useHamsterWheel = (): {
     handleToggle,
     isLoading,
   };
-};
-
-// ============================================================================
-// Electricity Atom (for child state machines)
-// ============================================================================
-
-export const electricityAtom = appRuntime
-  .subscriptionRef((get) =>
-    Effect.gen(function* () {
-      const actor = yield* get.result(actorAtom);
-      const ref = yield* SubscriptionRef.make(actor.getSnapshot().context.electricityLevel > 0);
-      actor.subscribe((snapshot) => {
-        Effect.runSync(SubscriptionRef.set(ref, snapshot.context.electricityLevel > 0));
-      });
-      return ref;
-    })
-  )
-  .pipe(Atom.keepAlive);
-
-export const useElectricity = (): boolean => {
-  const result = useAtomValue(electricityAtom);
-  return result._tag === "Success" ? result.value : false;
 };
 
 // ============================================================================

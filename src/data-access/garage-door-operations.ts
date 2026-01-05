@@ -1,23 +1,17 @@
-import { Atom } from "@effect-atom/atom-react";
-import { appRuntime } from "@/lib/app-runtime";
 import {
   assign,
   assignOnDefect,
   assignOnFailure,
   assignOnSuccess,
   createMachine,
-  createUseMachineHook,
   effect,
-  interpret,
   type MachineSnapshot,
 } from "@/lib/state-machine";
 import {
   WeatherService,
   type Weather,
 } from "@/lib/services/weather-service";
-import { Data, Duration, Effect, Schedule, Schema, Stream, SubscriptionRef } from "effect";
-import { useRef, useEffect } from "react";
-import { useElectricity } from "./hamster-wheel-operations";
+import { Data, Duration, Effect, Schedule, Schema, Stream } from "effect";
 
 // ============================================================================
 // Types
@@ -56,17 +50,18 @@ const GarageDoorContextSchema = Schema.Struct({
 class Click extends Data.TaggedClass("CLICK")<{}> {}
 class Tick extends Data.TaggedClass("TICK")<{ readonly delta: number }> {}
 class AnimationComplete extends Data.TaggedClass("ANIMATION_COMPLETE")<{}> {}
-class PowerOn extends Data.TaggedClass("POWER_ON")<{}> {}
-class PowerOff extends Data.TaggedClass("POWER_OFF")<{}> {}
+export class PowerOn extends Data.TaggedClass("POWER_ON")<{}> {}
+export class PowerOff extends Data.TaggedClass("POWER_OFF")<{}> {}
 
-type GarageDoorEvent = Click | Tick | AnimationComplete | PowerOn | PowerOff;
+export type GarageDoorEvent = Click | Tick | AnimationComplete | PowerOn | PowerOff;
 
 // Type alias for snapshot
 type GarageDoorContext = typeof GarageDoorContextSchema.Type;
 type GarageDoorSnapshot = MachineSnapshot<GarageDoorState, GarageDoorContext>;
 
 // Initial snapshot defined at module level (doesn't depend on services)
-const initialSnapshot: GarageDoorSnapshot = {
+// Exported for use with createUseChildMachineHook
+export const initialSnapshot: GarageDoorSnapshot = {
   value: "closed",
   context: {
     position: 0,
@@ -101,21 +96,18 @@ const animation = (dir: 1 | -1) => ({
 const DEFAULT_LAT = 37.7749;
 const DEFAULT_LON = -122.4194;
 
-// Machine definition wrapped in Effect.gen - services are captured in closure
-// R (WeatherService) is inferred automatically and checked at compile time!
-const GarageDoorMachine = Effect.gen(function* () {
-  const weatherService = yield* WeatherService;
-
-  return createMachine<GarageDoorState, GarageDoorEvent, typeof GarageDoorContextSchema>({
-    id: "garageDoor",
-    initial: "closed",
-    context: GarageDoorContextSchema,
-    initialContext: {
-      position: 0,
-      lastUpdated: new Date(),
-      weather: { status: "idle" },
-      isPowered: false,
-    },
+// Machine definition - WeatherService is resolved inside invoke at runtime
+// Exported so HamsterWheel can spawn it as a child
+export const GarageDoorMachine = createMachine<GarageDoorState, GarageDoorEvent, typeof GarageDoorContextSchema>({
+  id: "garageDoor",
+  initial: "closed",
+  context: GarageDoorContextSchema,
+  initialContext: {
+    position: 0,
+    lastUpdated: new Date(),
+    weather: { status: "idle" },
+    isPowered: false,
+  },
     states: {
       closed: {
         entry: [assign(() => ({ position: 0, lastUpdated: new Date(), weather: { status: "idle" } }))],
@@ -162,7 +154,10 @@ const GarageDoorMachine = Effect.gen(function* () {
         ],
         invoke: {
           id: "fetchWeather",
-          src: () => weatherService.getWeather(DEFAULT_LAT, DEFAULT_LON),
+          src: () => Effect.gen(function* () {
+            const weatherService = yield* WeatherService;
+            return yield* weatherService.getWeather(DEFAULT_LAT, DEFAULT_LON);
+          }),
           onSuccess: {
             actions: [
               assignOnSuccess<GarageDoorContext, Weather>(({ output }) => ({
@@ -248,7 +243,6 @@ const GarageDoorMachine = Effect.gen(function* () {
       },
     },
   });
-});
 
 // ============================================================================
 // Persistence
@@ -284,36 +278,13 @@ const saveSnapshot = (snapshot: GarageDoorSnapshot): void => {
 };
 
 // ============================================================================
-// Atom Integration
+// Exported Events (for component use)
 // ============================================================================
 
-// GarageDoorMachine is Effect<MachineDefinition> - flatMap with interpret to get actor
-const actorAtom = appRuntime
-  .atom(Effect.flatMap(GarageDoorMachine, interpret))
-  .pipe(Atom.keepAlive);
-
-const snapshotAtom = appRuntime
-  .subscriptionRef((get) =>
-    Effect.gen(function* () {
-      const actor = yield* get.result(actorAtom);
-      const ref = yield* SubscriptionRef.make(actor.getSnapshot());
-      actor.subscribe((snapshot) => {
-        Effect.runSync(SubscriptionRef.set(ref, snapshot));
-        saveSnapshot(snapshot);
-      });
-      return ref;
-    })
-  )
-  .pipe(Atom.keepAlive);
-
-const useMachine = createUseMachineHook(
-  actorAtom,
-  snapshotAtom,
-  initialSnapshot,
-);
+export { Click, AnimationComplete };
 
 // ============================================================================
-// React Hook
+// Status Helpers
 // ============================================================================
 
 export interface GarageDoorStatus {
@@ -322,7 +293,7 @@ export interface GarageDoorStatus {
   readonly weather: WeatherStatus;
 }
 
-const getWeatherStatus = (context: GarageDoorContext): WeatherStatus => {
+export const getWeatherStatus = (context: { weather: { status: string; temp?: number; desc?: string; icon?: string; error?: string } }): WeatherStatus => {
   switch (context.weather.status) {
     case "loading":
       return { _tag: "loading" };
@@ -340,57 +311,6 @@ const getWeatherStatus = (context: GarageDoorContext): WeatherStatus => {
     default:
       return { _tag: "idle" };
   }
-};
-
-export const useGarageDoor = (): {
-  status: GarageDoorStatus;
-  handleButtonClick: () => void;
-  isLoading: boolean;
-  hasElectricity: boolean;
-  isPausedDueToNoPower: boolean;
-} => {
-  const { snapshot, send, isLoading, matches, context } = useMachine();
-  const hasElectricity = useElectricity();
-  const prevElectricityRef = useRef(hasElectricity);
-
-  // Send POWER_ON/POWER_OFF events when electricity changes
-  useEffect(() => {
-    if (hasElectricity !== prevElectricityRef.current) {
-      if (hasElectricity) {
-        send(new PowerOn());
-      } else {
-        send(new PowerOff());
-      }
-      prevElectricityRef.current = hasElectricity;
-    }
-  }, [hasElectricity, send]);
-
-  const handleButtonClick = () => {
-    send(new Click());
-  };
-
-  // Complete animations when position reaches bounds
-  if (context.position >= 100 && matches("opening")) {
-    send(new AnimationComplete());
-  } else if (context.position <= 0 && matches("closing")) {
-    send(new AnimationComplete());
-  }
-
-  // Determine if paused due to no power
-  const isAnimating = matches("opening") || matches("closing");
-  const isPausedDueToNoPower = !context.isPowered && isAnimating;
-
-  return {
-    status: {
-      state: snapshot.value,
-      position: context.position,
-      weather: getWeatherStatus(context),
-    },
-    handleButtonClick,
-    isLoading,
-    hasElectricity: context.isPowered,
-    isPausedDueToNoPower,
-  };
 };
 
 // ============================================================================

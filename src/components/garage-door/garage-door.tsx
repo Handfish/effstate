@@ -2,16 +2,19 @@ import { Button } from "@/components/ui/button";
 import {
   type GarageDoorState,
   type WeatherStatus,
+  AnimationComplete,
+  Click,
   getButtonLabel,
   getStateLabel,
-  useGarageDoor,
+  getWeatherStatus,
 } from "@/data-access/garage-door-operations";
+import { useGarageDoor } from "@/data-access/hamster-wheel-operations";
 import { cn } from "@/lib/utils";
 
 const isPaused = (state: GarageDoorState): boolean =>
   state === "paused-while-opening" || state === "paused-while-closing";
 
-const isAnimating = (state: GarageDoorState): boolean =>
+const isAnimatingState = (state: GarageDoorState): boolean =>
   state === "opening" || state === "closing";
 
 const WeatherDisplay = ({ weather }: { weather: WeatherStatus }) => {
@@ -51,7 +54,17 @@ const WeatherDisplay = ({ weather }: { weather: WeatherStatus }) => {
 };
 
 export const GarageDoor = () => {
-  const { status, handleButtonClick, isLoading, hasElectricity, isPausedDueToNoPower } = useGarageDoor();
+  const { snapshot, send, isLoading, context, state } = useGarageDoor();
+
+  // Handle animation completion
+  const isOpening = state === "opening";
+  const isClosing = state === "closing";
+
+  if (context.position >= 100 && isOpening) {
+    send(new AnimationComplete());
+  } else if (context.position <= 0 && isClosing) {
+    send(new AnimationComplete());
+  }
 
   if (isLoading) {
     return (
@@ -60,6 +73,18 @@ export const GarageDoor = () => {
       </div>
     );
   }
+
+  // Derive status from context
+  const hasElectricity = context.isPowered;
+  const isAnimating = isOpening || isClosing;
+  const isPausedDueToNoPower = !hasElectricity && isAnimating;
+  const status = {
+    state,
+    position: context.position,
+    weather: getWeatherStatus(context),
+  };
+
+  const handleButtonClick = () => send(new Click());
 
   // Door panel height based on position (0 = fully covering, 100 = fully retracted)
   const doorHeight = 100 - status.position;
@@ -144,7 +169,7 @@ export const GarageDoor = () => {
         variant={
           isPaused(status.state)
             ? "secondary"
-            : isAnimating(status.state)
+            : isAnimatingState(status.state)
               ? "destructive"
               : "default"
         }
