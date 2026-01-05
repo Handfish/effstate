@@ -4,8 +4,6 @@ import type {
   ActionEnqueuer,
   EmittedEvent,
   Guard,
-  MachineConfig,
-  MachineConfigPlain,
   MachineConfigSchema,
   MachineContext,
   MachineDefinition,
@@ -18,7 +16,6 @@ import type {
 import {
   EffectActionError,
   ActivityError,
-  isSchema,
 } from "./types.js";
 
 // ============================================================================
@@ -54,68 +51,59 @@ import {
  * });
  * ```
  */
-// Overload for Schema-based context
+/**
+ * Create a state machine with Schema-based context.
+ * Type parameters:
+ * - TStateValue: The state literal union (e.g., "idle" | "loading" | "done")
+ * - TEvent: The event union type
+ * - TContextSchema: Use `typeof YourContextSchema`
+ *
+ * @example
+ * ```ts
+ * const machine = createMachine<
+ *   "idle" | "loading" | "done",
+ *   MyEvent,
+ *   typeof MyContextSchema
+ * >({
+ *   id: "myMachine",
+ *   initial: "idle",
+ *   context: MyContextSchema,
+ *   states: { idle: {}, loading: {}, done: {} },
+ * });
+ * ```
+ */
 export function createMachine<
-  TId extends string,
   TStateValue extends string,
-  TContext extends MachineContext,
-  TContextEncoded,
   TEvent extends MachineEvent,
-  R = never,
-  E = never,
->(
-  config: MachineConfigSchema<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded>,
-): MachineDefinition<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded>;
-// Overload for plain context
-export function createMachine<
-  TId extends string,
-  TStateValue extends string,
-  TContext extends MachineContext,
-  TEvent extends MachineEvent,
-  R = never,
-  E = never,
->(
-  config: MachineConfigPlain<TId, TStateValue, TContext, TEvent, R, E>,
-): MachineDefinition<TId, TStateValue, TContext, TEvent, R, E, TContext>;
-// Implementation
-export function createMachine<
-  TId extends string,
-  TStateValue extends string,
-  TContext extends MachineContext,
-  TEvent extends MachineEvent,
-  R = never,
-  E = never,
-  TContextEncoded = TContext,
->(
-  config: MachineConfig<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded>,
-): MachineDefinition<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded> {
-  // Check if using Schema-based context
-  if (isSchema(config.context)) {
-    const schemaConfig = config as MachineConfigSchema<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded>;
-    return {
-      _tag: "MachineDefinition",
-      id: config.id,
-      config,
-      initialSnapshot: {
-        value: config.initial,
-        context: schemaConfig.initialContext,
-        event: null,
-      },
-      contextSchema: schemaConfig.context,
-    };
-  }
-
-  // Plain context
-  const plainConfig = config as MachineConfigPlain<TId, TStateValue, TContext, TEvent, R, E>;
+  TContext extends Record<string, unknown>,
+>(config: {
+  readonly id: string;
+  readonly initial: TStateValue;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly context: import("effect").Schema.Schema<TContext, any>;
+  readonly initialContext: TContext;
+  readonly states: Record<TStateValue, StateNodeConfig<TStateValue, TContext, TEvent, never, never>>;
+}): MachineDefinition<
+  string,
+  TStateValue,
+  TContext,
+  TEvent,
+  never,
+  never,
+  unknown
+> {
   return {
     _tag: "MachineDefinition",
     id: config.id,
-    config,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    config: config as any,
     initialSnapshot: {
       value: config.initial,
-      context: plainConfig.context,
+      context: config.initialContext,
       event: null,
     },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    contextSchema: config.context as any,
   };
 }
 

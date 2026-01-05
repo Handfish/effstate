@@ -12,24 +12,25 @@ import {
 import { Data, Duration, Effect, Match, Schedule, Schema, Stream, SubscriptionRef } from "effect";
 
 // ============================================================================
-// Types
+// Types (all Schema-based for full Effect integration)
 // ============================================================================
 
-export type GarageDoorState =
-  | "closed"
-  | "opening"
-  | "paused-while-opening"
-  | "open"
-  | "closing"
-  | "paused-while-closing";
+// State schema using Schema.Literal for type-safe state values
+const GarageDoorStateSchema = Schema.Literal(
+  "closed",
+  "opening",
+  "paused-while-opening",
+  "open",
+  "closing",
+  "paused-while-closing",
+);
+export type GarageDoorState = typeof GarageDoorStateSchema.Type;
 
-// Schema-based context for serialization (Date <-> string)
+// Context schema for serialization (Date <-> string)
 const GarageDoorContextSchema = Schema.Struct({
   position: Schema.Number,
   lastUpdated: Schema.DateFromString,
 });
-
-type GarageDoorContext = Schema.Schema.Type<typeof GarageDoorContextSchema>;
 
 // Events using Effect's Data.TaggedClass for structural equality and type safety
 class Click extends Data.TaggedClass("CLICK")<{}> {}
@@ -71,15 +72,10 @@ const createAnimationActivity = (direction: 1 | -1) => ({
 // Garage Door Machine
 // ============================================================================
 
-// Encoded context type for serialization (Date -> string)
-type GarageDoorContextEncoded = typeof GarageDoorContextSchema.Encoded;
-
 export const garageDoorMachine = createMachine<
-  "garageDoor",
   GarageDoorState,
-  GarageDoorContext,
-  GarageDoorContextEncoded,
-  GarageDoorEvent
+  GarageDoorEvent,
+  typeof GarageDoorContextSchema.Type
 >({
   id: "garageDoor",
   initial: "closed",

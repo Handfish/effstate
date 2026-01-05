@@ -5,7 +5,6 @@ export type {
   ActivityConfig,
   AssignAction,
   CancelAction,
-  ContextInput,
   EffectAction,
   EmitAction,
   EmittedEvent,
@@ -15,8 +14,6 @@ export type {
   ForwardToAction,
   Guard,
   MachineConfig,
-  MachineConfigPlain,
-  MachineConfigSchema,
   MachineContext,
   MachineDefinition,
   MachineEvent,
@@ -36,7 +33,6 @@ export type {
 export {
   EffectActionError,
   ActivityError,
-  isSchema,
 } from "./types.js";
 
 // Machine creation

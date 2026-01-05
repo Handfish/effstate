@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { Data, Effect, Exit, Fiber, Ref } from "effect";
+import { Data, Effect, Exit, Fiber, Ref, Schema } from "effect";
 import { createMachine, interpret, interpretSync } from "./machine";
 import { assign, effect, raise, cancel, emit, enqueueActions, spawnChild, stopChild, sendTo, sendParent, forwardTo } from "./actions";
 import type { MachineEvent } from "./types";
@@ -27,10 +27,23 @@ interface CountChangedEvent {
 }
 type TestEmittedEvent = NotificationEvent | CountChangedEvent;
 
-interface TestContext {
-  readonly count: number;
-  readonly log: ReadonlyArray<string>;
-}
+// ============================================================================
+// Test Context Schemas (Schema-based context required)
+// ============================================================================
+
+const TestContextSchema = Schema.Struct({
+  count: Schema.Number,
+  log: Schema.Array(Schema.String),
+});
+type TestContext = typeof TestContextSchema.Type;
+
+const EmptyContextSchema = Schema.Struct({});
+
+const CountOnlySchema = Schema.Struct({ count: Schema.Number });
+const TickContextSchema = Schema.Struct({ tickCount: Schema.Number });
+const StartedContextSchema = Schema.Struct({ started: Schema.Boolean });
+const ValueContextSchema = Schema.Struct({ value: Schema.Number });
+const MultiplierContextSchema = Schema.Struct({ multiplier: Schema.Number });
 
 // ============================================================================
 // createMachine
@@ -38,10 +51,11 @@ interface TestContext {
 
 describe("createMachine", () => {
   it("creates a machine definition with correct initial snapshot", () => {
-    const machine = createMachine<"test", "inactive" | "active", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "inactive",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         inactive: { on: { TOGGLE: { target: "active" } } },
         active: { on: { TOGGLE: { target: "inactive" } } },
@@ -63,10 +77,11 @@ describe("subscribe()", () => {
   it("calls subscriber on state transitions", async () => {
     const snapshots: Array<{ value: string; count: number }> = [];
 
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: {
           on: {
@@ -110,10 +125,11 @@ describe("subscribe()", () => {
   it("calls subscriber on self-transitions with actions", async () => {
     const snapshots: Array<{ value: string; count: number }> = [];
 
-    const machine = createMachine<"test", "counter", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "counter",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         counter: {
           on: {
@@ -152,10 +168,11 @@ describe("subscribe()", () => {
     let sub2Calls = 0;
     let sub3Calls = 0;
 
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: { on: { TOGGLE: { target: "b" } } },
         b: { on: { TOGGLE: { target: "a" } } },
@@ -185,10 +202,11 @@ describe("subscribe()", () => {
   it("unsubscribe removes subscriber", async () => {
     const calls: number[] = [];
 
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: { on: { TOGGLE: { target: "b" } } },
         b: { on: { TOGGLE: { target: "a" } } },
@@ -221,10 +239,11 @@ describe("subscribe()", () => {
 
 describe("assign()", () => {
   it("updates context with static values", async () => {
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: {
           on: {
@@ -253,10 +272,11 @@ describe("assign()", () => {
   });
 
   it("updates context with function using previous context", async () => {
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 5, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 5, log: [] },
       states: {
         a: {
           on: {
@@ -285,10 +305,11 @@ describe("assign()", () => {
   });
 
   it("accesses event data with proper narrowing", async () => {
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: {
           on: {
@@ -323,10 +344,11 @@ describe("assign()", () => {
 
 describe("raise()", () => {
   it("sends an event to self with static event", async () => {
-    const machine = createMachine<"test", "a" | "b" | "c", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: {
           on: {
@@ -364,10 +386,11 @@ describe("raise()", () => {
   });
 
   it("sends an event to self with dynamic event", async () => {
-    const machine = createMachine<"test", "a" | "b" | "c", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 5, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 5, log: [] },
       states: {
         a: {
           on: {
@@ -415,10 +438,11 @@ describe("entry/exit actions", () => {
   it("runs entry actions when entering a state", async () => {
     const entryLog = await Effect.runPromise(Ref.make<string[]>([]));
 
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: {
           on: { TOGGLE: { target: "b" } },
@@ -450,10 +474,11 @@ describe("entry/exit actions", () => {
   it("runs exit actions when leaving a state", async () => {
     const exitLog = await Effect.runPromise(Ref.make<string[]>([]));
 
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: {
           exit: [
@@ -484,10 +509,11 @@ describe("entry/exit actions", () => {
   it("runs exit before entry on transition", async () => {
     const actionLog = await Effect.runPromise(Ref.make<string[]>([]));
 
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: {
           exit: [effect(() => Ref.update(actionLog, (log) => [...log, "exit-a"]))],
@@ -516,10 +542,11 @@ describe("entry/exit actions", () => {
   it("runs entry actions for initial state", async () => {
     const entryLog = await Effect.runPromise(Ref.make<string[]>([]));
 
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: {
           entry: [effect(() => Ref.update(entryLog, (log) => [...log, "entered-a"]))],
@@ -551,10 +578,11 @@ describe("self-transitions", () => {
   it("runs transition actions but not entry/exit on self-transition", async () => {
     const actionLog = await Effect.runPromise(Ref.make<string[]>([]));
 
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: {
           entry: [effect(() => Ref.update(actionLog, (log) => [...log, "entry-a"]))],
@@ -601,10 +629,11 @@ describe("self-transitions", () => {
   it("explicit self-target also skips entry/exit", async () => {
     const actionLog = await Effect.runPromise(Ref.make<string[]>([]));
 
-    const machine = createMachine<"test", "counting", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "counting",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         counting: {
           entry: [effect(() => Ref.update(actionLog, (log) => [...log, "entry"]))],
@@ -649,10 +678,11 @@ describe("activities", () => {
   it("starts activity when entering state", async () => {
     const activityStarted = await Effect.runPromise(Ref.make(false));
 
-    const machine = createMachine<"test", "idle" | "running", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "idle",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         idle: {
           on: { TOGGLE: { target: "running" } },
@@ -698,10 +728,11 @@ describe("activities", () => {
   it("stops activity when exiting state", async () => {
     const tickCount = await Effect.runPromise(Ref.make(0));
 
-    const machine = createMachine<"test", "idle" | "running", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "idle",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         idle: {
           on: { TOGGLE: { target: "running" } },
@@ -754,10 +785,11 @@ describe("activities", () => {
   });
 
   it("activity can send events to machine", async () => {
-    const machine = createMachine<"test", "idle" | "counting", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "idle",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         idle: {
           on: { TOGGLE: { target: "counting" } },
@@ -808,10 +840,11 @@ describe("activities", () => {
 
 describe("guards", () => {
   it("allows transition when sync guard returns true", async () => {
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 10, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 10, log: [] },
       states: {
         a: {
           on: {
@@ -840,10 +873,11 @@ describe("guards", () => {
   });
 
   it("blocks transition when sync guard returns false", async () => {
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 3, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 3, log: [] },
       states: {
         a: {
           on: {
@@ -872,10 +906,11 @@ describe("guards", () => {
   });
 
   it("guard can access event data", async () => {
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: {
           on: {
@@ -917,10 +952,11 @@ describe("guards", () => {
 
 describe("guard combinators", () => {
   it("and() requires all guards to pass", async () => {
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 10, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 10, log: [] },
       states: {
         a: {
           on: {
@@ -952,10 +988,11 @@ describe("guard combinators", () => {
   });
 
   it("and() blocks if any guard fails", async () => {
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 25, log: [] }, // Fails second condition
+      context: TestContextSchema,
+      initialContext: { count: 25, log: [] }, // Fails second condition
       states: {
         a: {
           on: {
@@ -987,10 +1024,11 @@ describe("guard combinators", () => {
   });
 
   it("or() passes if any guard passes", async () => {
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 3, log: [] }, // Only second condition passes
+      context: TestContextSchema,
+      initialContext: { count: 3, log: [] }, // Only second condition passes
       states: {
         a: {
           on: {
@@ -1022,10 +1060,11 @@ describe("guard combinators", () => {
   });
 
   it("or() blocks if all guards fail", async () => {
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 7, log: [] }, // Neither condition passes
+      context: TestContextSchema,
+      initialContext: { count: 7, log: [] }, // Neither condition passes
       states: {
         a: {
           on: {
@@ -1057,10 +1096,11 @@ describe("guard combinators", () => {
   });
 
   it("not() inverts a guard", async () => {
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 3, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 3, log: [] },
       states: {
         a: {
           on: {
@@ -1089,10 +1129,11 @@ describe("guard combinators", () => {
   });
 
   it("not() blocks when inner guard passes", async () => {
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 10, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 10, log: [] },
       states: {
         a: {
           on: {
@@ -1127,10 +1168,11 @@ describe("guard combinators", () => {
 
 describe("after (delayed transitions)", () => {
   it("transitions after specified delay", async () => {
-    const machine = createMachine<"test", "waiting" | "done", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "waiting",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         waiting: {
           after: {
@@ -1162,10 +1204,11 @@ describe("after (delayed transitions)", () => {
   });
 
   it("runs actions on delayed transition", async () => {
-    const machine = createMachine<"test", "waiting" | "done", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "waiting",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         waiting: {
           after: {
@@ -1198,10 +1241,11 @@ describe("after (delayed transitions)", () => {
   it("runs entry/exit actions on delayed transition", async () => {
     const actionLog = await Effect.runPromise(Ref.make<string[]>([]));
 
-    const machine = createMachine<"test", "waiting" | "done", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "waiting",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         waiting: {
           exit: [effect(() => Ref.update(actionLog, (log) => [...log, "exit-waiting"]))],
@@ -1239,10 +1283,11 @@ describe("after (delayed transitions)", () => {
 
 describe("cancel (delayed events)", () => {
   it("cancels a pending delayed transition by ID", async () => {
-    const machine = createMachine<"test", "waiting" | "cancelled" | "timeout", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "waiting",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         waiting: {
           after: {
@@ -1285,10 +1330,11 @@ describe("cancel (delayed events)", () => {
   });
 
   it("cancel with dynamic ID from function", async () => {
-    const machine = createMachine<"test", "waiting" | "cancelled" | "timeout", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "waiting",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         waiting: {
           after: {
@@ -1327,10 +1373,11 @@ describe("cancel (delayed events)", () => {
   });
 
   it("cancel non-existent ID is a no-op", async () => {
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: {
           on: {
@@ -1359,10 +1406,11 @@ describe("cancel (delayed events)", () => {
   });
 
   it("cancels only the specified delay, others still fire", async () => {
-    const machine = createMachine<"test", "waiting" | "partial" | "timeout1" | "timeout2", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "waiting",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         waiting: {
           after: {
@@ -1421,10 +1469,11 @@ describe("emit (external listeners)", () => {
   it("emits event to registered listener", async () => {
     const received: TestEmittedEvent[] = [];
 
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: {
           on: {
@@ -1470,10 +1519,11 @@ describe("emit (external listeners)", () => {
     const received1: TestEmittedEvent[] = [];
     const received2: TestEmittedEvent[] = [];
 
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: {
           on: {
@@ -1513,10 +1563,11 @@ describe("emit (external listeners)", () => {
   it("unsubscribe removes listener", async () => {
     const received: TestEmittedEvent[] = [];
 
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: {
           on: {
@@ -1572,10 +1623,11 @@ describe("emit (external listeners)", () => {
   it("emits with dynamic event from function", async () => {
     const received: TestEmittedEvent[] = [];
 
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 42, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 42, log: [] },
       states: {
         a: {
           on: {
@@ -1612,10 +1664,11 @@ describe("emit (external listeners)", () => {
   });
 
   it("emit with no listeners is a no-op", async () => {
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: {
           on: {
@@ -1659,10 +1712,11 @@ describe("enqueueActions (dynamic action queuing)", () => {
   it("enqueues multiple actions that execute in order", async () => {
     const actionLog = await Effect.runPromise(Ref.make<string[]>([]));
 
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: {
           on: {
@@ -1701,10 +1755,11 @@ describe("enqueueActions (dynamic action queuing)", () => {
   });
 
   it("conditional enqueueing based on context", async () => {
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 15, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 15, log: [] },
       states: {
         a: {
           on: {
@@ -1741,10 +1796,11 @@ describe("enqueueActions (dynamic action queuing)", () => {
   });
 
   it("enqueue.assign shorthand works", async () => {
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: {
           on: {
@@ -1778,10 +1834,11 @@ describe("enqueueActions (dynamic action queuing)", () => {
   });
 
   it("enqueue.raise shorthand works", async () => {
-    const machine = createMachine<"test", "a" | "b" | "c", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: {
           on: {
@@ -1825,10 +1882,11 @@ describe("enqueueActions (dynamic action queuing)", () => {
   it("enqueue.effect shorthand works", async () => {
     const effectRan = await Effect.runPromise(Ref.make(false));
 
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: {
           on: {
@@ -1861,10 +1919,11 @@ describe("enqueueActions (dynamic action queuing)", () => {
   });
 
   it("accesses event data in enqueueActions", async () => {
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: {
           on: {
@@ -1914,7 +1973,8 @@ const createChildMachine = (id: string, onStart?: () => void) =>
   createMachine<typeof id, "idle" | "running" | "done", ChildContext, ChildEvent>({
     id,
     initial: "idle",
-    context: { started: false },
+    context: StartedContextSchema,
+      initialContext: { started: false },
     states: {
       idle: {
         on: {
@@ -1944,10 +2004,11 @@ describe("spawnChild / stopChild (actor hierarchy)", () => {
       Effect.runSync(Ref.set(childStarted, true));
     });
 
-    const machine = createMachine<"test", "idle" | "parenting", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "idle",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         idle: {
           on: {
@@ -1982,10 +2043,11 @@ describe("spawnChild / stopChild (actor hierarchy)", () => {
   it("spawnChild with dynamic ID from function", async () => {
     const childMachine = createChildMachine("child");
 
-    const machine = createMachine<"test", "idle" | "parenting", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "idle",
-      context: { count: 42, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 42, log: [] },
       states: {
         idle: {
           on: {
@@ -2020,10 +2082,11 @@ describe("spawnChild / stopChild (actor hierarchy)", () => {
   it("stopChild stops the specified child", async () => {
     const childMachine = createChildMachine("child");
 
-    const machine = createMachine<"test", "idle" | "parenting" | "stopped", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "idle",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         idle: {
           on: {
@@ -2069,10 +2132,11 @@ describe("spawnChild / stopChild (actor hierarchy)", () => {
   it("stopChild with dynamic ID from function", async () => {
     const childMachine = createChildMachine("child");
 
-    const machine = createMachine<"test", "idle" | "parenting" | "stopped", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "idle",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         idle: {
           on: {
@@ -2116,10 +2180,11 @@ describe("spawnChild / stopChild (actor hierarchy)", () => {
   it("parent scope closing stops all children", async () => {
     const childMachine = createChildMachine("child");
 
-    const machine = createMachine<"test", "idle" | "parenting", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "idle",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         idle: {
           on: {
@@ -2161,10 +2226,11 @@ describe("sendTo (send events to child actors)", () => {
   it("sendTo delivers event to child actor", async () => {
     const childMachine = createChildMachine("child");
 
-    const machine = createMachine<"test", "idle" | "parenting", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "idle",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         idle: {
           on: {
@@ -2213,10 +2279,11 @@ describe("sendTo (send events to child actors)", () => {
   it("sendTo with dynamic target from function", async () => {
     const childMachine = createChildMachine("child");
 
-    const machine = createMachine<"test", "idle" | "parenting", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "idle",
-      context: { count: 42, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 42, log: [] },
       states: {
         idle: {
           on: {
@@ -2264,10 +2331,11 @@ describe("sendTo (send events to child actors)", () => {
   it("sendTo with dynamic event from function", async () => {
     const childMachine = createChildMachine("child");
 
-    const machine = createMachine<"test", "idle" | "parenting", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "idle",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         idle: {
           on: {
@@ -2308,10 +2376,11 @@ describe("sendTo (send events to child actors)", () => {
   });
 
   it("sendTo non-existent actor is a no-op", async () => {
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: {
           on: {
@@ -2351,10 +2420,11 @@ type ParentEvent = TestEvent | ParentNotify;
 describe("sendParent (send events to parent actor)", () => {
   it("sendParent delivers event to parent", async () => {
     // Child machine that sends to parent
-    const childMachine = createMachine<"child", "idle" | "notifying", { started: boolean }, ChildEvent | ParentNotify>({
+    const childMachine = createMachine({
       id: "child",
       initial: "idle",
-      context: { started: false },
+      context: StartedContextSchema,
+      initialContext: { started: false },
       states: {
         idle: {
           on: {
@@ -2370,10 +2440,11 @@ describe("sendParent (send events to parent actor)", () => {
       },
     });
 
-    const machine = createMachine<"test", "idle" | "parenting" | "notified", TestContext, ParentEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "idle",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         idle: {
           on: {
@@ -2425,10 +2496,11 @@ describe("sendParent (send events to parent actor)", () => {
 
   it("sendParent with dynamic event from function", async () => {
     // Child machine that sends dynamic event to parent
-    const childMachine = createMachine<"child", "idle" | "notifying", { count: number }, ChildEvent | ParentNotify>({
+    const childMachine = createMachine({
       id: "child",
       initial: "idle",
-      context: { count: 42 },
+      context: CountOnlySchema,
+      initialContext: { count: 42 },
       states: {
         idle: {
           on: {
@@ -2446,10 +2518,11 @@ describe("sendParent (send events to parent actor)", () => {
       },
     });
 
-    const machine = createMachine<"test", "idle" | "parenting" | "notified", TestContext, ParentEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "idle",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         idle: {
           on: {
@@ -2499,10 +2572,11 @@ describe("sendParent (send events to parent actor)", () => {
 
   it("sendParent with no parent is a no-op", async () => {
     // Machine that tries to send to parent (but has none)
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: {
           on: {
@@ -2538,10 +2612,11 @@ describe("sendParent (send events to parent actor)", () => {
 describe("forwardTo (forward current event to another actor)", () => {
   it("forwardTo passes current event to child unchanged", async () => {
     // Child machine that handles TICK event
-    const childMachine = createMachine<"child", "idle" | "ticked", { tickCount: number }, Tick>({
+    const childMachine = createMachine({
       id: "child",
       initial: "idle",
-      context: { tickCount: 0 },
+      context: TickContextSchema,
+      initialContext: { tickCount: 0 },
       states: {
         idle: {
           on: {
@@ -2555,10 +2630,11 @@ describe("forwardTo (forward current event to another actor)", () => {
       },
     });
 
-    const machine = createMachine<"test", "idle" | "parenting", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "idle",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         idle: {
           on: {
@@ -2604,10 +2680,11 @@ describe("forwardTo (forward current event to another actor)", () => {
   });
 
   it("forwardTo with dynamic target from function", async () => {
-    const childMachine = createMachine<"child", "idle" | "ticked", { tickCount: number }, Tick>({
+    const childMachine = createMachine({
       id: "child",
       initial: "idle",
-      context: { tickCount: 0 },
+      context: TickContextSchema,
+      initialContext: { tickCount: 0 },
       states: {
         idle: {
           on: {
@@ -2621,10 +2698,11 @@ describe("forwardTo (forward current event to another actor)", () => {
       },
     });
 
-    const machine = createMachine<"test", "idle" | "parenting", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "idle",
-      context: { count: 42, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 42, log: [] },
       states: {
         idle: {
           on: {
@@ -2664,10 +2742,11 @@ describe("forwardTo (forward current event to another actor)", () => {
   });
 
   it("forwardTo non-existent actor is a no-op", async () => {
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: {
           on: {
@@ -2704,10 +2783,11 @@ describe("onError (error handling)", () => {
   it("isolates observer errors without crashing other observers", async () => {
     const calls: string[] = [];
 
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: { on: { TOGGLE: { target: "b" } } },
         b: {},
@@ -2737,10 +2817,11 @@ describe("onError (error handling)", () => {
   it("emits EffectActionError when effect action fails", async () => {
     const errors: Array<{ _tag: string; message: string }> = [];
 
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent, never, string>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: {
           on: {
@@ -2778,10 +2859,11 @@ describe("onError (error handling)", () => {
   it("unsubscribe removes error handler", async () => {
     const errors: string[] = [];
 
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent, never, string>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: {
           on: {
@@ -2834,10 +2916,11 @@ describe("onError (error handling)", () => {
 
 describe("waitFor (Effect-based state waiting)", () => {
   it("resolves immediately if condition already met", async () => {
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 5, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 5, log: [] },
       states: {
         a: { on: { TOGGLE: { target: "b" } } },
         b: {},
@@ -2859,10 +2942,11 @@ describe("waitFor (Effect-based state waiting)", () => {
   });
 
   it("waits for state transition", async () => {
-    const machine = createMachine<"test", "loading" | "done", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "loading",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         loading: { on: { TOGGLE: { target: "done" } } },
         done: {},
@@ -2894,10 +2978,11 @@ describe("waitFor (Effect-based state waiting)", () => {
   });
 
   it("waits for context condition", async () => {
-    const machine = createMachine<"test", "counting", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "counting",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         counting: {
           on: {
@@ -2937,10 +3022,11 @@ describe("waitFor (Effect-based state waiting)", () => {
   });
 
   it("can be used with Effect.timeout", async () => {
-    const machine = createMachine<"test", "waiting", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "waiting",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         waiting: {},
       },
@@ -2966,10 +3052,11 @@ describe("waitFor (Effect-based state waiting)", () => {
   });
 
   it("cleans up subscription on interruption", async () => {
-    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "a",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         a: { on: { TOGGLE: { target: "b" } } },
         b: {},
@@ -3025,7 +3112,8 @@ describe("interpret (Effect-native)", () => {
     >({
       id: "test",
       initial: "idle",
-      context: { count: 5 },
+      context: CountOnlySchema,
+      initialContext: { count: 5 },
       states: {
         idle: {
           on: {
@@ -3070,10 +3158,11 @@ describe("interpret (Effect-native)", () => {
   it("auto-stops actor when scope closes", async () => {
     let actorStopped = false;
 
-    const machine = createMachine<"test", "running", TestContext, TestEvent>({
+    const machine = createMachine({
       id: "test",
       initial: "running",
-      context: { count: 0, log: [] },
+      context: TestContextSchema,
+      initialContext: { count: 0, log: [] },
       states: {
         running: {
           activities: [
@@ -3129,7 +3218,8 @@ describe("interpret (Effect-native)", () => {
     >({
       id: "test",
       initial: "active",
-      context: { multiplier: 3 },
+      context: MultiplierContextSchema,
+      initialContext: { multiplier: 3 },
       states: {
         active: {
           activities: [
@@ -3177,7 +3267,8 @@ describe("interpret (Effect-native)", () => {
     >({
       id: "child",
       initial: "working",
-      context: { value: 7 },
+      context: ValueContextSchema,
+      initialContext: { value: 7 },
       states: {
         working: {
           entry: [
@@ -3202,7 +3293,8 @@ describe("interpret (Effect-native)", () => {
     >({
       id: "parent",
       initial: "idle",
-      context: {},
+      context: EmptyContextSchema,
+      initialContext: {},
       states: {
         idle: {
           entry: [spawnChild(childMachine, { id: "myChild" })],
@@ -3253,7 +3345,8 @@ describe("Type Safety", () => {
     >({
       id: "test",
       initial: "idle",
-      context: {},
+      context: EmptyContextSchema,
+      initialContext: {},
       states: {
         idle: {
           entry: [
@@ -3295,10 +3388,11 @@ describe("Type Safety", () => {
 
   it("allows interpret without services when R is never", () => {
     // Machine with no service requirements
-    const machineNoServices = createMachine<"test", "idle", {}, Toggle>({
+    const machineNoServices = createMachine({
       id: "test",
       initial: "idle",
-      context: {},
+      context: EmptyContextSchema,
+      initialContext: {},
       states: {
         idle: {
           entry: [assign({})], // No effect actions with services
@@ -3326,7 +3420,8 @@ describe("Type Safety", () => {
     >({
       id: "test",
       initial: "idle",
-      context: {},
+      context: EmptyContextSchema,
+      initialContext: {},
       states: {
         idle: {},
       },
@@ -3343,7 +3438,6 @@ describe("Type Safety", () => {
 // Schema Context
 // ============================================================================
 
-import { Schema } from "effect";
 import {
   createSnapshotSchema,
   encodeSnapshotSync,
@@ -3493,17 +3587,19 @@ describe("Schema Context", () => {
     actor.stop();
   });
 
-  it("works with plain context (backwards compatible)", () => {
+  it("requires Schema context (no plain context support)", () => {
     const machine = createMachine({
       id: "simple",
       initial: "idle",
-      context: { count: 0 },
+      context: CountOnlySchema,
+      initialContext: { count: 0 },
       states: {
         idle: {},
       },
     });
 
-    expect(machine.contextSchema).toBeUndefined();
+    // Schema context is now required - contextSchema should always be defined
+    expect(machine.contextSchema).toBeDefined();
 
     const actor = interpretSync(machine);
     expect(actor.getSnapshot().context.count).toBe(0);

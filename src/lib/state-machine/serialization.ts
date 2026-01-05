@@ -33,23 +33,14 @@ export const encodeSnapshot = <
 >(
   machine: MachineDefinition<string, TStateValue, TContext, any, any, any, TContextEncoded>,
   snapshot: MachineSnapshot<TStateValue, TContext>,
-): Effect.Effect<EncodedSnapshot<TStateValue, TContextEncoded>, ParseResult.ParseError> => {
-  if (!machine.contextSchema) {
-    // No schema - context passes through as-is
-    return Effect.succeed({
-      value: snapshot.value,
-      context: snapshot.context as unknown as TContextEncoded,
-    });
-  }
-
-  return Effect.map(
+): Effect.Effect<EncodedSnapshot<TStateValue, TContextEncoded>, ParseResult.ParseError> =>
+  Effect.map(
     Schema.encode(machine.contextSchema)(snapshot.context),
     (context) => ({
       value: snapshot.value,
       context,
     }),
   );
-};
 
 /**
  * Encode a snapshot to a JSON-safe format (sync, throws on error).
@@ -61,20 +52,10 @@ export const encodeSnapshotSync = <
 >(
   machine: MachineDefinition<string, TStateValue, TContext, any, any, any, TContextEncoded>,
   snapshot: MachineSnapshot<TStateValue, TContext>,
-): EncodedSnapshot<TStateValue, TContextEncoded> => {
-  if (!machine.contextSchema) {
-    // No schema - context passes through as-is
-    return {
-      value: snapshot.value,
-      context: snapshot.context as unknown as TContextEncoded,
-    };
-  }
-
-  return {
-    value: snapshot.value,
-    context: Schema.encodeSync(machine.contextSchema)(snapshot.context),
-  };
-};
+): EncodedSnapshot<TStateValue, TContextEncoded> => ({
+  value: snapshot.value,
+  context: Schema.encodeSync(machine.contextSchema)(snapshot.context),
+});
 
 /**
  * Decode a snapshot from a JSON-safe format.
@@ -93,17 +74,8 @@ export const decodeSnapshot = <
 >(
   machine: MachineDefinition<string, TStateValue, TContext, any, any, any, TContextEncoded>,
   encoded: EncodedSnapshot<TStateValue, TContextEncoded>,
-): Effect.Effect<MachineSnapshot<TStateValue, TContext>, ParseResult.ParseError> => {
-  if (!machine.contextSchema) {
-    // No schema - context passes through as-is
-    return Effect.succeed({
-      value: encoded.value,
-      context: encoded.context as unknown as TContext,
-      event: null,
-    });
-  }
-
-  return Effect.map(
+): Effect.Effect<MachineSnapshot<TStateValue, TContext>, ParseResult.ParseError> =>
+  Effect.map(
     Schema.decode(machine.contextSchema)(encoded.context),
     (context) => ({
       value: encoded.value,
@@ -111,7 +83,6 @@ export const decodeSnapshot = <
       event: null,
     }),
   );
-};
 
 /**
  * Decode a snapshot from a JSON-safe format (sync, throws on error).
@@ -123,39 +94,25 @@ export const decodeSnapshotSync = <
 >(
   machine: MachineDefinition<string, TStateValue, TContext, any, any, any, TContextEncoded>,
   encoded: EncodedSnapshot<TStateValue, TContextEncoded>,
-): MachineSnapshot<TStateValue, TContext> => {
-  if (!machine.contextSchema) {
-    // No schema - context passes through as-is
-    return {
-      value: encoded.value,
-      context: encoded.context as unknown as TContext,
-      event: null,
-    };
-  }
-
-  return {
-    value: encoded.value,
-    context: Schema.decodeSync(machine.contextSchema)(encoded.context),
-    event: null,
-  };
-};
+): MachineSnapshot<TStateValue, TContext> => ({
+  value: encoded.value,
+  context: Schema.decodeSync(machine.contextSchema)(encoded.context),
+  event: null,
+});
 
 // ============================================================================
 // Snapshot Schema Builder (for advanced use)
 // ============================================================================
 
 /**
- * Get the context schema from a machine definition, if available.
- * Returns undefined for machines with plain context.
+ * Get the context schema from a machine definition.
  */
 export const getContextSchema = <
   TContext extends MachineContext,
   TContextEncoded,
 >(
   machine: MachineDefinition<string, string, TContext, any, any, any, TContextEncoded>,
-): Schema.Schema<TContext, TContextEncoded> | undefined => {
-  return machine.contextSchema;
-};
+): Schema.Schema<TContext, TContextEncoded> => machine.contextSchema;
 
 /**
  * Create a Schema for the encoded snapshot format.
@@ -178,31 +135,6 @@ export const createSnapshotSchema = <
   EncodedSnapshot<TStateValue, TContextEncoded>
 > => {
   const contextSchema = machine.contextSchema;
-
-  if (!contextSchema) {
-    // No schema - use passthrough for context
-    return Schema.transform(
-      Schema.Struct({
-        value: Schema.String,
-        context: Schema.Unknown,
-      }),
-      Schema.Struct({
-        value: Schema.String,
-        context: Schema.Unknown,
-        event: Schema.NullOr(Schema.Unknown),
-      }),
-      {
-        strict: true,
-        decode: (encoded) => ({ ...encoded, event: null }),
-        encode: (snapshot) => ({ value: snapshot.value, context: snapshot.context }),
-      },
-    ) as unknown as Schema.Schema<
-      MachineSnapshot<TStateValue, TContext>,
-      EncodedSnapshot<TStateValue, TContextEncoded>
-    >;
-  }
-
-  // Build schema with proper context encoding
   const encodedContextSchema = Schema.encodedSchema(contextSchema);
 
   return Schema.transform(

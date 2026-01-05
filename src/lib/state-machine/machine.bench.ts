@@ -1,5 +1,5 @@
 import { Bench, type Task } from "tinybench";
-import { Data } from "effect";
+import { Data, Schema } from "effect";
 
 // Our Effect-first state machine
 import { createMachine, interpretSync, assign } from "./index.js";
@@ -21,23 +21,24 @@ class Decrement extends Data.TaggedClass("DECREMENT")<{}> {}
 
 type CounterEvent = Increment | Decrement;
 
+// Schema for counter context
+const CounterContextSchema = Schema.Struct({
+  count: Schema.Number,
+});
+
 // Effect-first counter machine
-const effectMachine = createMachine<
-  "counter",
-  "idle" | "counting",
-  { count: number },
-  CounterEvent
->({
+const effectMachine = createMachine({
   id: "counter",
   initial: "idle",
-  context: { count: 0 },
+  context: CounterContextSchema,
+  initialContext: { count: 0 },
   states: {
     idle: {
       on: {
         INCREMENT: {
           target: "counting",
           actions: [
-            assign<{ count: number }, Increment>(({ context }) => ({
+            assign(({ context }) => ({
               count: context.count + 1,
             })),
           ],
@@ -48,14 +49,14 @@ const effectMachine = createMachine<
       on: {
         INCREMENT: {
           actions: [
-            assign<{ count: number }, Increment>(({ context }) => ({
+            assign(({ context }) => ({
               count: context.count + 1,
             })),
           ],
         },
         DECREMENT: {
           actions: [
-            assign<{ count: number }, Decrement>(({ context }) => ({
+            assign(({ context }) => ({
               count: context.count - 1,
             })),
           ],
@@ -243,15 +244,11 @@ async function main() {
   const creationBench = new Bench({ time: 200, warmupTime: 50 });
 
   creationBench.add("Effect: createMachine", () => {
-    createMachine<
-      "counter",
-      "idle" | "counting",
-      { count: number },
-      CounterEvent
-    >({
+    createMachine({
       id: "counter",
       initial: "idle",
-      context: { count: 0 },
+      context: CounterContextSchema,
+      initialContext: { count: 0 },
       states: {
         idle: { on: { INCREMENT: { target: "counting" } } },
         counting: { on: { DECREMENT: { target: "idle" } } },
