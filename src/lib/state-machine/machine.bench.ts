@@ -219,9 +219,12 @@ function verifyImplementations() {
   console.log("\n  Both implementations perform equivalent work.\n");
   console.log("  XState has additional overhead from:");
   console.log("    • DevTools/inspection support (always-on)");
-  console.log("    • Actor system relay for event routing");
-  console.log("    • Observer protocol (next/error/complete vs plain functions)");
-  console.log("    • Per-observer try/catch error isolation\n");
+  console.log("    • Actor system relay for distributed event routing");
+  console.log("    • Full Observable protocol (next/error/complete)\n");
+  console.log("  Our implementation has:");
+  console.log("    • Per-observer try/catch error isolation");
+  console.log("    • Simple callbacks + onError (lighter weight)");
+  console.log("    • Hierarchical parent/child actor communication\n");
 }
 
 // ============================================================================
