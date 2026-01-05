@@ -42,7 +42,8 @@ export interface MachineSnapshot<
  */
 export interface AssignAction<
   TContext extends MachineContext,
-  TEvent extends MachineEvent,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _TEvent extends MachineEvent = MachineEvent,
 > {
   readonly _tag: "assign";
   readonly fn: (params: { context: MachineContext; event: MachineEvent }) => Partial<TContext>;

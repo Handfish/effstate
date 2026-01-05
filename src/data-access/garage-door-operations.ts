@@ -4,10 +4,12 @@ import {
   assign,
   createMachine,
   createUseMachineHook,
-  decodeSnapshotSync,
   effect,
-  encodeSnapshotSync,
   interpret,
+  type MachineSnapshot,
+  type InvokeSuccessEvent,
+  type InvokeFailureEvent,
+  type InvokeDefectEvent,
 } from "@/lib/state-machine";
 import {
   WeatherService,
@@ -51,6 +53,21 @@ class AnimationComplete extends Data.TaggedClass("ANIMATION_COMPLETE")<{}> {}
 
 type GarageDoorEvent = Click | Tick | AnimationComplete;
 
+// Type alias for snapshot
+type GarageDoorContext = typeof GarageDoorContextSchema.Type;
+type GarageDoorSnapshot = MachineSnapshot<GarageDoorState, GarageDoorContext>;
+
+// Initial snapshot defined at module level (doesn't depend on services)
+const initialSnapshot: GarageDoorSnapshot = {
+  value: "closed",
+  context: {
+    position: 0,
+    lastUpdated: new Date(),
+    weatherStatus: "idle",
+  },
+  event: null,
+};
+
 // ============================================================================
 // Animation Activity
 // ============================================================================
@@ -75,143 +92,141 @@ const animation = (dir: 1 | -1) => ({
 const DEFAULT_LAT = 37.7749;
 const DEFAULT_LON = -122.4194;
 
-export const garageDoorMachine = createMachine<
-  GarageDoorState,
-  GarageDoorEvent,
-  typeof GarageDoorContextSchema,
-  WeatherService // R - service requirements
->({
-  id: "garageDoor",
-  initial: "closed",
-  context: GarageDoorContextSchema,
-  initialContext: {
-    position: 0,
-    lastUpdated: new Date(),
-    weatherStatus: "idle",
-  },
-  states: {
-    closed: {
-      entry: [assign(() => ({ position: 0, lastUpdated: new Date(), weatherStatus: "idle" as const }))],
-      on: {
-        CLICK: { target: "opening" },
-      },
-    },
+// Machine definition wrapped in Effect.gen - services are captured in closure
+// R (WeatherService) is inferred automatically and checked at compile time!
+const GarageDoorMachine = Effect.gen(function* () {
+  const weather = yield* WeatherService;
 
-    opening: {
-      entry: [effect(() => Effect.log("Entering: opening"))],
-      activities: [animation(1)],
-      on: {
-        CLICK: { target: "paused-while-opening" },
-        TICK: {
-          actions: [
-            assign(({ context, event }) => ({
-              position: Math.min(100, context.position + event.delta),
-              lastUpdated: new Date(),
-            })),
-          ],
+  return createMachine<GarageDoorState, GarageDoorEvent, typeof GarageDoorContextSchema>({
+    id: "garageDoor",
+    initial: "closed",
+    context: GarageDoorContextSchema,
+    initialContext: {
+      position: 0,
+      lastUpdated: new Date(),
+      weatherStatus: "idle",
+    },
+    states: {
+      closed: {
+        entry: [assign(() => ({ position: 0, lastUpdated: new Date(), weatherStatus: "idle" as const }))],
+        on: {
+          CLICK: { target: "opening" },
         },
-        ANIMATION_COMPLETE: { target: "open" },
       },
-    },
 
-    "paused-while-opening": {
-      entry: [effect(() => Effect.log("Entering: paused-while-opening"))],
-      on: {
-        CLICK: { target: "closing" },
-      },
-    },
-
-    open: {
-      entry: [
-        assign(() => ({ position: 100, lastUpdated: new Date(), weatherStatus: "loading" as const })),
-        effect(() => Effect.log("Entering: open - fetching weather")),
-      ],
-      invoke: {
-        id: "fetchWeather",
-        src: () =>
-          Effect.gen(function* () {
-            const weatherService = yield* WeatherService;
-            return yield* weatherService.getWeather(DEFAULT_LAT, DEFAULT_LON);
-          }),
-        onSuccess: {
-          actions: [
-            assign(({ event }) => ({
-              weatherStatus: "loaded" as const,
-              weatherTemp: event.output.temperature,
-              weatherDesc: event.output.description,
-              weatherIcon: event.output.icon,
-              weatherError: undefined,
-            })),
-          ],
-        },
-        catchTags: {
-          WeatherNetworkError: {
+      opening: {
+        entry: [effect(() => Effect.log("Entering: opening"))],
+        activities: [animation(1)],
+        on: {
+          CLICK: { target: "paused-while-opening" },
+          TICK: {
             actions: [
-              assign(({ event }) => ({
+              assign(({ context, event }: { context: GarageDoorContext; event: Tick }) => ({
+                position: Math.min(100, context.position + event.delta),
+                lastUpdated: new Date(),
+              })),
+            ],
+          },
+          ANIMATION_COMPLETE: { target: "open" },
+        },
+      },
+
+      "paused-while-opening": {
+        entry: [effect(() => Effect.log("Entering: paused-while-opening"))],
+        on: {
+          CLICK: { target: "closing" },
+        },
+      },
+
+      open: {
+        entry: [
+          assign(() => ({ position: 100, lastUpdated: new Date(), weatherStatus: "loading" as const })),
+          effect(() => Effect.log("Entering: open - fetching weather")),
+        ],
+        invoke: {
+          id: "fetchWeather",
+          // weather service is captured in closure - no yield* needed!
+          src: () => weather.getWeather(DEFAULT_LAT, DEFAULT_LON),
+          onSuccess: {
+            actions: [
+              assign(({ event }: { context: GarageDoorContext; event: InvokeSuccessEvent<Weather> }) => ({
+                weatherStatus: "loaded" as const,
+                weatherTemp: event.output.temperature,
+                weatherDesc: event.output.description,
+                weatherIcon: event.output.icon,
+                weatherError: undefined,
+              })),
+            ],
+          },
+          catchTags: {
+            WeatherNetworkError: {
+              actions: [
+                assign(({ event }: { context: GarageDoorContext; event: InvokeFailureEvent<{ message: string }> }) => ({
+                  weatherStatus: "error" as const,
+                  weatherError: `Network error: ${event.error.message}`,
+                  weatherTemp: undefined,
+                  weatherDesc: undefined,
+                  weatherIcon: undefined,
+                })),
+              ],
+            },
+            WeatherParseError: {
+              actions: [
+                assign(({ event }: { context: GarageDoorContext; event: InvokeFailureEvent<{ message: string }> }) => ({
+                  weatherStatus: "error" as const,
+                  weatherError: `Data error: ${event.error.message}`,
+                  weatherTemp: undefined,
+                  weatherDesc: undefined,
+                  weatherIcon: undefined,
+                })),
+              ],
+            },
+          },
+          onDefect: {
+            actions: [
+              assign(({ event }: { context: GarageDoorContext; event: InvokeDefectEvent }) => ({
                 weatherStatus: "error" as const,
-                weatherError: `Network error: ${event.error.message}`,
+                weatherError: `Unexpected error: ${String(event.defect)}`,
                 weatherTemp: undefined,
                 weatherDesc: undefined,
                 weatherIcon: undefined,
               })),
             ],
           },
-          WeatherParseError: {
+        },
+        on: {
+          CLICK: { target: "closing" },
+        },
+      },
+
+      closing: {
+        entry: [
+          effect(() => Effect.log("Entering: closing")),
+          assign(() => ({ weatherStatus: "idle" as const, weatherTemp: undefined, weatherDesc: undefined, weatherIcon: undefined, weatherError: undefined })),
+        ],
+        activities: [animation(-1)],
+        on: {
+          CLICK: { target: "paused-while-closing" },
+          TICK: {
             actions: [
-              assign(({ event }) => ({
-                weatherStatus: "error" as const,
-                weatherError: `Data error: ${event.error.message}`,
-                weatherTemp: undefined,
-                weatherDesc: undefined,
-                weatherIcon: undefined,
+              assign(({ context, event }: { context: GarageDoorContext; event: Tick }) => ({
+                position: Math.max(0, context.position + event.delta),
+                lastUpdated: new Date(),
               })),
             ],
           },
-        },
-        onDefect: {
-          actions: [
-            assign(({ event }) => ({
-              weatherStatus: "error" as const,
-              weatherError: `Unexpected error: ${String(event.defect)}`,
-              weatherTemp: undefined,
-              weatherDesc: undefined,
-              weatherIcon: undefined,
-            })),
-          ],
+          ANIMATION_COMPLETE: { target: "closed" },
         },
       },
-      on: {
-        CLICK: { target: "closing" },
-      },
-    },
 
-    closing: {
-      entry: [
-        effect(() => Effect.log("Entering: closing")),
-        assign(() => ({ weatherStatus: "idle" as const, weatherTemp: undefined, weatherDesc: undefined, weatherIcon: undefined, weatherError: undefined })),
-      ],
-      activities: [animation(-1)],
-      on: {
-        CLICK: { target: "paused-while-closing" },
-        TICK: {
-          actions: [
-            assign(({ context, event }) => ({
-              position: Math.max(0, context.position + event.delta),
-              lastUpdated: new Date(),
-            })),
-          ],
+      "paused-while-closing": {
+        entry: [effect(() => Effect.log("Entering: paused-while-closing"))],
+        on: {
+          CLICK: { target: "opening" },
         },
-        ANIMATION_COMPLETE: { target: "closed" },
       },
     },
-
-    "paused-while-closing": {
-      entry: [effect(() => Effect.log("Entering: paused-while-closing"))],
-      on: {
-        CLICK: { target: "opening" },
-      },
-    },
-  },
+  });
 });
 
 // ============================================================================
@@ -220,19 +235,28 @@ export const garageDoorMachine = createMachine<
 
 const STORAGE_KEY = "garageDoor:snapshot";
 
-export const loadSnapshot = (): typeof garageDoorMachine.initialSnapshot | null => {
+export const loadSnapshot = (): GarageDoorSnapshot | null => {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (!stored) return null;
-    return decodeSnapshotSync(garageDoorMachine, JSON.parse(stored));
+    const encoded = JSON.parse(stored);
+    return {
+      value: encoded.value as GarageDoorState,
+      context: Schema.decodeSync(GarageDoorContextSchema)(encoded.context),
+      event: null,
+    };
   } catch {
     return null;
   }
 };
 
-const saveSnapshot = (snapshot: typeof garageDoorMachine.initialSnapshot): void => {
+const saveSnapshot = (snapshot: GarageDoorSnapshot): void => {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(encodeSnapshotSync(garageDoorMachine, snapshot)));
+    const encoded = {
+      value: snapshot.value,
+      context: Schema.encodeSync(GarageDoorContextSchema)(snapshot.context),
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(encoded));
   } catch {
     // Ignore storage errors
   }
@@ -242,8 +266,9 @@ const saveSnapshot = (snapshot: typeof garageDoorMachine.initialSnapshot): void 
 // Atom Integration
 // ============================================================================
 
+// GarageDoorMachine is Effect<MachineDefinition> - flatMap with interpret to get actor
 const actorAtom = appRuntime
-  .atom(interpret(garageDoorMachine))
+  .atom(Effect.flatMap(GarageDoorMachine, interpret))
   .pipe(Atom.keepAlive);
 
 const snapshotAtom = appRuntime
@@ -263,7 +288,7 @@ const snapshotAtom = appRuntime
 const useMachine = createUseMachineHook(
   actorAtom,
   snapshotAtom,
-  garageDoorMachine.initialSnapshot,
+  initialSnapshot,
 );
 
 // ============================================================================
@@ -276,7 +301,7 @@ export interface GarageDoorStatus {
   readonly weather: WeatherStatus;
 }
 
-const getWeatherStatus = (context: typeof GarageDoorContextSchema.Type): WeatherStatus => {
+const getWeatherStatus = (context: GarageDoorContext): WeatherStatus => {
   switch (context.weatherStatus) {
     case "loading":
       return { _tag: "loading" };

@@ -9,7 +9,6 @@ import type {
   InvokeFailureEvent,
   InvokeDefectEvent,
   InvokeInterruptEvent,
-  MachineConfigSchema,
   MachineContext,
   MachineDefinition,
   MachineEvent,
@@ -436,7 +435,8 @@ function createActor<
       invokeCleanups.delete(failureEvent.id);
 
       // First, check catchTags if error has _tag
-      let handler: { target?: TStateValue; guard?: Guard<TContext, unknown>; actions?: ReadonlyArray<Action<TContext, unknown, R, E>> } | undefined;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let handler: { target?: TStateValue; guard?: Guard<TContext, any>; actions?: ReadonlyArray<Action<TContext, any, R, E>> } | undefined;
 
       if (
         invokeConfig?.catchTags &&
@@ -451,7 +451,8 @@ function createActor<
 
       // Fall back to onFailure or onError
       if (!handler) {
-        handler = invokeConfig?.onFailure ?? invokeConfig?.onError;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        handler = (invokeConfig?.onFailure ?? invokeConfig?.onError) as typeof handler;
       }
 
       if (!handler) return;
