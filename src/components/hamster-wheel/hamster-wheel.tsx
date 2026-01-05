@@ -32,7 +32,7 @@ const LightBulb = ({ on }: { on: boolean }) => (
 
 const HamsterWheelContent = ({
   status,
-  handleToggle
+  handleToggle,
 }: {
   status: ReturnType<typeof useHamsterWheel>["status"];
   handleToggle: () => void;
@@ -197,7 +197,7 @@ const HamsterWheelContent = ({
 };
 
 export const HamsterWheel = () => {
-  const { status, handleToggle, isLoading } = useHamsterWheel();
+  const { status, handleToggle, isLoading, isDisabled } = useHamsterWheel();
 
   if (isLoading) {
     return (
@@ -212,7 +212,7 @@ export const HamsterWheel = () => {
   return (
     <div
       className={cn(
-        "min-h-screen w-full transition-all duration-1000",
+        "min-h-screen w-full transition-all duration-1000 relative",
         status.isDark
           ? "bg-gray-800"
           : hasElectricity
@@ -220,6 +220,16 @@ export const HamsterWheel = () => {
             : "bg-gray-800"
       )}
     >
+      {/* Inactive tab overlay */}
+      {isDisabled && (
+        <div className="absolute inset-0 bg-black/50 z-50 flex items-center justify-center">
+          <div className="bg-gray-800 p-6 rounded-lg text-center">
+            <div className="text-xl text-white mb-2">Tab Inactive</div>
+            <div className="text-gray-400">Click here to control the hamster</div>
+          </div>
+        </div>
+      )}
+
       {/* Side by side layout: Garage Door (left) | Hamster Wheel (center) | Garage Door (right) */}
       <div className="flex flex-row items-center justify-center min-h-screen gap-8">
         <div className={cn(

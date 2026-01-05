@@ -13,6 +13,7 @@ import {
   type MachineActor,
 } from "@/lib/state-machine";
 import { Data, Duration, Effect, Schedule, Schema, Scope, Stream, SubscriptionRef } from "effect";
+import { useSyncExternalStore, useCallback } from "react";
 import {
   GarageDoorMachineService,
   GarageDoorContextSchema,
@@ -188,10 +189,45 @@ export class HamsterWheelMachineService extends Effect.Service<HamsterWheelMachi
 ) {}
 
 // ============================================================================
-// Persistence
+// Cross-Tab Synchronization (Focus-based only)
 // ============================================================================
 
 const STORAGE_KEY = "hamsterWheel:state";
+
+// Track if this tab is active (focused)
+let isTabActive = typeof document !== "undefined" ? !document.hidden : true;
+const tabActiveListeners = new Set<() => void>();
+
+const subscribeToTabActive = (callback: () => void) => {
+  tabActiveListeners.add(callback);
+  return () => tabActiveListeners.delete(callback);
+};
+
+const getTabActiveSnapshot = () => isTabActive;
+const getTabActiveServerSnapshot = () => true;
+
+// Forward declaration - will be set after currentActor is defined
+let syncActorFromStorage: () => void = () => {};
+
+// Listen for visibility changes - sync from storage when tab gains focus
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    const wasActive = isTabActive;
+    isTabActive = !document.hidden;
+
+    // When tab becomes active, sync from storage to get latest state
+    if (!wasActive && isTabActive) {
+      syncActorFromStorage();
+    }
+
+    // Notify all listeners
+    tabActiveListeners.forEach(listener => listener());
+  });
+}
+
+// ============================================================================
+// Persistence
+// ============================================================================
 
 // Schema for garage door snapshot (encoded form for JSON)
 const GarageDoorSnapshotSchema = Schema.Struct({
@@ -300,8 +336,28 @@ const loadState = (): {
 };
 
 // ============================================================================
-// Atom Integration
+// Atom Integration with Cross-Tab Sync
 // ============================================================================
+
+// Reference to the current actor for cross-tab sync
+let currentActor: MachineActor<HamsterWheelState, HamsterWheelContext, HamsterWheelEvent> | null = null;
+
+// Flag to prevent saving during sync
+let isSyncing = false;
+
+// Set up the sync function now that we have the module structure
+syncActorFromStorage = () => {
+  if (!currentActor) return;
+
+  const persisted = loadState();
+  if (!persisted) return;
+
+  // Set flag to prevent saving during sync
+  isSyncing = true;
+  // _syncSnapshot will restart activities for the current state
+  currentActor._syncSnapshot(persisted.snapshot, persisted.childSnapshots);
+  isSyncing = false;
+};
 
 const actorAtom = appRuntime
   .atom(
@@ -320,8 +376,40 @@ const actorAtom = appRuntime
           })
         : interpret(hamsterWheelService.definition);
 
-      // Save state on every change
-      actor.subscribe(() => saveState(actor));
+      // Store reference for cross-tab sync
+      currentActor = actor;
+
+      // Throttled save - only when tab is focused, max every 500ms
+      let saveTimeout: ReturnType<typeof setTimeout> | null = null;
+      let pendingSave = false;
+
+      const throttledSave = () => {
+        // Only save if this tab is focused and not syncing
+        if (document.hidden || isSyncing) {
+          return;
+        }
+
+        // If a save is already scheduled, just mark that we have pending changes
+        if (saveTimeout) {
+          pendingSave = true;
+          return;
+        }
+
+        // Save immediately
+        saveState(actor);
+
+        // Set up throttle - ignore saves for 500ms
+        saveTimeout = setTimeout(() => {
+          saveTimeout = null;
+          // If there were pending saves, do one final save
+          if (pendingSave && !isSyncing && !document.hidden) {
+            pendingSave = false;
+            saveState(actor);
+          }
+        }, 500);
+      };
+
+      actor.subscribe(() => throttledSave());
 
       return actor;
     }).pipe(
@@ -386,6 +474,14 @@ export const useGarageDoorRight = createUseChildMachineHook<
 );
 
 // ============================================================================
+// Cross-Tab Sync (Automatic)
+// ============================================================================
+
+// Cross-tab sync is now automatic via _syncSnapshot - no hooks needed!
+// When another tab changes state, this tab's actor is updated automatically
+// via BroadcastChannel/storage events.
+
+// ============================================================================
 // React Hook
 // ============================================================================
 
@@ -400,10 +496,21 @@ export const useHamsterWheel = (): {
   status: HamsterWheelStatus;
   handleToggle: () => void;
   isLoading: boolean;
+  isDisabled: boolean;
 } => {
   const { snapshot, send, isLoading, context } = useHamsterWheelMachine();
+  const isActive = useSyncExternalStore(
+    subscribeToTabActive,
+    getTabActiveSnapshot,
+    getTabActiveServerSnapshot,
+  );
 
-  const handleToggle = () => send(new Toggle());
+  const handleToggle = useCallback(() => {
+    // Only allow sending events if this tab is active
+    if (isActive) {
+      send(new Toggle());
+    }
+  }, [isActive, send]);
 
   return {
     status: {
@@ -414,6 +521,7 @@ export const useHamsterWheel = (): {
     },
     handleToggle,
     isLoading,
+    isDisabled: !isActive,
   };
 };
 

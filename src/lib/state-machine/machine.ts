@@ -236,6 +236,15 @@ export interface MachineActor<
   readonly _parent?: MachineActor<string, MachineContext, MachineEvent>;
   /** Stop the actor and clean up resources */
   readonly stop: () => void;
+  /**
+   * Sync the actor's snapshot from external state (e.g., cross-tab sync).
+   * Updates the snapshot and notifies observers without going through normal transitions.
+   * Also syncs child actors if childSnapshots is provided.
+   */
+  readonly _syncSnapshot: (
+    newSnapshot: MachineSnapshot<TStateValue, TContext>,
+    childSnapshots?: ReadonlyMap<string, MachineSnapshot<string, MachineContext>>,
+  ) => void;
 }
 
 // ============================================================================
@@ -870,11 +879,17 @@ function createActor<
             const childMachine = action.src as unknown as MachineDefinition<string, string, MachineContext, MachineEvent, unknown, unknown, unknown>;
             // Check if we have a saved snapshot for this child
             const childSnapshot = childSnapshots?.get(childId);
-            const childActor = createActor(childMachine, {
+            // Build options conditionally to satisfy exactOptionalPropertyTypes
+            const childOptions: {
+              parent: MachineActor<string, MachineContext, MachineEvent>;
+              runtime?: Runtime.Runtime<unknown>;
+              snapshot?: MachineSnapshot<string, MachineContext>;
+            } = {
               parent: actor as unknown as MachineActor<string, MachineContext, MachineEvent>,
-              runtime: runtime as Runtime.Runtime<unknown>,
-              snapshot: childSnapshot,
-            });
+            };
+            if (runtime) childOptions.runtime = runtime as Runtime.Runtime<unknown>;
+            if (childSnapshot) childOptions.snapshot = childSnapshot;
+            const childActor = createActor(childMachine, childOptions);
             childrenRef.set(childId, childActor);
           }
           break;
@@ -1121,6 +1136,47 @@ function createActor<
     });
   };
 
+  // Sync snapshot from external source (e.g., cross-tab sync)
+  const syncSnapshot = (
+    newSnapshot: MachineSnapshot<TStateValue, TContext>,
+    childSnapshotsToSync?: ReadonlyMap<string, MachineSnapshot<string, MachineContext>>,
+  ) => {
+    // Stop current activities before updating state
+    stopAllActivities();
+
+    // Clear any pending delayed transitions
+    delayTimers.forEach((timer) => clearTimeout(timer));
+    delayTimers.clear();
+
+    // Update the snapshot
+    snapshot = newSnapshot;
+
+    // Sync child snapshots if provided
+    if (childSnapshotsToSync) {
+      childSnapshotsToSync.forEach((childSnapshot, childId) => {
+        const child = childrenRef.get(childId);
+        if (child) {
+          // Recursively sync child (this will also restart their activities)
+          child._syncSnapshot(childSnapshot as MachineSnapshot<string, MachineContext>);
+        }
+      });
+    }
+
+    // Restart activities for the current state
+    const currentState = machine.config.states[snapshot.value];
+    if (currentState?.activities) {
+      startActivities(currentState.activities, snapshot.context, { _tag: "$sync" } as TEvent);
+    }
+
+    // Restart delayed transitions for the current state
+    if (currentState?.after) {
+      scheduleAfterTransition(currentState.after);
+    }
+
+    // Notify observers of the new snapshot
+    notifyObservers();
+  };
+
   // Create actor
   actor = {
     send: (event: TEvent) => mailbox.enqueue(event),
@@ -1137,6 +1193,7 @@ function createActor<
     waitFor,
     children: childrenRef as ReadonlyMap<string, MachineActor<string, MachineContext, MachineEvent>>,
     stop,
+    _syncSnapshot: syncSnapshot,
     ...(options?.parent ? { _parent: options.parent } : {}),
   };
 
