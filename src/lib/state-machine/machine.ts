@@ -245,6 +245,11 @@ export interface MachineActor<
     newSnapshot: MachineSnapshot<TStateValue, TContext>,
     childSnapshots?: ReadonlyMap<string, MachineSnapshot<string, MachineContext>>,
   ) => void;
+  /**
+   * Pause all activities and delayed transitions without stopping the actor.
+   * Used when tab loses focus to prevent background updates.
+   */
+  readonly _pauseActivities: () => void;
 }
 
 // ============================================================================
@@ -1136,17 +1141,32 @@ function createActor<
     });
   };
 
+  // Pause activities without stopping the actor (for tab visibility changes)
+  const pauseActivities = () => {
+    stopAllActivities();
+    delayTimers.forEach((timer) => clearTimeout(timer));
+    delayTimers.clear();
+    // Recursively pause children
+    childrenRef.forEach((child) => {
+      child._pauseActivities();
+    });
+  };
+
   // Sync snapshot from external source (e.g., cross-tab sync)
   const syncSnapshot = (
     newSnapshot: MachineSnapshot<TStateValue, TContext>,
     childSnapshotsToSync?: ReadonlyMap<string, MachineSnapshot<string, MachineContext>>,
   ) => {
-    // Stop current activities before updating state
-    stopAllActivities();
+    const previousState = snapshot.value;
+    const newState = newSnapshot.value;
+    const stateChanged = previousState !== newState;
 
-    // Clear any pending delayed transitions
-    delayTimers.forEach((timer) => clearTimeout(timer));
-    delayTimers.clear();
+    // Only stop/restart activities if state actually changed
+    if (stateChanged) {
+      stopAllActivities();
+      delayTimers.forEach((timer) => clearTimeout(timer));
+      delayTimers.clear();
+    }
 
     // Update the snapshot
     snapshot = newSnapshot;
@@ -1156,21 +1176,20 @@ function createActor<
       childSnapshotsToSync.forEach((childSnapshot, childId) => {
         const child = childrenRef.get(childId);
         if (child) {
-          // Recursively sync child (this will also restart their activities)
           child._syncSnapshot(childSnapshot as MachineSnapshot<string, MachineContext>);
         }
       });
     }
 
-    // Restart activities for the current state
-    const currentState = machine.config.states[snapshot.value];
-    if (currentState?.activities) {
-      startActivities(currentState.activities, snapshot.context, { _tag: "$sync" } as TEvent);
-    }
-
-    // Restart delayed transitions for the current state
-    if (currentState?.after) {
-      scheduleAfterTransition(currentState.after);
+    // Only restart activities if state changed
+    if (stateChanged) {
+      const currentState = machine.config.states[snapshot.value];
+      if (currentState?.activities) {
+        startActivities(currentState.activities, snapshot.context, { _tag: "$sync" } as TEvent);
+      }
+      if (currentState?.after) {
+        scheduleAfterTransition(currentState.after);
+      }
     }
 
     // Notify observers of the new snapshot
@@ -1194,6 +1213,7 @@ function createActor<
     children: childrenRef as ReadonlyMap<string, MachineActor<string, MachineContext, MachineEvent>>,
     stop,
     _syncSnapshot: syncSnapshot,
+    _pauseActivities: pauseActivities,
     ...(options?.parent ? { _parent: options.parent } : {}),
   };
 
