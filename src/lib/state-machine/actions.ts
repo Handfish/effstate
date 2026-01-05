@@ -9,6 +9,9 @@ import type {
   EnqueueActionsAction,
   EnqueueActionsParams,
   ForwardToAction,
+  InvokeDefectEvent,
+  InvokeFailureEvent,
+  InvokeSuccessEvent,
   MachineContext,
   MachineDefinition,
   MachineEvent,
@@ -45,6 +48,94 @@ export function assign<
     ? assignment as (params: { context: MachineContext; event: MachineEvent }) => Partial<TContext>
     : () => assignment;
   return { _tag: "assign", fn };
+}
+
+// ============================================================================
+// Typed Invoke Action Helpers
+// ============================================================================
+
+/**
+ * Create an assign action for invoke onSuccess handlers.
+ * Provides proper typing for the output value.
+ *
+ * @example
+ * ```ts
+ * onSuccess: {
+ *   actions: [
+ *     assignOnSuccess<MyContext, User>(({ context, output }) => ({
+ *       user: output,
+ *       loading: false,
+ *     })),
+ *   ],
+ * }
+ * ```
+ */
+export function assignOnSuccess<TContext extends MachineContext, TOutput>(
+  fn: (params: { context: TContext; output: TOutput }) => Partial<TContext>,
+): AssignAction<TContext> {
+  return {
+    _tag: "assign",
+    fn: ({ context, event }) => fn({
+      context: context as TContext,
+      output: (event as unknown as InvokeSuccessEvent<TOutput>).output,
+    }),
+  };
+}
+
+/**
+ * Create an assign action for invoke onFailure/catchTags handlers.
+ * Provides proper typing for the error value.
+ *
+ * @example
+ * ```ts
+ * catchTags: {
+ *   NetworkError: {
+ *     actions: [
+ *       assignOnFailure<MyContext, NetworkError>(({ context, error }) => ({
+ *         errorMessage: error.message,
+ *       })),
+ *     ],
+ *   },
+ * }
+ * ```
+ */
+export function assignOnFailure<TContext extends MachineContext, TError>(
+  fn: (params: { context: TContext; error: TError }) => Partial<TContext>,
+): AssignAction<TContext> {
+  return {
+    _tag: "assign",
+    fn: ({ context, event }) => fn({
+      context: context as TContext,
+      error: (event as unknown as InvokeFailureEvent<TError>).error,
+    }),
+  };
+}
+
+/**
+ * Create an assign action for invoke onDefect handlers.
+ * Provides access to the defect (unexpected error) value.
+ *
+ * @example
+ * ```ts
+ * onDefect: {
+ *   actions: [
+ *     assignOnDefect<MyContext>(({ context, defect }) => ({
+ *       errorMessage: `Unexpected error: ${String(defect)}`,
+ *     })),
+ *   ],
+ * }
+ * ```
+ */
+export function assignOnDefect<TContext extends MachineContext>(
+  fn: (params: { context: TContext; defect: unknown }) => Partial<TContext>,
+): AssignAction<TContext> {
+  return {
+    _tag: "assign",
+    fn: ({ context, event }) => fn({
+      context: context as TContext,
+      defect: (event as unknown as InvokeDefectEvent).defect,
+    }),
+  };
 }
 
 /**

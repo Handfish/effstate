@@ -48,7 +48,7 @@ export {
 export { createMachine, interpret, interpretSync, type MachineActor } from "./machine.js";
 
 // Actions
-export { assign, cancel, effect, emit, enqueueActions, forwardTo, log, raise, sendParent, sendTo, spawnChild, stopChild } from "./actions.js";
+export { assign, assignOnDefect, assignOnFailure, assignOnSuccess, cancel, effect, emit, enqueueActions, forwardTo, log, raise, sendParent, sendTo, spawnChild, stopChild } from "./actions.js";
 
 // Guards
 export { and, guard, not, or } from "./guards.js";

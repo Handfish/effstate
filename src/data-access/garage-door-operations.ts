@@ -2,14 +2,14 @@ import { Atom } from "@effect-atom/atom-react";
 import { appRuntime } from "@/lib/app-runtime";
 import {
   assign,
+  assignOnDefect,
+  assignOnFailure,
+  assignOnSuccess,
   createMachine,
   createUseMachineHook,
   effect,
   interpret,
   type MachineSnapshot,
-  type InvokeSuccessEvent,
-  type InvokeFailureEvent,
-  type InvokeDefectEvent,
 } from "@/lib/state-machine";
 import {
   WeatherService,
@@ -36,15 +36,18 @@ export type WeatherStatus =
   | { readonly _tag: "loaded"; readonly weather: Weather }
   | { readonly _tag: "error"; readonly error: string };
 
+const WeatherDataSchema = Schema.Struct({
+  status: Schema.Literal("idle", "loading", "loaded", "error"),
+  temp: Schema.optional(Schema.Number),
+  desc: Schema.optional(Schema.String),
+  icon: Schema.optional(Schema.String),
+  error: Schema.optional(Schema.String),
+});
+
 const GarageDoorContextSchema = Schema.Struct({
   position: Schema.Number,
   lastUpdated: Schema.DateFromString,
-  // Weather data (stored as primitives for serialization)
-  weatherStatus: Schema.Literal("idle", "loading", "loaded", "error"),
-  weatherTemp: Schema.optional(Schema.Number),
-  weatherDesc: Schema.optional(Schema.String),
-  weatherIcon: Schema.optional(Schema.String),
-  weatherError: Schema.optional(Schema.String),
+  weather: WeatherDataSchema,
 });
 
 class Click extends Data.TaggedClass("CLICK")<{}> {}
@@ -63,7 +66,7 @@ const initialSnapshot: GarageDoorSnapshot = {
   context: {
     position: 0,
     lastUpdated: new Date(),
-    weatherStatus: "idle",
+    weather: { status: "idle" },
   },
   event: null,
 };
@@ -95,7 +98,7 @@ const DEFAULT_LON = -122.4194;
 // Machine definition wrapped in Effect.gen - services are captured in closure
 // R (WeatherService) is inferred automatically and checked at compile time!
 const GarageDoorMachine = Effect.gen(function* () {
-  const weather = yield* WeatherService;
+  const weatherService = yield* WeatherService;
 
   return createMachine<GarageDoorState, GarageDoorEvent, typeof GarageDoorContextSchema>({
     id: "garageDoor",
@@ -104,11 +107,11 @@ const GarageDoorMachine = Effect.gen(function* () {
     initialContext: {
       position: 0,
       lastUpdated: new Date(),
-      weatherStatus: "idle",
+      weather: { status: "idle" },
     },
     states: {
       closed: {
-        entry: [assign(() => ({ position: 0, lastUpdated: new Date(), weatherStatus: "idle" as const }))],
+        entry: [assign(() => ({ position: 0, lastUpdated: new Date(), weather: { status: "idle" } }))],
         on: {
           CLICK: { target: "opening" },
         },
@@ -121,7 +124,7 @@ const GarageDoorMachine = Effect.gen(function* () {
           CLICK: { target: "paused-while-opening" },
           TICK: {
             actions: [
-              assign(({ context, event }: { context: GarageDoorContext; event: Tick }) => ({
+              assign<GarageDoorContext, Tick>(({ context, event }) => ({
                 position: Math.min(100, context.position + event.delta),
                 lastUpdated: new Date(),
               })),
@@ -140,56 +143,53 @@ const GarageDoorMachine = Effect.gen(function* () {
 
       open: {
         entry: [
-          assign(() => ({ position: 100, lastUpdated: new Date(), weatherStatus: "loading" as const })),
+          assign(() => ({ position: 100, lastUpdated: new Date(), weather: { status: "loading" } })),
           effect(() => Effect.log("Entering: open - fetching weather")),
         ],
         invoke: {
           id: "fetchWeather",
-          // weather service is captured in closure - no yield* needed!
-          src: () => weather.getWeather(DEFAULT_LAT, DEFAULT_LON),
+          src: () => weatherService.getWeather(DEFAULT_LAT, DEFAULT_LON),
           onSuccess: {
             actions: [
-              assign(({ event }: { context: GarageDoorContext; event: InvokeSuccessEvent<Weather> }) => ({
-                weatherStatus: "loaded" as const,
-                weatherTemp: event.output.temperature,
-                weatherDesc: event.output.description,
-                weatherIcon: event.output.icon,
-                weatherError: undefined,
+              assignOnSuccess<GarageDoorContext, Weather>(({ output }) => ({
+                weather: {
+                  status: "loaded",
+                  temp: output.temperature,
+                  desc: output.description,
+                  icon: output.icon,
+                },
               })),
             ],
           },
           catchTags: {
             WeatherNetworkError: {
               actions: [
-                assign(({ event }: { context: GarageDoorContext; event: InvokeFailureEvent<{ message: string }> }) => ({
-                  weatherStatus: "error" as const,
-                  weatherError: `Network error: ${event.error.message}`,
-                  weatherTemp: undefined,
-                  weatherDesc: undefined,
-                  weatherIcon: undefined,
+                assignOnFailure<GarageDoorContext, { message: string }>(({ error }) => ({
+                  weather: {
+                    status: "error",
+                    error: `Network error: ${error.message}`,
+                  },
                 })),
               ],
             },
             WeatherParseError: {
               actions: [
-                assign(({ event }: { context: GarageDoorContext; event: InvokeFailureEvent<{ message: string }> }) => ({
-                  weatherStatus: "error" as const,
-                  weatherError: `Data error: ${event.error.message}`,
-                  weatherTemp: undefined,
-                  weatherDesc: undefined,
-                  weatherIcon: undefined,
+                assignOnFailure<GarageDoorContext, { message: string }>(({ error }) => ({
+                  weather: {
+                    status: "error",
+                    error: `Data error: ${error.message}`,
+                  },
                 })),
               ],
             },
           },
           onDefect: {
             actions: [
-              assign(({ event }: { context: GarageDoorContext; event: InvokeDefectEvent }) => ({
-                weatherStatus: "error" as const,
-                weatherError: `Unexpected error: ${String(event.defect)}`,
-                weatherTemp: undefined,
-                weatherDesc: undefined,
-                weatherIcon: undefined,
+              assignOnDefect<GarageDoorContext>(({ defect }) => ({
+                weather: {
+                  status: "error",
+                  error: `Unexpected error: ${String(defect)}`,
+                },
               })),
             ],
           },
@@ -202,14 +202,14 @@ const GarageDoorMachine = Effect.gen(function* () {
       closing: {
         entry: [
           effect(() => Effect.log("Entering: closing")),
-          assign(() => ({ weatherStatus: "idle" as const, weatherTemp: undefined, weatherDesc: undefined, weatherIcon: undefined, weatherError: undefined })),
+          assign(() => ({ weather: { status: "idle" } })),
         ],
         activities: [animation(-1)],
         on: {
           CLICK: { target: "paused-while-closing" },
           TICK: {
             actions: [
-              assign(({ context, event }: { context: GarageDoorContext; event: Tick }) => ({
+              assign<GarageDoorContext, Tick>(({ context, event }) => ({
                 position: Math.max(0, context.position + event.delta),
                 lastUpdated: new Date(),
               })),
@@ -302,20 +302,20 @@ export interface GarageDoorStatus {
 }
 
 const getWeatherStatus = (context: GarageDoorContext): WeatherStatus => {
-  switch (context.weatherStatus) {
+  switch (context.weather.status) {
     case "loading":
       return { _tag: "loading" };
     case "loaded":
       return {
         _tag: "loaded",
         weather: {
-          temperature: context.weatherTemp!,
-          description: context.weatherDesc!,
-          icon: context.weatherIcon!,
+          temperature: context.weather.temp!,
+          description: context.weather.desc!,
+          icon: context.weather.icon!,
         },
       };
     case "error":
-      return { _tag: "error", error: context.weatherError! };
+      return { _tag: "error", error: context.weather.error! };
     default:
       return { _tag: "idle" };
   }
