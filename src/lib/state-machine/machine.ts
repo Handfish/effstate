@@ -112,6 +112,18 @@ export interface MachineActor<
   ) => () => void;
   /** Subscribe to machine errors (observer failures, effect errors, etc.) */
   readonly onError: (handler: (error: StateMachineError) => void) => () => void;
+  /**
+   * Wait for the machine to reach a state matching the predicate.
+   * Returns an Effect that resolves with the snapshot when condition is met.
+   *
+   * @example
+   * ```ts
+   * const result = yield* actor.waitFor(s => s.value === "done")
+   * ```
+   */
+  readonly waitFor: (
+    predicate: (snapshot: MachineSnapshot<TStateValue, TContext>) => boolean,
+  ) => Effect.Effect<MachineSnapshot<TStateValue, TContext>>;
   readonly children: ReadonlyMap<string, MachineActor<string, MachineContext, MachineEvent>>;
   readonly _parent?: MachineActor<string, MachineContext, MachineEvent>;
   /** Stop the actor and clean up resources */
@@ -519,6 +531,36 @@ export function interpret<
   // Create mailbox
   const mailbox = new Mailbox<TEvent>(processEvent);
 
+  // waitFor implementation - returns Effect that resolves when predicate matches
+  const waitFor = (
+    predicate: (snapshot: MachineSnapshot<TStateValue, TContext>) => boolean,
+  ): Effect.Effect<MachineSnapshot<TStateValue, TContext>> => {
+    // Check if already satisfied
+    if (predicate(snapshot)) {
+      return Effect.succeed(snapshot);
+    }
+
+    // Use Effect.async to bridge callback-based subscription to Effect
+    return Effect.async<MachineSnapshot<TStateValue, TContext>>((resume) => {
+      let resolved = false;
+
+      const observer = (newSnapshot: MachineSnapshot<TStateValue, TContext>) => {
+        if (!resolved && predicate(newSnapshot)) {
+          resolved = true;
+          observers.delete(observer);
+          resume(Effect.succeed(newSnapshot));
+        }
+      };
+
+      observers.add(observer);
+
+      // Return cleanup function for interruption
+      return Effect.sync(() => {
+        observers.delete(observer);
+      });
+    });
+  };
+
   // Create actor
   actor = {
     send: (event: TEvent) => mailbox.enqueue(event),
@@ -532,6 +574,7 @@ export function interpret<
       errorHandlers.add(handler);
       return () => errorHandlers.delete(handler);
     },
+    waitFor,
     children: childrenRef as ReadonlyMap<string, MachineActor<string, MachineContext, MachineEvent>>,
     stop,
     ...(options?.parent ? { _parent: options.parent } : {}),

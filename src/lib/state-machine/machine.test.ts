@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { Data, Effect, Ref } from "effect";
+import { Data, Effect, Fiber, Ref } from "effect";
 import { createMachine, interpret } from "./machine";
 import { assign, effect, raise, cancel, emit, enqueueActions, spawnChild, stopChild, sendTo, sendParent, forwardTo } from "./actions";
 import { guard, and, or, not } from "./guards";
@@ -11,8 +11,9 @@ import { guard, and, or, not } from "./guards";
 class Toggle extends Data.TaggedClass("TOGGLE")<{}> {}
 class SetValue extends Data.TaggedClass("SET_VALUE")<{ readonly value: number }> {}
 class Tick extends Data.TaggedClass("TICK")<{}> {}
+class Increment extends Data.TaggedClass("INCREMENT")<{}> {}
 
-type TestEvent = Toggle | SetValue | Tick;
+type TestEvent = Toggle | SetValue | Tick | Increment;
 
 // Emitted events (for external listeners)
 interface NotificationEvent {
@@ -2822,6 +2823,178 @@ describe("onError (error handling)", () => {
           expect(errors[0]).toBe("EffectActionError");
         }),
       ),
+    );
+  });
+});
+
+// ============================================================================
+// waitFor - Effect-based state waiting
+// ============================================================================
+
+describe("waitFor (Effect-based state waiting)", () => {
+  it("resolves immediately if condition already met", async () => {
+    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+      id: "test",
+      initial: "a",
+      context: { count: 5, log: [] },
+      states: {
+        a: { on: { TOGGLE: { target: "b" } } },
+        b: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const actor = interpret(machine);
+
+        // Condition already met (count >= 5)
+        const result = yield* actor.waitFor((s) => s.context.count >= 5);
+        expect(result.context.count).toBe(5);
+        expect(result.value).toBe("a");
+
+        actor.stop();
+      }),
+    );
+  });
+
+  it("waits for state transition", async () => {
+    const machine = createMachine<"test", "loading" | "done", TestContext, TestEvent>({
+      id: "test",
+      initial: "loading",
+      context: { count: 0, log: [] },
+      states: {
+        loading: { on: { TOGGLE: { target: "done" } } },
+        done: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const actor = interpret(machine);
+
+        // Start waiting in background
+        const waitFiber = yield* Effect.fork(
+          actor.waitFor((s) => s.value === "done")
+        );
+
+        // Give fiber time to subscribe
+        yield* Effect.sleep("10 millis");
+
+        // Trigger transition
+        actor.send(new Toggle());
+
+        // Wait for result
+        const result = yield* waitFiber.await.pipe(Effect.flatMap(Effect.exit));
+        expect(result._tag).toBe("Success");
+
+        actor.stop();
+      }),
+    );
+  });
+
+  it("waits for context condition", async () => {
+    const machine = createMachine<"test", "counting", TestContext, TestEvent>({
+      id: "test",
+      initial: "counting",
+      context: { count: 0, log: [] },
+      states: {
+        counting: {
+          on: {
+            INCREMENT: {
+              actions: [assign(({ context }) => ({ count: context.count + 1 }))],
+            },
+          },
+        },
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const actor = interpret(machine);
+
+        // Start waiting for count to reach 3
+        const waitFiber = yield* Effect.fork(
+          actor.waitFor((s) => s.context.count >= 3)
+        );
+
+        yield* Effect.sleep("5 millis");
+
+        // Increment count 3 times
+        actor.send(new Increment());
+        actor.send(new Increment());
+        actor.send(new Increment());
+
+        const result = yield* waitFiber.await.pipe(Effect.flatMap(Effect.exit));
+        expect(result._tag).toBe("Success");
+        if (result._tag === "Success") {
+          expect(result.value.context.count).toBe(3);
+        }
+
+        actor.stop();
+      }),
+    );
+  });
+
+  it("can be used with Effect.timeout", async () => {
+    const machine = createMachine<"test", "waiting", TestContext, TestEvent>({
+      id: "test",
+      initial: "waiting",
+      context: { count: 0, log: [] },
+      states: {
+        waiting: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const actor = interpret(machine);
+
+        // Wait for a state that will never happen, with timeout
+        const result = yield* actor
+          .waitFor((s) => s.value === "never" as never)
+          .pipe(
+            Effect.timeout("50 millis"),
+            Effect.option
+          );
+
+        expect(result._tag).toBe("None"); // Timed out
+
+        actor.stop();
+      }),
+    );
+  });
+
+  it("cleans up subscription on interruption", async () => {
+    const machine = createMachine<"test", "a" | "b", TestContext, TestEvent>({
+      id: "test",
+      initial: "a",
+      context: { count: 0, log: [] },
+      states: {
+        a: { on: { TOGGLE: { target: "b" } } },
+        b: {},
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const actor = interpret(machine);
+
+        // Start waiting
+        const fiber = yield* Effect.fork(
+          actor.waitFor((s) => s.value === "never" as never)
+        );
+
+        yield* Effect.sleep("10 millis");
+
+        // Interrupt the fiber
+        yield* Fiber.interrupt(fiber);
+
+        // Machine should still work normally after interruption
+        actor.send(new Toggle());
+        expect(actor.getSnapshot().value).toBe("b");
+
+        actor.stop();
+      }),
     );
   });
 });
