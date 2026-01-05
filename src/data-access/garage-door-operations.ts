@@ -75,7 +75,7 @@ const createAnimationActivity = (direction: 1 | -1) => ({
 export const garageDoorMachine = createMachine<
   GarageDoorState,
   GarageDoorEvent,
-  typeof GarageDoorContextSchema.Type
+  typeof GarageDoorContextSchema
 >({
   id: "garageDoor",
   initial: "closed",
