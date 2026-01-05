@@ -3,13 +3,19 @@ import {
   type GarageDoorState,
   type WeatherStatus,
   AnimationComplete,
+  BangHammer,
   Click,
   getButtonLabel,
   getStateLabel,
   getWeatherStatus,
 } from "@/data-access/garage-door-operations";
-import { useGarageDoor } from "@/data-access/hamster-wheel-operations";
+import {
+  useGarageDoorLeft,
+  useGarageDoorRight,
+} from "@/data-access/hamster-wheel-operations";
 import { cn } from "@/lib/utils";
+
+type GarageDoorHook = typeof useGarageDoorLeft;
 
 const isPaused = (state: GarageDoorState): boolean =>
   state === "paused-while-opening" || state === "paused-while-closing";
@@ -53,8 +59,13 @@ const WeatherDisplay = ({ weather }: { weather: WeatherStatus }) => {
   }
 };
 
-export const GarageDoor = () => {
-  const { send, isLoading, context, state } = useGarageDoor();
+interface GarageDoorProps {
+  useHook?: GarageDoorHook;
+  title?: string;
+}
+
+export const GarageDoor = ({ useHook = useGarageDoorLeft, title = "Garage Door" }: GarageDoorProps) => {
+  const { send, isLoading, context, state } = useHook();
 
   // Handle animation completion
   const isOpening = state === "opening";
@@ -95,7 +106,7 @@ export const GarageDoor = () => {
       !hasElectricity && "opacity-70"
     )}>
       <div className="flex items-center gap-2">
-        <h2 className="text-2xl font-bold">Garage Door</h2>
+        <h2 className="text-2xl font-bold">{title}</h2>
         {!hasElectricity && (
           <span className="text-red-500 text-xl" title="No Power">🔌</span>
         )}
@@ -178,6 +189,18 @@ export const GarageDoor = () => {
       >
         {!hasElectricity ? "No Power" : getButtonLabel(status.state)}
       </Button>
+
+      {/* Bang Hammer Button - Wake the hamster when there's no power! */}
+      {!hasElectricity && (
+        <Button
+          onClick={() => send(new BangHammer())}
+          size="lg"
+          variant="outline"
+          className="min-w-32 border-orange-500 text-orange-500 hover:bg-orange-500 hover:text-white"
+        >
+          🔨 Bang Hammer (Wake Hamster)
+        </Button>
+      )}
 
       {/* State Machine Debug Info */}
       <div className="text-xs text-muted-foreground mt-4 p-4 bg-muted rounded-lg font-mono">

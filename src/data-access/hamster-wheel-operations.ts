@@ -17,6 +17,7 @@ import {
   GarageDoorMachineService,
   PowerOn,
   PowerOff,
+  WakeHamster,
   type GarageDoorState,
   type GarageDoorEvent,
   initialSnapshot as garageDoorInitialSnapshot,
@@ -36,7 +37,7 @@ const HamsterWheelContextSchema = Schema.Struct({
 class Toggle extends Data.TaggedClass("TOGGLE")<{}> {}
 class Tick extends Data.TaggedClass("TICK")<{ readonly delta: number }> {}
 
-type HamsterWheelEvent = Toggle | Tick;
+type HamsterWheelEvent = Toggle | Tick | WakeHamster;
 
 type HamsterWheelContext = typeof HamsterWheelContextSchema.Type;
 type HamsterWheelSnapshot = MachineSnapshot<HamsterWheelState, HamsterWheelContext>;
@@ -69,7 +70,8 @@ const wheelAnimation = {
 // Hamster Wheel Machine Service
 // ============================================================================
 
-const GARAGE_DOOR_CHILD_ID = "garageDoor";
+const GARAGE_DOOR_LEFT_ID = "garageDoorLeft";
+const GARAGE_DOOR_RIGHT_ID = "garageDoorRight";
 
 /**
  * HamsterWheel machine as an Effect.Service.
@@ -117,13 +119,17 @@ export class HamsterWheelMachineService extends Effect.Service<HamsterWheelMachi
             entry: [
               effect(() => Effect.log("Hamster is resting - lights out")),
               assign(() => ({ electricityLevel: 0 })),
-              // Spawn garage door using the service's definition - clean types!
-              spawnChild(garageDoorService.definition, { id: GARAGE_DOOR_CHILD_ID }),
-              // Send POWER_OFF to garage door child
-              sendTo(GARAGE_DOOR_CHILD_ID, new PowerOff()),
+              // Spawn both garage doors
+              spawnChild(garageDoorService.definition, { id: GARAGE_DOOR_LEFT_ID }),
+              spawnChild(garageDoorService.definition, { id: GARAGE_DOOR_RIGHT_ID }),
+              // Power off both garage doors
+              sendTo(GARAGE_DOOR_LEFT_ID, new PowerOff()),
+              sendTo(GARAGE_DOOR_RIGHT_ID, new PowerOff()),
             ],
             on: {
               TOGGLE: { target: "running" },
+              // Child garage doors can wake the hamster by banging the hammer!
+              WAKE_HAMSTER: { target: "running" },
             },
           },
 
@@ -131,8 +137,9 @@ export class HamsterWheelMachineService extends Effect.Service<HamsterWheelMachi
             entry: [
               effect(() => Effect.log("Hamster is running! Generating electricity")),
               assign(() => ({ electricityLevel: 100 })),
-              // Send POWER_ON to garage door child
-              sendTo(GARAGE_DOOR_CHILD_ID, new PowerOn()),
+              // Power on both garage doors
+              sendTo(GARAGE_DOOR_LEFT_ID, new PowerOn()),
+              sendTo(GARAGE_DOOR_RIGHT_ID, new PowerOn()),
             ],
             activities: [wheelAnimation],
             on: {
@@ -215,13 +222,13 @@ const useHamsterWheelMachine = createUseMachineHook(
 );
 
 // ============================================================================
-// Child Machine Hook (Garage Door)
+// Child Machine Hooks (Garage Doors)
 // ============================================================================
 
 // Type for garage door context (inferred from schema)
 type GarageDoorContext = typeof garageDoorInitialSnapshot.context;
 
-export const useGarageDoor = createUseChildMachineHook<
+export const useGarageDoorLeft = createUseChildMachineHook<
   HamsterWheelState,
   HamsterWheelContext,
   HamsterWheelEvent,
@@ -231,7 +238,21 @@ export const useGarageDoor = createUseChildMachineHook<
 >(
   appRuntime,
   actorAtom,
-  GARAGE_DOOR_CHILD_ID,
+  GARAGE_DOOR_LEFT_ID,
+  garageDoorInitialSnapshot,
+);
+
+export const useGarageDoorRight = createUseChildMachineHook<
+  HamsterWheelState,
+  HamsterWheelContext,
+  HamsterWheelEvent,
+  GarageDoorState,
+  GarageDoorContext,
+  GarageDoorEvent
+>(
+  appRuntime,
+  actorAtom,
+  GARAGE_DOOR_RIGHT_ID,
   garageDoorInitialSnapshot,
 );
 

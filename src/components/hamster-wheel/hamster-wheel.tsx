@@ -3,6 +3,8 @@ import {
   getButtonLabel,
   getStateLabel,
   useHamsterWheel,
+  useGarageDoorLeft,
+  useGarageDoorRight,
 } from "@/data-access/hamster-wheel-operations";
 import { GarageDoor } from "@/components/garage-door/garage-door";
 import { cn } from "@/lib/utils";
@@ -200,14 +202,20 @@ export const HamsterWheel = () => {
             : "bg-gray-900"
       )}
     >
-      {/* Side by side layout: Hamster Wheel (left) | Garage Door (right) */}
+      {/* Side by side layout: Garage Door (left) | Hamster Wheel (center) | Garage Door (right) */}
       <div className="flex flex-row items-center justify-center min-h-screen gap-8">
+        <div className={cn(
+          "rounded-lg transition-colors duration-500",
+          hasElectricity ? "bg-white/50" : "bg-gray-800/50"
+        )}>
+          <GarageDoor useHook={useGarageDoorLeft} title="Left Garage" />
+        </div>
         <HamsterWheelContent status={status} handleToggle={handleToggle} />
         <div className={cn(
           "rounded-lg transition-colors duration-500",
           hasElectricity ? "bg-white/50" : "bg-gray-800/50"
         )}>
-          <GarageDoor />
+          <GarageDoor useHook={useGarageDoorRight} title="Right Garage" />
         </div>
       </div>
     </div>

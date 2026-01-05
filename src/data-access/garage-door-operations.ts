@@ -6,6 +6,7 @@ import {
   createMachine,
   effect,
   interpret,
+  sendParent,
   type MachineSnapshot,
   type MachineActor,
 } from "@/lib/state-machine";
@@ -54,8 +55,12 @@ class Tick extends Data.TaggedClass("TICK")<{ readonly delta: number }> {}
 class AnimationComplete extends Data.TaggedClass("ANIMATION_COMPLETE")<{}> {}
 export class PowerOn extends Data.TaggedClass("POWER_ON")<{}> {}
 export class PowerOff extends Data.TaggedClass("POWER_OFF")<{}> {}
+export class BangHammer extends Data.TaggedClass("BANG_HAMMER")<{}> {}
 
-export type GarageDoorEvent = Click | Tick | AnimationComplete | PowerOn | PowerOff;
+export type GarageDoorEvent = Click | Tick | AnimationComplete | PowerOn | PowerOff | BangHammer;
+
+// Event sent to parent when hammer is banged
+export class WakeHamster extends Data.TaggedClass("WAKE_HAMSTER")<{}> {}
 
 // Type alias for snapshot
 type GarageDoorContext = typeof GarageDoorContextSchema.Type;
@@ -162,6 +167,8 @@ export class GarageDoorMachineService extends Effect.Service<GarageDoorMachineSe
               CLICK: { target: "opening", guard: ({ context }) => context.isPowered },
               POWER_ON: { actions: [assign(() => ({ isPowered: true }))] },
               POWER_OFF: { actions: [assign(() => ({ isPowered: false }))] },
+              // Bang the hammer to wake the hamster!
+              BANG_HAMMER: { actions: [sendParent(new WakeHamster())] },
             },
           },
 
@@ -182,6 +189,7 @@ export class GarageDoorMachineService extends Effect.Service<GarageDoorMachineSe
               ANIMATION_COMPLETE: { target: "open", guard: ({ context }) => context.isPowered },
               POWER_ON: { actions: [assign(() => ({ isPowered: true }))] },
               POWER_OFF: { actions: [assign(() => ({ isPowered: false }))] },
+              BANG_HAMMER: { actions: [sendParent(new WakeHamster())] },
             },
           },
 
@@ -191,6 +199,7 @@ export class GarageDoorMachineService extends Effect.Service<GarageDoorMachineSe
               CLICK: { target: "closing", guard: ({ context }) => context.isPowered },
               POWER_ON: { actions: [assign(() => ({ isPowered: true }))] },
               POWER_OFF: { actions: [assign(() => ({ isPowered: false }))] },
+              BANG_HAMMER: { actions: [sendParent(new WakeHamster())] },
             },
           },
 
@@ -252,6 +261,7 @@ export class GarageDoorMachineService extends Effect.Service<GarageDoorMachineSe
               CLICK: { target: "closing", guard: ({ context }) => context.isPowered },
               POWER_ON: { actions: [assign(() => ({ isPowered: true }))] },
               POWER_OFF: { actions: [assign(() => ({ isPowered: false }))] },
+              BANG_HAMMER: { actions: [sendParent(new WakeHamster())] },
             },
           },
 
@@ -275,6 +285,7 @@ export class GarageDoorMachineService extends Effect.Service<GarageDoorMachineSe
               ANIMATION_COMPLETE: { target: "closed", guard: ({ context }) => context.isPowered },
               POWER_ON: { actions: [assign(() => ({ isPowered: true }))] },
               POWER_OFF: { actions: [assign(() => ({ isPowered: false }))] },
+              BANG_HAMMER: { actions: [sendParent(new WakeHamster())] },
             },
           },
 
@@ -284,6 +295,7 @@ export class GarageDoorMachineService extends Effect.Service<GarageDoorMachineSe
               CLICK: { target: "opening", guard: ({ context }) => context.isPowered },
               POWER_ON: { actions: [assign(() => ({ isPowered: true }))] },
               POWER_OFF: { actions: [assign(() => ({ isPowered: false }))] },
+              BANG_HAMMER: { actions: [sendParent(new WakeHamster())] },
             },
           },
         },
