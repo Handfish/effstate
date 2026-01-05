@@ -146,9 +146,9 @@ export const garageDoorMachine = createMachine<
 // ============================================================================
 
 // Create atoms with full type inference from appRuntime
-// interpret() now returns MachineActor synchronously, so wrap in Effect.sync
+// interpret() returns Effect<MachineActor, never, Scope.Scope> with auto-cleanup
 const actorAtom = appRuntime
-  .atom(Effect.sync(() => interpret(garageDoorMachine)))
+  .atom(interpret(garageDoorMachine))
   .pipe(Atom.keepAlive);
 
 // Create a SubscriptionRef that stays in sync with the actor's snapshot
