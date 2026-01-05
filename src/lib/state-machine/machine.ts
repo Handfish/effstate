@@ -407,6 +407,23 @@ function createActor<
     if (event._tag === "$invoke.success") {
       const successEvent = event as unknown as InvokeSuccessEvent;
       const invokeConfig = stateConfig?.invoke;
+
+      // Check for assignResult shorthand first
+      if (invokeConfig?.assignResult?.success) {
+        invokeCleanups.delete(successEvent.id);
+        const updates = invokeConfig.assignResult.success({
+          context: snapshot.context,
+          output: successEvent.output,
+        });
+        snapshot = {
+          value: snapshot.value,
+          context: { ...snapshot.context, ...updates },
+          event,
+        };
+        notifyObservers();
+        return;
+      }
+
       const handler = invokeConfig?.onSuccess ?? invokeConfig?.onDone;
       if (!handler) return;
 
@@ -473,6 +490,44 @@ function createActor<
 
       // Clean up the invoke
       invokeCleanups.delete(failureEvent.id);
+
+      // Check for assignResult shorthand first
+      if (invokeConfig?.assignResult) {
+        let updates: Partial<TContext> | undefined;
+
+        // Check catchTags first if error has _tag
+        if (
+          invokeConfig.assignResult.catchTags &&
+          typeof failureEvent.error === "object" &&
+          failureEvent.error !== null &&
+          "_tag" in failureEvent.error
+        ) {
+          const errorTag = (failureEvent.error as { _tag: string })._tag;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const tagHandler = (invokeConfig.assignResult.catchTags as Record<string, any>)[errorTag];
+          if (tagHandler) {
+            updates = tagHandler({ context: snapshot.context, error: failureEvent.error });
+          }
+        }
+
+        // Fall back to failure handler
+        if (updates === undefined && invokeConfig.assignResult.failure) {
+          updates = invokeConfig.assignResult.failure({
+            context: snapshot.context,
+            error: failureEvent.error,
+          });
+        }
+
+        if (updates !== undefined) {
+          snapshot = {
+            value: snapshot.value,
+            context: { ...snapshot.context, ...updates },
+            event,
+          };
+          notifyObservers();
+          return;
+        }
+      }
 
       // First, check catchTags if error has _tag
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -557,6 +612,21 @@ function createActor<
 
       // Clean up the invoke
       invokeCleanups.delete(defectEvent.id);
+
+      // Check for assignResult shorthand first
+      if (invokeConfig?.assignResult?.defect) {
+        const updates = invokeConfig.assignResult.defect({
+          context: snapshot.context,
+          defect: defectEvent.defect,
+        });
+        snapshot = {
+          value: snapshot.value,
+          context: { ...snapshot.context, ...updates },
+          event,
+        };
+        notifyObservers();
+        return;
+      }
 
       if (!invokeConfig?.onDefect) return;
 

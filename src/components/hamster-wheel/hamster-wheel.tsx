@@ -119,8 +119,19 @@ const HamsterWheelContent = ({
 
         {/* Running indicator */}
         {isRunning && (
-          <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 text-sm text-gray-600 whitespace-nowrap">
-            *running noises*
+          <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 text-sm text-gray-300 whitespace-nowrap flex">
+            {"*running noises*".split("").map((char, i) => (
+              <span
+                key={i}
+                className="inline-block animate-bounce"
+                style={{
+                  animationDelay: `${i * 50}ms`,
+                  animationDuration: "600ms",
+                }}
+              >
+                {char === " " ? "\u00A0" : char}
+              </span>
+            ))}
           </div>
         )}
       </div>

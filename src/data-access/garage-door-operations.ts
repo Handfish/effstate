@@ -1,8 +1,5 @@
 import {
   assign,
-  assignOnDefect,
-  assignOnFailure,
-  assignOnSuccess,
   createMachine,
   effect,
   interpret,
@@ -210,51 +207,27 @@ export class GarageDoorMachineService extends Effect.Service<GarageDoorMachineSe
             ],
             invoke: {
               id: "fetchWeather",
-              // Closure over weatherService - returns Effect<Weather, WeatherError, never>
               src: () => weatherService.getWeather(DEFAULT_LAT, DEFAULT_LON),
-              onSuccess: {
-                actions: [
-                  assignOnSuccess<GarageDoorContext, Weather>(({ output }) => ({
-                    weather: {
-                      status: "loaded",
-                      temp: output.temperature,
-                      desc: output.description,
-                      icon: output.icon,
-                    },
-                  })),
-                ],
-              },
-              catchTags: {
-                WeatherNetworkError: {
-                  actions: [
-                    assignOnFailure<GarageDoorContext, { message: string }>(({ error }) => ({
-                      weather: {
-                        status: "error",
-                        error: `Network error: ${error.message}`,
-                      },
-                    })),
-                  ],
+              assignResult: {
+                success: ({ output }) => ({
+                  weather: {
+                    status: "loaded",
+                    temp: output.temperature,
+                    desc: output.description,
+                    icon: output.icon,
+                  },
+                }),
+                catchTags: {
+                  WeatherNetworkError: ({ error }) => ({
+                    weather: { status: "error", error: `Network: ${error.message}` },
+                  }),
+                  WeatherParseError: ({ error }) => ({
+                    weather: { status: "error", error: `Parse: ${error.message}` },
+                  }),
                 },
-                WeatherParseError: {
-                  actions: [
-                    assignOnFailure<GarageDoorContext, { message: string }>(({ error }) => ({
-                      weather: {
-                        status: "error",
-                        error: `Data error: ${error.message}`,
-                      },
-                    })),
-                  ],
-                },
-              },
-              onDefect: {
-                actions: [
-                  assignOnDefect<GarageDoorContext>(({ defect }) => ({
-                    weather: {
-                      status: "error",
-                      error: `Unexpected error: ${String(defect)}`,
-                    },
-                  })),
-                ],
+                defect: ({ defect }) => ({
+                  weather: { status: "error", error: `Unexpected: ${String(defect)}` },
+                }),
               },
             },
             on: {

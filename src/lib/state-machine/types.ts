@@ -387,30 +387,27 @@ export type ErrorByTag<TError, TTag extends string> = Extract<TError, { _tag: TT
  * Invoke configuration for async operations.
  * Uses Effect's Cause to distinguish between typed failures, defects, and interrupts.
  *
- * @example Basic usage
+ * @example Basic usage with assignResult (recommended for simple cases)
  * ```ts
  * loading: {
  *   invoke: {
  *     id: "fetchUser",
  *     src: ({ context }) => fetchUser(context.userId),
- *     onSuccess: {
- *       target: "ready",
- *       actions: [assign(({ event }) => ({ user: event.output }))],
- *     },
- *     onFailure: {
- *       target: "error",
- *       actions: [assign(({ event }) => ({ error: event.error }))],
+ *     assignResult: {
+ *       success: ({ output }) => ({ user: output, status: "ready" }),
+ *       failure: ({ error }) => ({ error: error.message, status: "error" }),
+ *       defect: ({ defect }) => ({ error: String(defect), status: "crashed" }),
  *     },
  *   },
  * }
  * ```
  *
- * @example With catchTags for typed error handling
+ * @example Full control with onSuccess/onFailure/catchTags
  * ```ts
  * loading: {
  *   invoke: {
  *     src: () => fetchUser(), // Effect<User, NetworkError | ValidationError, R>
- *     onSuccess: { target: "ready" },
+ *     onSuccess: { target: "ready", actions: [...] },
  *     catchTags: {
  *       NetworkError: { target: "retry" },
  *       ValidationError: { target: "invalid" },
@@ -503,6 +500,51 @@ export interface InvokeConfig<
   readonly onInterrupt?: {
     readonly target?: TStateValue;
     readonly actions?: ReadonlyArray<Action<TContext, InvokeInterruptEvent, R, never>>;
+  };
+
+  /**
+   * Shorthand for assigning context based on invoke result.
+   * Use this instead of onSuccess/onFailure/onDefect when you just need to update context.
+   *
+   * @example Basic usage
+   * ```ts
+   * invoke: {
+   *   src: () => fetchWeather(),
+   *   assignResult: {
+   *     success: ({ output }) => ({ weather: { status: "loaded", data: output } }),
+   *     failure: ({ error }) => ({ weather: { status: "error", message: error.message } }),
+   *     defect: ({ defect }) => ({ weather: { status: "error", message: String(defect) } }),
+   *   },
+   * }
+   * ```
+   *
+   * @example With catchTags for typed error handling
+   * ```ts
+   * invoke: {
+   *   src: () => fetchWeather(), // Effect<Weather, NetworkError | ParseError, never>
+   *   assignResult: {
+   *     success: ({ output }) => ({ weather: { status: "loaded", data: output } }),
+   *     catchTags: {
+   *       NetworkError: ({ error }) => ({ weather: { status: "error", message: `Network: ${error.message}` } }),
+   *       ParseError: ({ error }) => ({ weather: { status: "error", message: `Parse: ${error.message}` } }),
+   *     },
+   *     failure: ({ error }) => ({ weather: { status: "error", message: error.message } }), // fallback
+   *     defect: ({ defect }) => ({ weather: { status: "error", message: String(defect) } }),
+   *   },
+   * }
+   * ```
+   */
+  readonly assignResult?: {
+    readonly success: (params: { context: TContext; output: TOutput }) => Partial<TContext>;
+    /** Handle specific tagged error types differently */
+    readonly catchTags?: TError extends TaggedError
+      ? {
+          readonly [K in TError["_tag"]]?: (params: { context: TContext; error: ErrorByTag<TError, K> }) => Partial<TContext>;
+        }
+      : never;
+    /** Fallback for errors not handled by catchTags */
+    readonly failure?: (params: { context: TContext; error: TError }) => Partial<TContext>;
+    readonly defect?: (params: { context: TContext; defect: unknown }) => Partial<TContext>;
   };
 }
 
