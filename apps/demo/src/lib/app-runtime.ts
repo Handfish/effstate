@@ -1,15 +1,11 @@
 import { Atom } from "@effect-atom/atom-react";
 import { Layer, Logger } from "effect";
-import { MessagesClient } from "@/lib/api/messages-client";
-import { NetworkMonitor } from "@/lib/services/network-monitor";
 import { WeatherService } from "@/lib/services/weather-service";
 import { MachineRegistry } from "effstate";
 
 // Base services layer
 const ServicesLayer = Layer.mergeAll(
   Logger.pretty,
-  MessagesClient.layer,
-  NetworkMonitor.Default,
   WeatherService.Default,
 );
 

@@ -3,7 +3,6 @@
   "references": [
     { "path": "./packages/core" },
     { "path": "./packages/react" },
-    { "path": "./apps/demo" },
-    { "path": "./apps/server" }
+    { "path": "./apps/demo" }
   ]
 }

@@ -8,17 +8,13 @@ export default defineConfig({
     starlight({
       title: 'effstate',
       description: 'Effect-first state machine library for TypeScript',
-      social: [
-        { icon: 'github', label: 'GitHub', href: 'https://github.com/your-username/effstate' },
-      ],
+      social: {
+        github: 'https://github.com/your-username/effstate',
+      },
       sidebar: [
         {
           label: 'Getting Started',
-          items: [
-            { label: 'Introduction', slug: 'getting-started/introduction' },
-            { label: 'Installation', slug: 'getting-started/installation' },
-            { label: 'Quick Start', slug: 'getting-started/quick-start' },
-          ],
+          autogenerate: { directory: 'getting-started' },
         },
         {
           label: 'Guides',
