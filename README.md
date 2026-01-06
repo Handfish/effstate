@@ -29,6 +29,22 @@
 - **Cross-tab sync**: Built-in support for synchronizing state across browser tabs
 - **Schema validation**: Optional Effect Schema integration for context validation
 
+## Why effstate over XState?
+
+| Metric | effstate | XState |
+|--------|----------|--------|
+| **Bundle size (gzip)** | **~3.9 kB** | 13.7 kB |
+| Event processing | **30x faster** | - |
+| With subscribers | **14x faster** | - |
+
+[See full comparison →](https://handfish.github.io/effstate/getting-started/comparison/)
+
+## Live Demo
+
+**[Try the Interactive Demo →](https://handfish.github.io/effstate/demo/)**
+
+Watch state machines sync across browser tabs in real-time!
+
 ## Packages
 
 | Package | Description |
