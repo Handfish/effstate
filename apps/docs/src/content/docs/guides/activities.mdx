@@ -1,0 +1,263 @@
+---
+title: Activities
+description: Long-running effects that run while in a state
+---
+
+# Activities
+
+Activities are long-running effects that start when entering a state and automatically stop when leaving it. They're perfect for:
+
+- Polling or periodic updates
+- Animations
+- WebSocket connections
+- Real-time data streams
+
+## Basic Activity
+
+```typescript
+import { createMachine } from "effstate";
+import { Effect } from "effect";
+
+const machine = createMachine({
+  id: "polling",
+  initial: "idle",
+  context: Schema.Struct({ data: Schema.Unknown }),
+  initialContext: { data: null },
+  states: {
+    idle: {
+      on: {
+        START: { target: "polling" },
+      },
+    },
+    polling: {
+      activities: [
+        {
+          id: "pollData",
+          src: ({ context, send }) =>
+            Effect.gen(function* () {
+              while (true) {
+                yield* Effect.sleep("5 seconds");
+                const data = yield* fetchLatestData();
+                send(new DataReceived({ data }));
+              }
+            }),
+        },
+      ],
+      on: {
+        DATA_RECEIVED: {
+          actions: [assign(({ event }) => ({ data: event.data }))],
+        },
+        STOP: { target: "idle" },
+      },
+    },
+  },
+});
+```
+
+## Activity Parameters
+
+Activities receive three parameters:
+
+```typescript
+{
+  id: "myActivity",
+  src: ({ context, event, send }) => Effect.gen(function* () {
+    // context - current machine context
+    // event - the event that triggered entry to this state
+    // send - function to send events back to the machine
+  }),
+}
+```
+
+## Animation Example
+
+Activities work great for animations:
+
+```typescript
+const hamsterMachine = createMachine({
+  id: "hamster",
+  initial: "idle",
+  context: ContextSchema,
+  initialContext: { rotation: 0, speed: 0 },
+  states: {
+    idle: {
+      on: {
+        START: { target: "running" },
+      },
+    },
+    running: {
+      activities: [
+        {
+          id: "spinWheel",
+          src: ({ context, send }) =>
+            Effect.gen(function* () {
+              const startTime = Date.now();
+              while (true) {
+                yield* Effect.sleep("16 millis"); // ~60fps
+                const elapsed = Date.now() - startTime;
+                const rotation = (elapsed * context.speed) % 360;
+                send(new UpdateRotation({ rotation }));
+              }
+            }),
+        },
+      ],
+      on: {
+        UPDATE_ROTATION: {
+          actions: [assign(({ event }) => ({ rotation: event.rotation }))],
+        },
+        STOP: { target: "idle" },
+      },
+    },
+  },
+});
+```
+
+## Multiple Activities
+
+A state can have multiple activities running concurrently:
+
+```typescript
+states: {
+  active: {
+    activities: [
+      {
+        id: "heartbeat",
+        src: () => Effect.gen(function* () {
+          while (true) {
+            yield* Effect.sleep("30 seconds");
+            yield* sendHeartbeat();
+          }
+        }),
+      },
+      {
+        id: "dataSync",
+        src: ({ send }) => Effect.gen(function* () {
+          while (true) {
+            yield* Effect.sleep("5 seconds");
+            const data = yield* fetchUpdates();
+            send(new DataUpdated({ data }));
+          }
+        }),
+      },
+    ],
+  },
+}
+```
+
+## WebSocket Connection
+
+Activities are ideal for WebSocket connections:
+
+```typescript
+export class ChatMachine extends Effect.Service<ChatMachine>()("ChatMachine", {
+  effect: Effect.gen(function* () {
+    const wsService = yield* WebSocketService;
+
+    const machine = createMachine({
+      id: "chat",
+      initial: "disconnected",
+      context: ContextSchema,
+      initialContext: { messages: [] },
+      states: {
+        disconnected: {
+          on: { CONNECT: { target: "connected" } },
+        },
+        connected: {
+          activities: [
+            {
+              id: "websocket",
+              src: ({ send }) =>
+                Effect.gen(function* () {
+                  const ws = yield* wsService.connect("/chat");
+
+                  // Listen for messages
+                  yield* ws.onMessage((msg) => {
+                    send(new MessageReceived({ message: msg }));
+                  });
+
+                  // Keep alive
+                  yield* Effect.never;
+                }),
+            },
+          ],
+          on: {
+            MESSAGE_RECEIVED: {
+              actions: [
+                assign(({ context, event }) => ({
+                  messages: [...context.messages, event.message],
+                })),
+              ],
+            },
+            DISCONNECT: { target: "disconnected" },
+          },
+        },
+      },
+    });
+
+    return { machine, createActor: () => interpret(machine) };
+  }),
+  dependencies: [WebSocketService.Default],
+}) {}
+```
+
+## Automatic Cleanup
+
+Activities are automatically interrupted when:
+
+1. The machine transitions to a different state
+2. The machine is stopped
+3. The parent scope is closed
+
+Effect's fiber management ensures proper cleanup:
+
+```typescript
+{
+  id: "resourceActivity",
+  src: () => Effect.gen(function* () {
+    // Acquire resource
+    const connection = yield* acquireConnection();
+
+    // This runs when the activity is interrupted
+    yield* Effect.addFinalizer(() =>
+      Effect.gen(function* () {
+        yield* connection.close();
+        yield* Effect.log("Connection closed");
+      })
+    );
+
+    // Activity logic
+    yield* Effect.never;
+  }),
+}
+```
+
+## Activity vs Invoke
+
+Use **activities** when:
+- The effect should run for the duration of a state
+- You need ongoing polling or streaming
+- The effect doesn't have a natural completion point
+
+Use **invoke** when:
+- You're performing a one-shot async operation
+- You want to handle success/failure with different transitions
+- The effect will complete and you need to react to the result
+
+```typescript
+// Activity: continuous polling while in state
+activities: [
+  {
+    id: "poll",
+    src: () => Effect.forever(
+      Effect.delay(fetchData(), "5 seconds")
+    ),
+  },
+]
+
+// Invoke: one-shot operation with result handling
+invoke: {
+  src: () => fetchUser(),
+  onSuccess: { target: "ready" },
+  onFailure: { target: "error" },
+}
+```

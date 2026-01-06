@@ -1,25 +1,64 @@
 ---
 title: Guards
-description: Using guards for conditional transitions
+description: Conditional transitions with guards
 ---
 
 # Guards
 
-Guards are pure synchronous predicates that determine whether a transition should occur.
+Guards are pure synchronous predicates that determine whether a transition should occur. They receive the current context and the triggering event, and return `true` to allow the transition or `false` to block it.
 
 ## Basic Guard
 
+Inline guards are the simplest form:
+
 ```typescript
-import { createMachine, guard } from "effstate";
+import { createMachine } from "effstate";
 
 const machine = createMachine({
-  // ...
+  id: "form",
+  initial: "editing",
+  context: ContextSchema,
+  initialContext: { isValid: false, data: {} },
   states: {
-    idle: {
+    editing: {
       on: {
         SUBMIT: {
           target: "submitting",
           guard: ({ context }) => context.isValid,
+        },
+      },
+    },
+    submitting: { /* ... */ },
+  },
+});
+```
+
+## Named Guards with `guard()`
+
+Use the `guard()` helper to create reusable guards:
+
+```typescript
+import { guard } from "effstate";
+
+const isValid = guard<MyContext, MyEvent>(
+  ({ context }) => context.isValid
+);
+
+const hasMinItems = guard<MyContext, MyEvent>(
+  ({ context }) => context.items.length >= 3
+);
+
+const machine = createMachine({
+  states: {
+    editing: {
+      on: {
+        SUBMIT: {
+          target: "submitting",
+          guard: isValid,
+        },
+        ADD_ITEM: {
+          target: "ready",
+          guard: hasMinItems,
         },
       },
     },
@@ -29,16 +68,28 @@ const machine = createMachine({
 
 ## Guard Combinators
 
-Use `and`, `or`, and `not` to compose guards:
+Compose guards using `and`, `or`, and `not`:
 
 ```typescript
 import { and, or, not, guard } from "effstate";
 
-const isAdmin = guard(({ context }) => context.role === "admin");
-const isOwner = guard(({ context }) => context.isOwner);
-const isPublished = guard(({ context }) => context.status === "published");
+const isAdmin = guard<MyContext, MyEvent>(
+  ({ context }) => context.user.role === "admin"
+);
 
-const canEdit = or(isAdmin, and(isOwner, not(isPublished)));
+const isOwner = guard<MyContext, MyEvent>(
+  ({ context }) => context.user.id === context.resource.ownerId
+);
+
+const isPublished = guard<MyContext, MyEvent>(
+  ({ context }) => context.resource.status === "published"
+);
+
+// Complex permission: admin OR (owner AND not published)
+const canEdit = or(
+  isAdmin,
+  and(isOwner, not(isPublished))
+);
 
 const machine = createMachine({
   states: {
@@ -56,19 +107,167 @@ const machine = createMachine({
 
 ## Event-Based Guards
 
-Guards receive both context and event:
+Guards can also check event data:
 
 ```typescript
+import { Data } from "effect";
+
+class Transfer extends Data.TaggedClass("TRANSFER")<{
+  amount: number;
+  toAccount: string;
+}> {}
+
 const machine = createMachine({
   states: {
-    idle: {
+    ready: {
       on: {
-        SET_VALUE: {
-          target: "active",
-          guard: ({ context, event }) => event.value > context.threshold,
+        TRANSFER: {
+          target: "transferring",
+          guard: ({ context, event }) =>
+            event.amount > 0 &&
+            event.amount <= context.balance &&
+            event.toAccount !== context.accountId,
         },
       },
     },
   },
 });
+```
+
+## Multiple Transitions with Guards
+
+Define multiple transitions for the same event with different guards:
+
+```typescript
+states: {
+  processing: {
+    on: {
+      COMPLETE: [
+        {
+          target: "success",
+          guard: ({ context }) => context.errors.length === 0,
+        },
+        {
+          target: "partialSuccess",
+          guard: ({ context }) => context.errors.length < 3,
+        },
+        {
+          // No guard = default/fallback
+          target: "failed",
+        },
+      ],
+    },
+  },
+}
+```
+
+The first transition whose guard returns `true` (or has no guard) will be taken.
+
+## Guards on Invoke Handlers
+
+Guards can also control invoke result handling:
+
+```typescript
+invoke: {
+  src: () => fetchUser(),
+  onSuccess: [
+    {
+      target: "admin",
+      guard: ({ event }) => event.output.role === "admin",
+    },
+    {
+      target: "regular",
+      // No guard - default case
+    },
+  ],
+}
+```
+
+## Type-Safe Guards
+
+For full type safety, explicitly type your guards:
+
+```typescript
+import { guard } from "effstate";
+import type { Guard } from "effstate";
+
+// Using guard() helper
+const isReady = guard<MyContext, MyEvent>(
+  ({ context }) => context.status === "ready"
+);
+
+// Or inline with explicit types
+const canProceed: Guard<MyContext, MyEvent> = ({ context, event }) =>
+  context.isReady && event.confirmed;
+```
+
+## Async Validation Pattern
+
+Guards are synchronous. For async validation, use a state machine pattern:
+
+```typescript
+states: {
+  idle: {
+    on: {
+      SUBMIT: { target: "validating" },
+    },
+  },
+  validating: {
+    invoke: {
+      src: ({ context }) => validateData(context.data),
+      onSuccess: {
+        target: "valid",
+        guard: ({ event }) => event.output.isValid,
+      },
+      onSuccess: {
+        target: "invalid",
+        // Fallback when validation fails
+      },
+      onFailure: { target: "error" },
+    },
+  },
+  valid: { /* proceed */ },
+  invalid: { /* show errors */ },
+}
+```
+
+## Common Guard Patterns
+
+### Feature Flags
+
+```typescript
+const featureEnabled = guard<MyContext, MyEvent>(
+  ({ context }) => context.features.includes("newFeature")
+);
+```
+
+### User Roles
+
+```typescript
+const isAuthorized = guard<MyContext, MyEvent>(
+  ({ context }) => ["admin", "moderator"].includes(context.user.role)
+);
+```
+
+### Rate Limiting
+
+```typescript
+const notRateLimited = guard<MyContext, MyEvent>(
+  ({ context }) => {
+    const now = Date.now();
+    const elapsed = now - context.lastAction;
+    return elapsed > 1000; // 1 second cooldown
+  }
+);
+```
+
+### Validation
+
+```typescript
+const isFormValid = guard<FormContext, SubmitEvent>(
+  ({ context }) =>
+    context.email.includes("@") &&
+    context.password.length >= 8 &&
+    context.acceptedTerms
+);
 ```

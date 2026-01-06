@@ -1,0 +1,360 @@
+---
+title: Parent-Child Machines
+description: Composing machines with the actor model
+---
+
+# Parent-Child Machines
+
+effstate supports hierarchical machine composition using the actor model. A parent machine can spawn child machines, communicate with them via events, and manage their lifecycle.
+
+## Spawning Children
+
+Use `spawnChild` to create child machine instances:
+
+```typescript
+import { createMachine, spawnChild, sendTo, stopChild } from "effstate";
+
+// Define the child machine
+const timerMachine = createMachine({
+  id: "timer",
+  initial: "idle",
+  context: Schema.Struct({ elapsed: Schema.Number }),
+  initialContext: { elapsed: 0 },
+  states: {
+    idle: {
+      on: {
+        START: { target: "running" },
+      },
+    },
+    running: {
+      activities: [
+        {
+          id: "tick",
+          src: ({ send }) =>
+            Effect.gen(function* () {
+              while (true) {
+                yield* Effect.sleep("1 second");
+                send(new Tick());
+              }
+            }),
+        },
+      ],
+      on: {
+        TICK: {
+          actions: [assign(({ context }) => ({ elapsed: context.elapsed + 1 }))],
+        },
+        STOP: { target: "idle" },
+      },
+    },
+  },
+});
+
+// Parent machine that manages timers
+const timerManagerMachine = createMachine({
+  id: "timerManager",
+  initial: "idle",
+  context: Schema.Struct({ timerCount: Schema.Number }),
+  initialContext: { timerCount: 0 },
+  states: {
+    idle: {
+      on: {
+        ADD_TIMER: {
+          actions: [
+            assign(({ context }) => ({ timerCount: context.timerCount + 1 })),
+            spawnChild(timerMachine, {
+              id: ({ context }) => `timer-${context.timerCount}`,
+            }),
+          ],
+        },
+        START_TIMER: {
+          actions: [
+            sendTo(({ event }) => event.timerId, new Start()),
+          ],
+        },
+        REMOVE_TIMER: {
+          actions: [
+            stopChild(({ event }) => event.timerId),
+          ],
+        },
+      },
+    },
+  },
+});
+```
+
+## Communicating with Children
+
+### sendTo
+
+Send events to a specific child by ID:
+
+```typescript
+import { sendTo } from "effstate";
+
+on: {
+  START_ALL: {
+    actions: [
+      sendTo("timer-0", new Start()),
+      sendTo("timer-1", new Start()),
+    ],
+  },
+  CONFIGURE_TIMER: {
+    actions: [
+      sendTo(
+        ({ event }) => event.timerId,
+        ({ event }) => new SetInterval({ ms: event.interval })
+      ),
+    ],
+  },
+}
+```
+
+### forwardTo
+
+Forward the current event to a child:
+
+```typescript
+import { forwardTo } from "effstate";
+
+on: {
+  // Forward any TICK event to the active timer
+  TICK: {
+    actions: [forwardTo(({ context }) => context.activeTimerId)],
+  },
+}
+```
+
+## Child-to-Parent Communication
+
+Children can send events to their parent using `sendParent`:
+
+```typescript
+import { sendParent } from "effstate";
+import { Data } from "effect";
+
+// Events the child sends to parent
+class TimerCompleted extends Data.TaggedClass("TIMER_COMPLETED")<{
+  timerId: string;
+  elapsed: number;
+}> {}
+
+const timerMachine = createMachine({
+  id: "timer",
+  states: {
+    running: {
+      on: {
+        COMPLETE: {
+          target: "done",
+          actions: [
+            sendParent(({ context }) =>
+              new TimerCompleted({
+                timerId: context.id,
+                elapsed: context.elapsed,
+              })
+            ),
+          ],
+        },
+      },
+    },
+    done: {},
+  },
+});
+
+// Parent listens for child events
+const parentMachine = createMachine({
+  id: "parent",
+  states: {
+    managing: {
+      on: {
+        TIMER_COMPLETED: {
+          actions: [
+            assign(({ context, event }) => ({
+              completedTimers: [...context.completedTimers, event.timerId],
+              totalElapsed: context.totalElapsed + event.elapsed,
+            })),
+          ],
+        },
+      },
+    },
+  },
+});
+```
+
+## Dynamic Child IDs
+
+Child IDs can be computed from context or events:
+
+```typescript
+// From context
+spawnChild(workerMachine, {
+  id: ({ context }) => `worker-${context.workers.length}`,
+})
+
+// From event data
+on: {
+  SPAWN_WORKER: {
+    actions: [
+      spawnChild(workerMachine, {
+        id: ({ event }) => `worker-${event.workerId}`,
+      }),
+    ],
+  },
+}
+```
+
+## Stopping Children
+
+Use `stopChild` to terminate a child machine:
+
+```typescript
+import { stopChild } from "effstate";
+
+on: {
+  REMOVE_WORKER: {
+    actions: [
+      stopChild(({ event }) => event.workerId),
+      assign(({ context, event }) => ({
+        workers: context.workers.filter(id => id !== event.workerId),
+      })),
+    ],
+  },
+  REMOVE_ALL: {
+    actions: [
+      enqueueActions(({ context, enqueue }) => {
+        for (const workerId of context.workers) {
+          enqueue(stopChild(workerId));
+        }
+        enqueue.assign({ workers: [] });
+      }),
+    ],
+  },
+}
+```
+
+## Example: Garage Door System
+
+A realistic example with a power generator managing multiple garage doors:
+
+```typescript
+// Garage door child machine
+const garageDoorMachine = createMachine({
+  id: "garageDoor",
+  initial: "closed",
+  context: Schema.Struct({
+    id: Schema.String,
+    position: Schema.Number, // 0 = closed, 100 = open
+  }),
+  initialContext: { id: "", position: 0 },
+  states: {
+    closed: {
+      on: {
+        OPEN: { target: "opening" },
+      },
+    },
+    opening: {
+      activities: [
+        {
+          id: "openAnimation",
+          src: ({ context, send }) =>
+            Effect.gen(function* () {
+              let pos = context.position;
+              while (pos < 100) {
+                yield* Effect.sleep("50 millis");
+                pos = Math.min(pos + 2, 100);
+                send(new UpdatePosition({ position: pos }));
+              }
+              send(new OpenComplete());
+            }),
+        },
+      ],
+      on: {
+        UPDATE_POSITION: {
+          actions: [assign(({ event }) => ({ position: event.position }))],
+        },
+        OPEN_COMPLETE: { target: "open" },
+        STOP: { target: "stopped" },
+      },
+    },
+    open: {
+      entry: [sendParent(({ context }) => new DoorOpened({ doorId: context.id }))],
+      on: {
+        CLOSE: { target: "closing" },
+      },
+    },
+    closing: { /* similar to opening */ },
+    stopped: {
+      on: {
+        OPEN: { target: "opening" },
+        CLOSE: { target: "closing" },
+      },
+    },
+  },
+});
+
+// Parent power generator
+const powerGeneratorMachine = createMachine({
+  id: "powerGenerator",
+  initial: "running",
+  context: Schema.Struct({
+    doors: Schema.Array(Schema.String),
+    openDoors: Schema.Array(Schema.String),
+  }),
+  initialContext: { doors: [], openDoors: [] },
+  states: {
+    running: {
+      entry: [
+        // Spawn garage doors on entry
+        spawnChild(garageDoorMachine, { id: "door-1" }),
+        spawnChild(garageDoorMachine, { id: "door-2" }),
+        assign({ doors: ["door-1", "door-2"] }),
+      ],
+      on: {
+        TOGGLE_DOOR: {
+          actions: [
+            sendTo(
+              ({ event }) => event.doorId,
+              ({ context, event }) =>
+                context.openDoors.includes(event.doorId)
+                  ? new Close()
+                  : new Open()
+            ),
+          ],
+        },
+        DOOR_OPENED: {
+          actions: [
+            assign(({ context, event }) => ({
+              openDoors: [...context.openDoors, event.doorId],
+            })),
+          ],
+        },
+        DOOR_CLOSED: {
+          actions: [
+            assign(({ context, event }) => ({
+              openDoors: context.openDoors.filter(id => id !== event.doorId),
+            })),
+          ],
+        },
+        SHUTDOWN: { target: "shutdown" },
+      },
+    },
+    shutdown: {
+      entry: [
+        // Stop all children on shutdown
+        enqueueActions(({ context, enqueue }) => {
+          for (const doorId of context.doors) {
+            enqueue(stopChild(doorId));
+          }
+        }),
+      ],
+    },
+  },
+});
+```
+
+## Best Practices
+
+1. **Use Effect.Service for dependencies** - Both parent and child machines can inject services
+2. **Typed events for child-parent communication** - Define clear event contracts
+3. **Track child IDs in context** - Keep a list of active child IDs for management
+4. **Clean up on exit** - Stop children when parent transitions to terminal states
+5. **Forward relevant events** - Use `forwardTo` when children need parent events

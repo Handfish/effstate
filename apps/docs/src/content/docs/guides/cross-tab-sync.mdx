@@ -1,0 +1,254 @@
+---
+title: Cross-Tab Sync
+description: Synchronize state machines across browser tabs
+---
+
+# Cross-Tab Sync
+
+effstate supports synchronizing state machine state across browser tabs and windows. This is useful for:
+
+- Keeping UI consistent across multiple tabs
+- Persisting state to localStorage
+- Real-time collaboration features
+
+## How It Works
+
+Cross-tab sync uses a leader election pattern:
+
+1. The newest tab/window becomes the **leader**
+2. The leader saves state changes to localStorage
+3. Other tabs listen for storage events and sync their state
+4. When you focus a tab, it becomes the new leader
+
+This prevents race conditions where multiple tabs try to write simultaneously.
+
+## Basic Setup
+
+```typescript
+import { createCrossTabSync } from "@/lib/cross-tab-leader";
+import { encodeSnapshot, decodeSnapshot, interpret } from "effstate";
+import { Schema } from "effect";
+
+const STORAGE_KEY = "myApp:machineState";
+
+// Create the cross-tab sync coordinator
+const crossTabSync = createCrossTabSync({
+  storageKey: STORAGE_KEY,
+  onSave: () => {
+    // Called when this tab is leader and should save
+    const snapshot = actor.getSnapshot();
+    const encoded = Schema.encodeSync(SnapshotSchema)(snapshot);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(encoded));
+  },
+  onSync: () => {
+    // Called when another tab saved and we should sync
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      const decoded = Schema.decodeSync(SnapshotSchema)(JSON.parse(stored));
+      actor._syncSnapshot(decoded);
+    }
+  },
+  throttleMs: 500, // Optional: throttle saves (default: 500ms)
+});
+
+// Subscribe to state changes
+actor.subscribe(() => {
+  crossTabSync.saveIfLeader(); // Only saves if this tab is leader
+});
+```
+
+## CrossTabSync API
+
+```typescript
+interface CrossTabSync {
+  /** Save state if this window is the leader (throttled) */
+  saveIfLeader: () => void;
+  /** Check if this window is currently the leader */
+  isLeader: () => boolean;
+  /** Manually claim leadership */
+  claimLeadership: () => void;
+  /** Clean up event listeners */
+  destroy: () => void;
+}
+```
+
+## With Parent-Child Machines
+
+When syncing machines with children, save and restore child state too:
+
+```typescript
+const STORAGE_KEY = "hamsterWheel:state";
+
+// Schema for persisted state including children
+const PersistedStateSchema = Schema.Struct({
+  parent: Schema.Struct({
+    value: Schema.Literal("idle", "running", "stopping"),
+    context: ParentContextSchema,
+  }),
+  children: Schema.Struct({
+    leftDoor: Schema.optional(ChildSnapshotSchema),
+    rightDoor: Schema.optional(ChildSnapshotSchema),
+  }),
+});
+
+const saveState = (actor: MachineActor) => {
+  const parentSnapshot = actor.getSnapshot();
+
+  // Get child snapshots
+  const children: Record<string, Snapshot> = {};
+  actor.children.forEach((child, id) => {
+    children[id] = child.getSnapshot();
+  });
+
+  const state = {
+    parent: { value: parentSnapshot.value, context: parentSnapshot.context },
+    children,
+  };
+
+  const encoded = Schema.encodeSync(PersistedStateSchema)(state);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(encoded));
+};
+
+const loadState = () => {
+  const stored = localStorage.getItem(STORAGE_KEY);
+  if (!stored) return null;
+
+  const decoded = Schema.decodeSync(PersistedStateSchema)(JSON.parse(stored));
+
+  const snapshot = {
+    value: decoded.parent.value,
+    context: decoded.parent.context,
+    event: null,
+  };
+
+  const childSnapshots = new Map();
+  Object.entries(decoded.children).forEach(([id, child]) => {
+    if (child) {
+      childSnapshots.set(id, { value: child.value, context: child.context, event: null });
+    }
+  });
+
+  return { snapshot, childSnapshots };
+};
+
+// Restore with child snapshots
+const persisted = loadState();
+const actor = persisted
+  ? yield* interpret(machine, {
+      snapshot: persisted.snapshot,
+      childSnapshots: persisted.childSnapshots,
+    })
+  : yield* interpret(machine);
+
+// Subscribe to both parent and children
+actor.subscribe(() => crossTabSync.saveIfLeader());
+actor.children.forEach((child) => {
+  child.subscribe(() => crossTabSync.saveIfLeader());
+});
+```
+
+## Using _syncSnapshot
+
+The `_syncSnapshot` method allows updating a running actor's state from external data:
+
+```typescript
+// Sync parent state only
+actor._syncSnapshot(newSnapshot);
+
+// Sync parent and child states
+actor._syncSnapshot(parentSnapshot, childSnapshotsMap);
+```
+
+This is useful when:
+- Receiving state from another tab via storage event
+- Receiving state from a server (real-time collaboration)
+- Restoring state from a backup
+
+## Full Example with React
+
+```typescript
+import { Atom } from "@effect-atom/atom-react";
+import { createCrossTabSync } from "@/lib/cross-tab-leader";
+
+const STORAGE_KEY = "counter:state";
+
+let currentActor: MachineActor | null = null;
+
+const crossTabSync = createCrossTabSync({
+  storageKey: STORAGE_KEY,
+  onSave: () => {
+    if (currentActor) {
+      const snapshot = currentActor.getSnapshot();
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+    }
+  },
+  onSync: () => {
+    if (currentActor) {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        currentActor._syncSnapshot(JSON.parse(stored));
+      }
+    }
+  },
+});
+
+const actorAtom = appRuntime
+  .atom(
+    Effect.gen(function* () {
+      const service = yield* CounterMachine;
+
+      // Load persisted state if available
+      const stored = localStorage.getItem(STORAGE_KEY);
+      const persisted = stored ? JSON.parse(stored) : null;
+
+      const actor = persisted
+        ? yield* interpret(service.machine, { snapshot: persisted })
+        : yield* interpret(service.machine);
+
+      // Store reference for cross-tab sync
+      currentActor = actor;
+
+      // Save on state changes (only if leader)
+      actor.subscribe(() => crossTabSync.saveIfLeader());
+
+      return actor;
+    }).pipe(Effect.provide(CounterMachine.Default))
+  )
+  .pipe(Atom.keepAlive);
+```
+
+## Schema-Based Serialization
+
+Use Effect Schema for type-safe serialization, especially for complex types like `Date`:
+
+```typescript
+const ContextSchema = Schema.Struct({
+  count: Schema.Number,
+  lastUpdated: Schema.DateFromString, // Serializes Date <-> string
+});
+
+// When saving
+const encoded = Schema.encodeSync(ContextSchema)(context);
+// { count: 5, lastUpdated: "2024-01-15T10:30:00.000Z" }
+
+// When loading
+const decoded = Schema.decodeSync(ContextSchema)(stored);
+// { count: 5, lastUpdated: Date object }
+```
+
+## Cleanup
+
+Call `destroy()` when unmounting to clean up event listeners:
+
+```typescript
+// In React useEffect cleanup
+useEffect(() => {
+  return () => {
+    crossTabSync.destroy();
+  };
+}, []);
+```
+
+## Try It Out
+
+Open the [demo](/demo/) in multiple browser tabs and watch the hamster wheel and garage doors sync across all of them!

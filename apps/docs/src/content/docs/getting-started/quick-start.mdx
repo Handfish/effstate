@@ -5,7 +5,7 @@ description: Build your first state machine with effstate
 
 # Quick Start
 
-This guide will walk you through building a simple toggle state machine.
+This guide walks you through building a counter state machine using the recommended Effect.Service pattern.
 
 ## 1. Define Your Events
 
@@ -14,10 +14,11 @@ Events are defined using Effect's `Data.TaggedClass`:
 ```typescript
 import { Data } from "effect";
 
-class Toggle extends Data.TaggedClass("TOGGLE")<{}> {}
+class Increment extends Data.TaggedClass("INCREMENT")<{}> {}
+class Decrement extends Data.TaggedClass("DECREMENT")<{}> {}
 class Reset extends Data.TaggedClass("RESET")<{}> {}
 
-type MyEvent = Toggle | Reset;
+type CounterEvent = Increment | Decrement | Reset;
 ```
 
 ## 2. Define Your Context Schema
@@ -27,114 +28,211 @@ Context is defined using Effect Schema for type-safe serialization:
 ```typescript
 import { Schema } from "effect";
 
-const ContextSchema = Schema.Struct({
-  toggleCount: Schema.Number,
-  lastToggled: Schema.DateFromString,
+const CounterContextSchema = Schema.Struct({
+  count: Schema.Number,
+  lastUpdated: Schema.DateFromString,
 });
 
-type MyContext = typeof ContextSchema.Type;
+type CounterContext = typeof CounterContextSchema.Type;
 ```
 
-## 3. Create Your Machine
+## 3. Create Your Machine Service
+
+Wrap your machine in an `Effect.Service` for proper dependency injection:
 
 ```typescript
-import { createMachine, assign } from "effstate";
-
-const toggleMachine = createMachine<
-  "off" | "on",
-  MyEvent,
-  typeof ContextSchema
->({
-  id: "toggle",
-  initial: "off",
-  context: ContextSchema,
-  initialContext: {
-    toggleCount: 0,
-    lastToggled: new Date(),
-  },
-  states: {
-    off: {
-      on: {
-        TOGGLE: {
-          target: "on",
-          actions: [
-            assign(({ context }) => ({
-              toggleCount: context.toggleCount + 1,
-              lastToggled: new Date(),
-            })),
-          ],
-        },
-      },
-    },
-    on: {
-      on: {
-        TOGGLE: { target: "off" },
-        RESET: {
-          target: "off",
-          actions: [assign({ toggleCount: 0 })],
-        },
-      },
-    },
-  },
-});
-```
-
-## 4. Interpret the Machine
-
-```typescript
-import { interpret } from "effstate";
+import { createMachine, interpret, assign, effect } from "effstate";
 import { Effect } from "effect";
 
-const program = Effect.scoped(
-  Effect.gen(function* () {
-    const actor = yield* interpret(toggleMachine);
+export class CounterMachine extends Effect.Service<CounterMachine>()(
+  "CounterMachine",
+  {
+    effect: Effect.gen(function* () {
+      const machine = createMachine<
+        "idle" | "active",
+        CounterEvent,
+        typeof CounterContextSchema
+      >({
+        id: "counter",
+        initial: "idle",
+        context: CounterContextSchema,
+        initialContext: {
+          count: 0,
+          lastUpdated: new Date(),
+        },
+        states: {
+          idle: {
+            on: {
+              INCREMENT: {
+                target: "active",
+                actions: [
+                  assign(({ context }) => ({
+                    count: context.count + 1,
+                    lastUpdated: new Date(),
+                  })),
+                ],
+              },
+            },
+          },
+          active: {
+            on: {
+              INCREMENT: {
+                actions: [
+                  assign(({ context }) => ({
+                    count: context.count + 1,
+                    lastUpdated: new Date(),
+                  })),
+                ],
+              },
+              DECREMENT: {
+                actions: [
+                  assign(({ context }) => ({
+                    count: context.count - 1,
+                    lastUpdated: new Date(),
+                  })),
+                ],
+              },
+              RESET: {
+                target: "idle",
+                actions: [assign({ count: 0 })],
+              },
+            },
+          },
+        },
+      });
 
-    // Subscribe to state changes
-    actor.subscribe((snapshot) => {
-      console.log("State:", snapshot.value);
-      console.log("Count:", snapshot.context.toggleCount);
-    });
-
-    // Send events
-    actor.send(new Toggle()); // off -> on
-    actor.send(new Toggle()); // on -> off
-    actor.send(new Toggle()); // off -> on
-    actor.send(new Reset());  // on -> off, count reset
-
-    return actor.getSnapshot();
-  })
-);
-
-Effect.runPromise(program);
+      return {
+        machine,
+        createActor: () => interpret(machine),
+      };
+    }),
+  }
+) {}
 ```
 
-## 5. Use with React (Optional)
+## 4. Use Your Machine
+
+```typescript
+const program = Effect.gen(function* () {
+  const counterService = yield* CounterMachine;
+  const actor = yield* counterService.createActor();
+
+  // Subscribe to state changes
+  actor.subscribe((snapshot) => {
+    console.log(`State: ${snapshot.value}, Count: ${snapshot.context.count}`);
+  });
+
+  // Send events
+  actor.send(new Increment()); // idle -> active, count: 1
+  actor.send(new Increment()); // active, count: 2
+  actor.send(new Decrement()); // active, count: 1
+  actor.send(new Reset());     // active -> idle, count: 0
+
+  return actor.getSnapshot();
+});
+
+// Run with dependencies
+Effect.runPromise(
+  program.pipe(
+    Effect.scoped,
+    Effect.provide(CounterMachine.Default)
+  )
+);
+```
+
+## 5. Add External Dependencies
+
+The power of Effect.Service is dependency injection. Add an API client:
+
+```typescript
+class AnalyticsService extends Effect.Service<AnalyticsService>()(
+  "AnalyticsService",
+  {
+    succeed: {
+      track: (event: string) => Effect.log(`Analytics: ${event}`),
+    },
+  }
+) {}
+
+export class CounterMachine extends Effect.Service<CounterMachine>()(
+  "CounterMachine",
+  {
+    effect: Effect.gen(function* () {
+      const analytics = yield* AnalyticsService; // Inject dependency
+
+      const machine = createMachine({
+        // ... same config as before
+        states: {
+          active: {
+            entry: [
+              effect(() => analytics.track("counter_activated")),
+            ],
+            // ...
+          },
+        },
+      });
+
+      return {
+        machine,
+        createActor: () => interpret(machine),
+      };
+    }),
+    dependencies: [AnalyticsService.Default], // Declare dependencies
+  }
+) {}
+```
+
+## 6. Use with React (Optional)
 
 ```typescript
 import { createUseMachineHook } from "@effstate/react";
 import { Atom } from "@effect-atom/atom-react";
+import { Layer, SubscriptionRef } from "effect";
+
+// Create app runtime with service layers
+const AppLayer = Layer.mergeAll(CounterMachine.Default);
+const appRuntime = Atom.runtime(AppLayer);
 
 // Create atoms for the machine
-const actorAtom = appRuntime
-  .atom(interpret(toggleMachine))
-  .pipe(Atom.keepAlive);
+const actorAtom = appRuntime.atom(
+  Effect.gen(function* () {
+    const service = yield* CounterMachine;
+    return yield* service.createActor();
+  })
+).pipe(Atom.keepAlive);
+
+const snapshotAtom = appRuntime.subscriptionRef((get) =>
+  Effect.gen(function* () {
+    const actor = yield* get.result(actorAtom);
+    const ref = yield* SubscriptionRef.make(actor.getSnapshot());
+    actor.subscribe((snapshot) => {
+      Effect.runSync(SubscriptionRef.set(ref, snapshot));
+    });
+    return ref;
+  })
+).pipe(Atom.keepAlive);
 
 // Create the hook
-const useToggleMachine = createUseMachineHook(
+const useCounterMachine = createUseMachineHook(
   actorAtom,
   snapshotAtom,
-  toggleMachine.initialSnapshot,
+  { value: "idle", context: { count: 0, lastUpdated: new Date() }, event: null }
 );
 
 // Use in a component
-function ToggleButton() {
-  const { state, context, send } = useToggleMachine();
+function Counter() {
+  const { snapshot, context, send, isLoading } = useCounterMachine();
+
+  if (isLoading) return <div>Loading...</div>;
 
   return (
-    <button onClick={() => send(new Toggle())}>
-      {state === "on" ? "Turn Off" : "Turn On"}
-      (toggled {context.toggleCount} times)
-    </button>
+    <div>
+      <p>State: {snapshot.value}</p>
+      <p>Count: {context.count}</p>
+      <button onClick={() => send(new Increment())}>+</button>
+      <button onClick={() => send(new Decrement())}>-</button>
+      <button onClick={() => send(new Reset())}>Reset</button>
+    </div>
   );
 }
 ```
@@ -144,3 +242,4 @@ function ToggleButton() {
 - Learn about [Guards](/guides/guards/) for conditional transitions
 - Explore [Activities](/guides/activities/) for long-running effects
 - See [Invoke](/guides/invoke/) for async operations
+- Read about [Parent-Child Machines](/guides/parent-child/) for composition

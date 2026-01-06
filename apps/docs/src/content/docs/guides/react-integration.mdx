@@ -1,0 +1,367 @@
+---
+title: React Integration
+description: Using effstate with React via @effstate/react
+---
+
+# React Integration
+
+`@effstate/react` provides first-class React integration for effstate using [`@effect-atom/atom-react`](https://github.com/effect-atom/atom-react).
+
+## Installation
+
+```bash
+npm install @effstate/react @effect-atom/atom-react
+# or
+pnpm add @effstate/react @effect-atom/atom-react
+```
+
+## Basic Setup
+
+### 1. Create Your App Runtime
+
+First, create a runtime with your service layers:
+
+```typescript
+import { Atom } from "@effect-atom/atom-react";
+import { Layer, Logger } from "effect";
+import { CounterMachine } from "./machines/counter";
+
+const AppLayer = Layer.mergeAll(
+  Logger.pretty,
+  CounterMachine.Default,
+);
+
+export const appRuntime = Atom.runtime(AppLayer);
+```
+
+### 2. Create Atoms for Your Machine
+
+```typescript
+import { Effect, SubscriptionRef } from "effect";
+import { interpret } from "effstate";
+
+// Actor atom - creates and manages the machine actor
+const actorAtom = appRuntime
+  .atom(
+    Effect.gen(function* () {
+      const service = yield* CounterMachine;
+      return yield* service.createActor();
+    })
+  )
+  .pipe(Atom.keepAlive);
+
+// Snapshot atom - subscribes to state changes
+const snapshotAtom = appRuntime
+  .subscriptionRef((get) =>
+    Effect.gen(function* () {
+      const actor = yield* get.result(actorAtom);
+      const ref = yield* SubscriptionRef.make(actor.getSnapshot());
+      actor.subscribe((snapshot) => {
+        Effect.runSync(SubscriptionRef.set(ref, snapshot));
+      });
+      return ref;
+    })
+  )
+  .pipe(Atom.keepAlive);
+```
+
+### 3. Create the Hook
+
+```typescript
+import { createUseMachineHook } from "@effstate/react";
+
+const initialSnapshot = {
+  value: "idle",
+  context: { count: 0 },
+  event: null,
+};
+
+export const useCounterMachine = createUseMachineHook(
+  actorAtom,
+  snapshotAtom,
+  initialSnapshot,
+);
+```
+
+### 4. Use in Components
+
+```typescript
+import { useCounterMachine } from "./atoms/counter";
+import { Increment, Decrement, Reset } from "./machines/counter";
+
+function Counter() {
+  const { state, context, send, isLoading, matches } = useCounterMachine();
+
+  if (isLoading) return <div>Loading...</div>;
+
+  return (
+    <div>
+      <p>State: {state}</p>
+      <p>Count: {context.count}</p>
+
+      <button onClick={() => send(new Increment())}>+</button>
+      <button onClick={() => send(new Decrement())}>-</button>
+      <button onClick={() => send(new Reset())}>Reset</button>
+
+      {matches("active") && <p>Counter is active!</p>}
+    </div>
+  );
+}
+```
+
+## Hook API
+
+`createUseMachineHook` returns a hook with the following interface:
+
+```typescript
+interface UseMachineResult<TState, TContext, TEvent> {
+  /** Current state snapshot */
+  snapshot: MachineSnapshot<TState, TContext>;
+  /** Send an event to the machine */
+  send: (event: TEvent) => void;
+  /** Whether the machine is still initializing */
+  isLoading: boolean;
+  /** Check if machine is in a specific state */
+  matches: (state: TState) => boolean;
+  /** Current state value (shorthand for snapshot.value) */
+  state: TState;
+  /** Current context (shorthand for snapshot.context) */
+  context: TContext;
+}
+```
+
+## Child Machine Hooks
+
+For parent-child machine compositions, use `createUseChildMachineHook`:
+
+```typescript
+import { createUseChildMachineHook } from "@effstate/react";
+
+// Parent machine spawns children:
+// spawnChild(GarageDoorMachine, { id: "leftDoor" })
+
+// Create hook for the child
+const useLeftDoor = createUseChildMachineHook<
+  ParentState,
+  ParentContext,
+  ParentEvent,
+  ChildState,
+  ChildContext,
+  ChildEvent
+>(
+  appRuntime,
+  parentActorAtom,
+  "leftDoor",        // child ID
+  childInitialSnapshot,
+);
+
+// Use in component
+function GarageDoor() {
+  const { state, send, isLoading } = useLeftDoor();
+
+  if (isLoading) return null;
+
+  return (
+    <div>
+      <p>Door: {state}</p>
+      <button onClick={() => send(new Open())}>Open</button>
+    </div>
+  );
+}
+```
+
+## Selectors
+
+Use selectors for derived state:
+
+```typescript
+import { selectContext, selectState } from "@effstate/react";
+
+// Select specific context values
+const selectCount = selectContext<CounterContext, number>(
+  (context) => context.count
+);
+
+// Check specific state
+const isActive = selectState<CounterState>("active");
+
+// Use in component
+function Counter() {
+  const { snapshot } = useCounterMachine();
+
+  const count = selectCount(snapshot);
+  const active = isActive(snapshot);
+
+  return (
+    <div>
+      <p>Count: {count}</p>
+      {active && <p>Active!</p>}
+    </div>
+  );
+}
+```
+
+## Full Example
+
+Here's a complete example with a timer machine:
+
+```typescript
+// machines/timer.ts
+import { createMachine, interpret, assign, effect } from "effstate";
+import { Data, Effect, Schema } from "effect";
+
+class Start extends Data.TaggedClass("START")<{}> {}
+class Stop extends Data.TaggedClass("STOP")<{}> {}
+class Tick extends Data.TaggedClass("TICK")<{}> {}
+class Reset extends Data.TaggedClass("RESET")<{}> {}
+
+type TimerEvent = Start | Stop | Tick | Reset;
+
+const ContextSchema = Schema.Struct({
+  elapsed: Schema.Number,
+});
+
+export class TimerMachine extends Effect.Service<TimerMachine>()(
+  "TimerMachine",
+  {
+    effect: Effect.gen(function* () {
+      const machine = createMachine<
+        "idle" | "running",
+        TimerEvent,
+        typeof ContextSchema
+      >({
+        id: "timer",
+        initial: "idle",
+        context: ContextSchema,
+        initialContext: { elapsed: 0 },
+        states: {
+          idle: {
+            on: {
+              START: { target: "running" },
+              RESET: { actions: [assign({ elapsed: 0 })] },
+            },
+          },
+          running: {
+            activities: [
+              {
+                id: "ticker",
+                src: ({ send }) =>
+                  Effect.gen(function* () {
+                    while (true) {
+                      yield* Effect.sleep("1 second");
+                      send(new Tick());
+                    }
+                  }),
+              },
+            ],
+            on: {
+              TICK: {
+                actions: [
+                  assign(({ context }) => ({ elapsed: context.elapsed + 1 })),
+                ],
+              },
+              STOP: { target: "idle" },
+            },
+          },
+        },
+      });
+
+      return {
+        machine,
+        createActor: () => interpret(machine),
+      };
+    }),
+  }
+) {}
+
+export const initialSnapshot = {
+  value: "idle" as const,
+  context: { elapsed: 0 },
+  event: null,
+};
+
+export { Start, Stop, Reset };
+```
+
+```typescript
+// atoms/timer.ts
+import { Atom } from "@effect-atom/atom-react";
+import { Effect, Layer, SubscriptionRef } from "effect";
+import { createUseMachineHook } from "@effstate/react";
+import { TimerMachine, initialSnapshot } from "../machines/timer";
+
+const AppLayer = Layer.mergeAll(TimerMachine.Default);
+const appRuntime = Atom.runtime(AppLayer);
+
+const actorAtom = appRuntime
+  .atom(
+    Effect.gen(function* () {
+      const service = yield* TimerMachine;
+      return yield* service.createActor();
+    })
+  )
+  .pipe(Atom.keepAlive);
+
+const snapshotAtom = appRuntime
+  .subscriptionRef((get) =>
+    Effect.gen(function* () {
+      const actor = yield* get.result(actorAtom);
+      const ref = yield* SubscriptionRef.make(actor.getSnapshot());
+      actor.subscribe((snapshot) => {
+        Effect.runSync(SubscriptionRef.set(ref, snapshot));
+      });
+      return ref;
+    })
+  )
+  .pipe(Atom.keepAlive);
+
+export const useTimer = createUseMachineHook(
+  actorAtom,
+  snapshotAtom,
+  initialSnapshot,
+);
+```
+
+```typescript
+// components/Timer.tsx
+import { useTimer } from "../atoms/timer";
+import { Start, Stop, Reset } from "../machines/timer";
+
+export function Timer() {
+  const { state, context, send, isLoading, matches } = useTimer();
+
+  if (isLoading) return <div>Loading...</div>;
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  };
+
+  return (
+    <div>
+      <h1>{formatTime(context.elapsed)}</h1>
+
+      {matches("idle") ? (
+        <button onClick={() => send(new Start())}>Start</button>
+      ) : (
+        <button onClick={() => send(new Stop())}>Stop</button>
+      )}
+
+      <button onClick={() => send(new Reset())}>Reset</button>
+    </div>
+  );
+}
+```
+
+## Why @effect-atom?
+
+`@effect-atom/atom-react` provides:
+
+- **Suspense support** - Atoms can suspend while loading
+- **Automatic dependency tracking** - Only re-renders when used values change
+- **Effect integration** - Native support for Effect-based async operations
+- **SubscriptionRef** - Perfect for reactive state machine snapshots
+- **keepAlive** - Atoms persist across component unmounts
+
+This makes it ideal for integrating Effect-based state machines with React.

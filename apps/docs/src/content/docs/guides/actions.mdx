@@ -1,0 +1,375 @@
+---
+title: Actions
+description: All available actions in effstate
+---
+
+# Actions
+
+Actions are side effects that run during state transitions. They can update context, run Effects, communicate with other machines, and more.
+
+## assign
+
+Updates the machine's context. Can be static or dynamic.
+
+```typescript
+import { assign } from "effstate";
+
+// Static assignment
+assign({ count: 0 })
+
+// Dynamic assignment using context
+assign(({ context }) => ({
+  count: context.count + 1,
+}))
+
+// Dynamic assignment using event data
+assign(({ context, event }) => ({
+  count: context.count + event.amount,
+}))
+```
+
+**Usage in a state:**
+```typescript
+states: {
+  idle: {
+    on: {
+      INCREMENT: {
+        actions: [
+          assign(({ context }) => ({ count: context.count + 1 })),
+        ],
+      },
+    },
+  },
+}
+```
+
+## effect
+
+Runs an Effect for side effects like logging, API calls, or any async operation.
+
+```typescript
+import { effect } from "effstate";
+import { Effect } from "effect";
+
+// Simple logging
+effect(() => Effect.log("Entered state"))
+
+// Using context
+effect(({ context }) => Effect.log(`Count is ${context.count}`))
+
+// Call an API (within Effect.Service)
+effect(({ context }) => api.saveProgress(context.count))
+```
+
+**With dependencies:**
+```typescript
+export class MyMachine extends Effect.Service<MyMachine>()("MyMachine", {
+  effect: Effect.gen(function* () {
+    const api = yield* ApiClient;
+
+    const machine = createMachine({
+      states: {
+        saving: {
+          entry: [
+            effect(({ context }) => api.save(context.data)),
+          ],
+        },
+      },
+    });
+
+    return { machine, createActor: () => interpret(machine) };
+  }),
+  dependencies: [ApiClient.Default],
+}) {}
+```
+
+## raise
+
+Sends an event to the machine itself. Useful for triggering follow-up transitions.
+
+```typescript
+import { raise } from "effstate";
+import { Data } from "effect";
+
+class Done extends Data.TaggedClass("DONE")<{}> {}
+
+// Static event
+raise(new Done())
+
+// Dynamic event based on context
+raise(({ context }) => new UpdateCount({ value: context.count * 2 }))
+```
+
+**Example: Auto-transition after action:**
+```typescript
+states: {
+  processing: {
+    entry: [
+      assign({ status: "done" }),
+      raise(new ProcessingComplete()),
+    ],
+    on: {
+      PROCESSING_COMPLETE: { target: "idle" },
+    },
+  },
+}
+```
+
+## emit
+
+Emits events to external listeners registered via `actor.on()`. Unlike `raise`, these events don't trigger transitions.
+
+```typescript
+import { emit } from "effstate";
+
+// Static event
+emit({ type: "notification", message: "Task completed" })
+
+// Dynamic event
+emit(({ context }) => ({
+  type: "countChanged",
+  count: context.count,
+}))
+```
+
+**Listening externally:**
+```typescript
+const actor = yield* interpret(machine);
+
+actor.on("notification", (event) => {
+  console.log(event.message);
+});
+
+actor.on("countChanged", (event) => {
+  analytics.track("count_changed", { count: event.count });
+});
+```
+
+## log
+
+Shorthand for logging messages.
+
+```typescript
+import { log } from "effstate";
+
+// Static message
+log("Entered active state")
+
+// Dynamic message
+log(({ context }) => `Count is now ${context.count}`)
+```
+
+## sendTo
+
+Sends an event to a child machine by ID.
+
+```typescript
+import { sendTo } from "effstate";
+
+// Static target and event
+sendTo("childMachine", new StartEvent())
+
+// Dynamic target
+sendTo(({ context }) => `child-${context.selectedId}`, new StartEvent())
+
+// Dynamic event
+sendTo("childMachine", ({ context }) => new SetValue({ value: context.value }))
+```
+
+## sendParent
+
+Sends an event to the parent machine (when this machine is a child).
+
+```typescript
+import { sendParent } from "effstate";
+
+// Static event
+sendParent(new ChildCompleted({ result: "success" }))
+
+// Dynamic event
+sendParent(({ context }) => new ResultReady({ data: context.result }))
+```
+
+## forwardTo
+
+Forwards the current event to a child machine.
+
+```typescript
+import { forwardTo } from "effstate";
+
+// Forward to static target
+forwardTo("childMachine")
+
+// Forward to dynamic target
+forwardTo(({ context }) => `child-${context.activeChildId}`)
+```
+
+## spawnChild
+
+Dynamically creates a child machine actor.
+
+```typescript
+import { spawnChild } from "effstate";
+
+// Static ID
+spawnChild(ChildMachine, { id: "myChild" })
+
+// Dynamic ID
+spawnChild(ChildMachine, {
+  id: ({ context }) => `child-${context.items.length}`,
+})
+```
+
+## stopChild
+
+Stops a child machine by ID.
+
+```typescript
+import { stopChild } from "effstate";
+
+// Static ID
+stopChild("myChild")
+
+// Dynamic ID
+stopChild(({ event }) => event.childId)
+```
+
+## cancel
+
+Cancels a pending delayed transition by its ID.
+
+```typescript
+import { cancel } from "effstate";
+
+// Cancel by static ID
+cancel("myDelay")
+
+// Cancel by dynamic ID
+cancel(({ context }) => `delay-${context.id}`)
+```
+
+**With delayed transitions:**
+```typescript
+states: {
+  waiting: {
+    after: {
+      5000: {
+        id: "timeout", // Give the delay an ID
+        target: "timedOut",
+      },
+    },
+    on: {
+      CANCEL: {
+        target: "idle",
+        actions: [cancel("timeout")], // Cancel before it fires
+      },
+    },
+  },
+}
+```
+
+## enqueueActions
+
+Dynamically build an action list at runtime based on conditions.
+
+```typescript
+import { enqueueActions } from "effstate";
+
+enqueueActions(({ context, event, enqueue }) => {
+  // Always reset count
+  enqueue.assign({ count: 0 });
+
+  // Conditionally add more actions
+  if (context.count > 10) {
+    enqueue.assign({ status: "high" });
+  }
+
+  if (event.notify) {
+    enqueue.effect(() => Effect.log("Notifying..."));
+  }
+
+  // Raise follow-up event
+  enqueue.raise(new ProcessingDone());
+})
+```
+
+## Typed Invoke Helpers
+
+Special assign helpers for invoke handlers with proper typing:
+
+### assignOnSuccess
+
+```typescript
+import { assignOnSuccess } from "effstate";
+
+invoke: {
+  src: () => fetchUser(),
+  onSuccess: {
+    target: "ready",
+    actions: [
+      assignOnSuccess<MyContext, User>(({ context, output }) => ({
+        user: output,
+        loading: false,
+      })),
+    ],
+  },
+}
+```
+
+### assignOnFailure
+
+```typescript
+import { assignOnFailure } from "effstate";
+
+invoke: {
+  src: () => fetchUser(),
+  onFailure: {
+    target: "error",
+    actions: [
+      assignOnFailure<MyContext, ApiError>(({ context, error }) => ({
+        errorMessage: error.message,
+      })),
+    ],
+  },
+}
+```
+
+### assignOnDefect
+
+```typescript
+import { assignOnDefect } from "effstate";
+
+invoke: {
+  src: () => fetchUser(),
+  onDefect: {
+    target: "crashed",
+    actions: [
+      assignOnDefect<MyContext>(({ context, defect }) => ({
+        errorMessage: `Unexpected: ${String(defect)}`,
+      })),
+    ],
+  },
+}
+```
+
+## Action Order
+
+Actions run in the order they're defined:
+
+```typescript
+on: {
+  SUBMIT: {
+    target: "submitting",
+    actions: [
+      assign({ status: "submitting" }),      // 1. Update context
+      effect(() => Effect.log("Submitting")), // 2. Log
+      emit({ type: "formSubmitted" }),        // 3. Notify listeners
+    ],
+  },
+}
+```
+
+Entry and exit actions run in this order during transitions:
+1. Exit actions of the source state
+2. Transition actions
+3. Entry actions of the target state
