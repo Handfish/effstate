@@ -372,6 +372,66 @@ invoke: {
 }
 ```
 
+---
+
+### assignResult
+
+A shorthand for handling all invoke outcomes in one place. Use this when you want to update context without transitioning to different states.
+
+```typescript
+invoke: {
+  src: () => Effect<TOutput, TError, R>,
+  assignResult: {
+    success: (params: { context: TContext; output: TOutput }) => Partial<TContext>;
+    failure?: (params: { context: TContext; error: TError }) => Partial<TContext>;
+    catchTags?: {
+      [K in TError["_tag"]]?: (params: { context: TContext; error: ErrorByTag<TError, K> }) => Partial<TContext>;
+    };
+    defect?: (params: { context: TContext; defect: unknown }) => Partial<TContext>;
+  }
+}
+```
+
+**Example:**
+
+```typescript
+invoke: {
+  src: () => fetchWeather(),
+  assignResult: {
+    success: ({ output }) => ({
+      weather: { status: "loaded", data: output },
+    }),
+    failure: ({ error }) => ({
+      weather: { status: "error", message: error.message },
+    }),
+    defect: ({ defect }) => ({
+      weather: { status: "crashed", message: String(defect) },
+    }),
+  },
+}
+```
+
+**With typed error handling:**
+
+```typescript
+invoke: {
+  src: () => fetchWeather(), // Effect<Weather, NetworkError | ParseError, never>
+  assignResult: {
+    success: ({ output }) => ({ weather: output }),
+    catchTags: {
+      NetworkError: ({ error }) => ({
+        error: `Network issue: ${error.message}`,
+      }),
+      ParseError: ({ error }) => ({
+        error: `Invalid data: ${error.message}`,
+      }),
+    },
+    failure: ({ error }) => ({ error: error.message }), // Fallback
+    defect: ({ defect }) => ({ error: String(defect) }),
+  },
+}
+```
+
 ## See Also
 
 - [Actions Guide](/guides/actions/) - Detailed usage examples
