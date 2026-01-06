@@ -1,4 +1,4 @@
-@tailwind base;
+/* Note: @tailwind base is omitted to avoid overriding Starlight styles */
 @tailwind components;
 @tailwind utilities;
 
@@ -6,6 +6,29 @@
 .site-title img {
   max-height: 2rem;
   width: auto;
+}
+
+/* Fix z-index overlap with theme selector */
+.social-icons,
+starlight-theme-select {
+  position: relative;
+  z-index: 10;
+}
+
+/* Ensure sidebar group labels are always visible */
+.sidebar-group > details > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sidebar-group > details > summary .group-label {
+  display: inline !important;
+}
+
+/* Hide icons in sidebar group labels if they cause issues */
+.sidebar-group > details > summary .label-icon {
+  flex-shrink: 0;
 }
 
 /* Demo CSS Variables */
