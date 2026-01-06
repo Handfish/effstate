@@ -47,7 +47,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-username/effstate.git",
+    "url": "https://github.com/handfish/effstate.git",
     "directory": "packages/react"
   }
 }

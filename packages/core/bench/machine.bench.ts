@@ -2,7 +2,7 @@ import { Bench, type Task } from "tinybench";
 import { Data, Schema } from "effect";
 
 // Our Effect-first state machine
-import { createMachine, interpretSync, assign } from "./index.js";
+import { createMachine, interpretSync, assign } from "../src/index.js";
 
 // XState
 import {

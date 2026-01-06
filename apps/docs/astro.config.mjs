@@ -1,15 +1,21 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import react from '@astrojs/react';
+import tailwind from '@astrojs/tailwind';
 
 export default defineConfig({
-  site: 'https://your-username.github.io',
-  base: '/effstate',
+  site: 'https://handfish.github.io/effstate',
+  // base: '/effstate',
   integrations: [
     starlight({
       title: 'effstate',
       description: 'Effect-first state machine library for TypeScript',
+      logo: {
+        src: './public/logo.png',
+        alt: 'effstate logo',
+      },
       social: {
-        github: 'https://github.com/your-username/effstate',
+        github: 'https://github.com/handfish/effstate',
       },
       sidebar: [
         {
@@ -24,7 +30,14 @@ export default defineConfig({
           label: 'API Reference',
           autogenerate: { directory: 'api' },
         },
+        {
+          label: 'Demo',
+          link: '/demo',
+        },
       ],
+      customCss: ['./src/styles/demo.css'],
     }),
+    react(),
+    tailwind({ applyBaseStyles: false }),
   ],
 });

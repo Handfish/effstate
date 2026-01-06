@@ -1,0 +1,116 @@
+---
+title: Comparison with XState
+description: Bundle size and performance comparison between effstate and XState
+---
+
+## Bundle Size
+
+effstate is significantly smaller than XState, making it ideal for bundle-conscious applications.
+
+| Library | Minified | Minified + Gzipped |
+|---------|----------|-------------------|
+| **effstate** | **~14 kB** | **~3.9 kB** |
+| XState | 45.3 kB | 13.7 kB |
+
+effstate is **~3.5x smaller** than XState (gzipped).
+
+:::note
+effstate requires `effect` as a peer dependency. The Effect library adds to your bundle, but if you're already using Effect in your application, effstate adds minimal overhead.
+:::
+
+## Performance Benchmarks
+
+We benchmark both libraries with equivalent state machine implementations to ensure fair comparison.
+
+### Machine Creation
+
+Creating a new state machine definition.
+
+| Library | ops/sec | Mean (μs) |
+|---------|---------|-----------|
+| **effstate** | **14,613,480** | **0.068** |
+| XState | 292,807 | 3.415 |
+
+effstate is **~50x faster** at machine creation.
+
+### Actor Lifecycle
+
+Creating, starting, and stopping an actor.
+
+| Library | ops/sec | Mean (μs) |
+|---------|---------|-----------|
+| effstate | 221,334 | 4.518 |
+| **XState** | **343,190** | **2.914** |
+
+XState is ~1.5x faster at actor lifecycle (their createActor is more optimized).
+
+### Event Sending (1000 events)
+
+Sending 1000 events to a running actor.
+
+| Library | ops/sec | Mean (μs) |
+|---------|---------|-----------|
+| **effstate** | **18,143** | **55.1** |
+| XState | 611 | 1636.6 |
+
+effstate is **~30x faster** at event processing.
+
+### With Subscribers (5 subscribers, 100 events)
+
+Processing events with multiple subscribers attached.
+
+| Library | ops/sec | Mean (μs) |
+|---------|---------|-----------|
+| **effstate** | **80,975** | **12.4** |
+| XState | 5,877 | 170.2 |
+
+effstate is **~14x faster** with subscribers.
+
+### Full Lifecycle
+
+Complete workflow: create actor → send events → get snapshot → stop.
+
+| Library | ops/sec | Mean (μs) |
+|---------|---------|-----------|
+| **effstate** | **204,283** | **4.9** |
+| XState | 113,129 | 8.8 |
+
+effstate is **~1.8x faster** for full lifecycle operations.
+
+## Summary
+
+| Benchmark | Winner | Factor |
+|-----------|--------|--------|
+| Machine Creation | effstate | 50x faster |
+| Actor Lifecycle | XState | 1.5x faster |
+| Event Sending | effstate | 30x faster |
+| With Subscribers | effstate | 14x faster |
+| Full Lifecycle | effstate | 1.8x faster |
+
+**Final Score: effstate 4 - 1 XState**
+
+### Why the Difference?
+
+**XState has additional overhead from:**
+- DevTools/inspection support (always-on)
+- Actor system relay for distributed event routing
+- Full Observable protocol (next/error/complete)
+
+**effstate is optimized for:**
+- Minimal runtime overhead
+- Simple callbacks with error isolation
+- Effect ecosystem integration
+- Hierarchical parent/child actor communication
+
+## Running the Benchmarks
+
+You can run the benchmarks yourself:
+
+```bash
+git clone https://github.com/handfish/effstate
+cd effstate
+pnpm install
+pnpm --filter effstate bench
+```
+
+The benchmark code is in `packages/core/bench/machine.bench.ts`.
