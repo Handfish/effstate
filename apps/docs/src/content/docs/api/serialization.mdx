@@ -1,0 +1,258 @@
+---
+title: Serialization
+description: API reference for snapshot serialization
+---
+
+
+Functions for encoding and decoding machine snapshots using Effect Schema. Enables type-safe persistence and cross-tab synchronization.
+
+## Why Schema-Based Context?
+
+When your context contains complex types like `Date`, you need proper serialization:
+
+```typescript
+const ContextSchema = Schema.Struct({
+  count: Schema.Number,
+  lastUpdated: Schema.DateFromString, // Date <-> ISO string
+});
+```
+
+- **Encoding**: `Date` → `"2024-01-15T10:30:00.000Z"`
+- **Decoding**: `"2024-01-15T10:30:00.000Z"` → `Date`
+
+---
+
+## encodeSnapshot
+
+Encodes a snapshot to a JSON-safe format. Returns an Effect.
+
+```typescript
+function encodeSnapshot<TStateValue, TContext, TContextEncoded>(
+  machine: MachineDefinition<..., TContextEncoded>,
+  snapshot: MachineSnapshot<TStateValue, TContext>,
+): Effect.Effect<EncodedSnapshot<TStateValue, TContextEncoded>, ParseResult.ParseError>
+```
+
+**Example:**
+
+```typescript
+import { encodeSnapshot } from "effstate";
+
+const program = Effect.gen(function* () {
+  const encoded = yield* encodeSnapshot(machine, actor.getSnapshot());
+  localStorage.setItem("state", JSON.stringify(encoded));
+});
+```
+
+---
+
+## encodeSnapshotSync
+
+Synchronous version of `encodeSnapshot`. Throws on error.
+
+```typescript
+function encodeSnapshotSync<TStateValue, TContext, TContextEncoded>(
+  machine: MachineDefinition<..., TContextEncoded>,
+  snapshot: MachineSnapshot<TStateValue, TContext>,
+): EncodedSnapshot<TStateValue, TContextEncoded>
+```
+
+**Example:**
+
+```typescript
+import { encodeSnapshotSync } from "effstate";
+
+const encoded = encodeSnapshotSync(machine, actor.getSnapshot());
+localStorage.setItem("state", JSON.stringify(encoded));
+```
+
+---
+
+## decodeSnapshot
+
+Decodes a snapshot from JSON-safe format. Returns an Effect.
+
+```typescript
+function decodeSnapshot<TStateValue, TContext, TContextEncoded>(
+  machine: MachineDefinition<..., TContextEncoded>,
+  encoded: EncodedSnapshot<TStateValue, TContextEncoded>,
+): Effect.Effect<MachineSnapshot<TStateValue, TContext>, ParseResult.ParseError>
+```
+
+**Example:**
+
+```typescript
+import { decodeSnapshot, interpret } from "effstate";
+
+const program = Effect.gen(function* () {
+  const stored = JSON.parse(localStorage.getItem("state")!);
+  const snapshot = yield* decodeSnapshot(machine, stored);
+  const actor = yield* interpret(machine, { snapshot });
+  return actor;
+});
+```
+
+---
+
+## decodeSnapshotSync
+
+Synchronous version of `decodeSnapshot`. Throws on error.
+
+```typescript
+function decodeSnapshotSync<TStateValue, TContext, TContextEncoded>(
+  machine: MachineDefinition<..., TContextEncoded>,
+  encoded: EncodedSnapshot<TStateValue, TContextEncoded>,
+): MachineSnapshot<TStateValue, TContext>
+```
+
+**Example:**
+
+```typescript
+import { decodeSnapshotSync, interpretSync } from "effstate";
+
+const stored = JSON.parse(localStorage.getItem("state")!);
+const snapshot = decodeSnapshotSync(machine, stored);
+const actor = interpretSync(machine, { snapshot });
+```
+
+---
+
+## createSnapshotSchema
+
+Creates an Effect Schema for validating encoded snapshots. Useful when loading from untrusted sources.
+
+```typescript
+function createSnapshotSchema<TStateValue, TContext, TContextEncoded>(
+  machine: MachineDefinition<..., TContextEncoded>,
+): Schema.Schema<
+  MachineSnapshot<TStateValue, TContext>,
+  EncodedSnapshot<TStateValue, TContextEncoded>
+>
+```
+
+**Example:**
+
+```typescript
+import { createSnapshotSchema } from "effstate";
+import { Schema } from "effect";
+
+const snapshotSchema = createSnapshotSchema(machine);
+
+// Validate untrusted data
+const untrustedData = JSON.parse(userInput);
+const validatedSnapshot = Schema.decodeUnknownSync(snapshotSchema)(untrustedData);
+```
+
+---
+
+## getContextSchema
+
+Extracts the context schema from a machine definition.
+
+```typescript
+function getContextSchema<TContext, TContextEncoded>(
+  machine: MachineDefinition<..., TContextEncoded>,
+): Schema.Schema<TContext, TContextEncoded>
+```
+
+**Example:**
+
+```typescript
+import { getContextSchema } from "effstate";
+
+const contextSchema = getContextSchema(machine);
+
+// Use for partial context validation
+const partialUpdate = Schema.decodeSync(contextSchema)(userInput);
+```
+
+---
+
+## EncodedSnapshot Type
+
+The JSON-safe encoded format:
+
+```typescript
+interface EncodedSnapshot<TStateValue extends string, TContextEncoded> {
+  readonly value: TStateValue;
+  readonly context: TContextEncoded;
+}
+```
+
+Note: The `event` field is not persisted; it's set to `null` on decode.
+
+---
+
+## Full Persistence Example
+
+```typescript
+import {
+  createMachine,
+  interpret,
+  encodeSnapshotSync,
+  decodeSnapshotSync,
+} from "effstate";
+import { Schema } from "effect";
+
+// Context with Date field
+const ContextSchema = Schema.Struct({
+  count: Schema.Number,
+  lastUpdated: Schema.DateFromString,
+});
+
+const machine = createMachine({
+  id: "counter",
+  initial: "idle",
+  context: ContextSchema,
+  initialContext: { count: 0, lastUpdated: new Date() },
+  states: { /* ... */ },
+});
+
+// Save state
+const save = (actor: MachineActor) => {
+  const encoded = encodeSnapshotSync(machine, actor.getSnapshot());
+  localStorage.setItem("counter", JSON.stringify(encoded));
+};
+
+// Load state
+const load = () => {
+  const stored = localStorage.getItem("counter");
+  if (!stored) return null;
+  return decodeSnapshotSync(machine, JSON.parse(stored));
+};
+
+// Usage
+const persisted = load();
+const actor = persisted
+  ? interpretSync(machine, { snapshot: persisted })
+  : interpretSync(machine);
+
+actor.subscribe(() => save(actor));
+```
+
+---
+
+## Parent-Child Serialization
+
+When persisting machines with children, handle each level:
+
+```typescript
+const saveWithChildren = (actor: MachineActor) => {
+  const parentSnapshot = encodeSnapshotSync(parentMachine, actor.getSnapshot());
+
+  const childSnapshots: Record<string, EncodedSnapshot> = {};
+  actor.children.forEach((child, id) => {
+    childSnapshots[id] = encodeSnapshotSync(childMachine, child.getSnapshot());
+  });
+
+  localStorage.setItem("state", JSON.stringify({
+    parent: parentSnapshot,
+    children: childSnapshots,
+  }));
+};
+```
+
+## See Also
+
+- [Cross-Tab Sync Guide](/guides/cross-tab-sync/) - Using serialization for tab sync
+- [createMachine](/api/create-machine/) - Defining context schemas

@@ -3,9 +3,8 @@ title: createMachine
 description: API reference for createMachine
 ---
 
-# createMachine
 
-Creates a state machine definition.
+Creates a state machine definition that can be interpreted into an actor.
 
 ## Signature
 
@@ -19,33 +18,84 @@ function createMachine<
 >(config: MachineConfig): MachineDefinition
 ```
 
-## Parameters
+## Type Parameters
 
-### config
+| Parameter | Description |
+|-----------|-------------|
+| `TStateValue` | Union of state value strings (e.g., `"idle" \| "loading" \| "done"`) |
+| `TEvent` | Union of event types extending `MachineEvent` |
+| `TContextSchema` | The Effect Schema type (use `typeof YourSchema`) |
+| `R` | Effect requirements (service dependencies) |
+| `E` | Effect error type |
+
+## Config Properties
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `id` | `string` | Yes | Unique identifier for the machine |
+| `initial` | `TStateValue` | Yes | Initial state value |
+| `context` | `Schema.Schema` | Yes | Effect Schema for context validation and serialization |
+| `initialContext` | `TContext` | Yes | Initial context value |
+| `states` | `Record<TStateValue, StateNodeConfig>` | Yes | State definitions |
+
+## StateNodeConfig
+
+Each state can have the following properties:
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `id` | `string` | Unique identifier for the machine |
-| `initial` | `TStateValue` | Initial state value |
-| `context` | `Schema.Schema` | Effect Schema for context |
-| `initialContext` | `TContext` | Initial context value |
-| `states` | `Record<TStateValue, StateNodeConfig>` | State definitions |
+| `entry` | `Action[]` | Actions to run when entering this state |
+| `exit` | `Action[]` | Actions to run when leaving this state |
+| `on` | `Record<EventTag, TransitionConfig>` | Event handlers |
+| `activities` | `ActivityConfig[]` | Long-running effects active in this state |
+| `invoke` | `InvokeConfig` | One-shot async operation |
+| `after` | `DelayedTransitionConfig` | Delayed/timed transitions |
+
+## TransitionConfig
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `target` | `TStateValue` | Target state (optional, stay in current if omitted) |
+| `guard` | `Guard<TContext, TEvent>` | Condition for transition |
+| `actions` | `Action[]` | Actions to run during transition |
 
 ## Returns
 
-Returns a `MachineDefinition` that can be passed to `interpret` or `interpretSync`.
+Returns a `MachineDefinition` object with:
 
-## Example
+| Property | Type | Description |
+|----------|------|-------------|
+| `_tag` | `"MachineDefinition"` | Type discriminator |
+| `id` | `string` | Machine identifier |
+| `config` | `MachineConfig` | The original config |
+| `initialSnapshot` | `MachineSnapshot` | Initial state snapshot |
+| `contextSchema` | `Schema.Schema` | The context schema |
+
+## Examples
+
+### Basic Machine
 
 ```typescript
 import { createMachine, assign } from "effstate";
-import { Schema } from "effect";
+import { Data, Schema } from "effect";
 
+// Define events
+class Increment extends Data.TaggedClass("INCREMENT")<{}> {}
+class Reset extends Data.TaggedClass("RESET")<{}> {}
+
+type CounterEvent = Increment | Reset;
+
+// Define context schema
 const ContextSchema = Schema.Struct({
   count: Schema.Number,
 });
 
-const machine = createMachine({
+// Create machine with explicit type parameters
+const counterMachine = createMachine<
+  "idle" | "active",
+  CounterEvent,
+  typeof ContextSchema
+>({
   id: "counter",
   initial: "idle",
   context: ContextSchema,
@@ -54,10 +104,155 @@ const machine = createMachine({
     idle: {
       on: {
         INCREMENT: {
+          target: "active",
           actions: [assign(({ context }) => ({ count: context.count + 1 }))],
+        },
+      },
+    },
+    active: {
+      on: {
+        INCREMENT: {
+          actions: [assign(({ context }) => ({ count: context.count + 1 }))],
+        },
+        RESET: {
+          target: "idle",
+          actions: [assign({ count: 0 })],
         },
       },
     },
   },
 });
 ```
+
+### With Entry/Exit Actions
+
+```typescript
+const machine = createMachine({
+  id: "door",
+  initial: "closed",
+  context: ContextSchema,
+  initialContext: { openCount: 0 },
+  states: {
+    closed: {
+      entry: [effect(() => Effect.log("Door closed"))],
+      on: {
+        OPEN: { target: "open" },
+      },
+    },
+    open: {
+      entry: [
+        effect(() => Effect.log("Door opened")),
+        assign(({ context }) => ({ openCount: context.openCount + 1 })),
+      ],
+      exit: [effect(() => Effect.log("Leaving open state"))],
+      on: {
+        CLOSE: { target: "closed" },
+      },
+    },
+  },
+});
+```
+
+### With Delayed Transitions
+
+```typescript
+const machine = createMachine({
+  id: "timeout",
+  initial: "idle",
+  context: ContextSchema,
+  initialContext: {},
+  states: {
+    idle: {
+      on: {
+        START: { target: "running" },
+      },
+    },
+    running: {
+      after: {
+        delay: Duration.seconds(5),
+        transition: { target: "timedOut" },
+      },
+      on: {
+        COMPLETE: { target: "done" },
+      },
+    },
+    timedOut: {},
+    done: {},
+  },
+});
+```
+
+### With Activities
+
+```typescript
+const machine = createMachine({
+  id: "polling",
+  initial: "idle",
+  context: ContextSchema,
+  initialContext: { data: null },
+  states: {
+    idle: {
+      on: { START: { target: "polling" } },
+    },
+    polling: {
+      activities: [
+        {
+          id: "pollData",
+          src: ({ send }) =>
+            Effect.gen(function* () {
+              while (true) {
+                yield* Effect.sleep("5 seconds");
+                const data = yield* fetchData();
+                send(new DataReceived({ data }));
+              }
+            }),
+        },
+      ],
+      on: {
+        DATA_RECEIVED: {
+          actions: [assign(({ event }) => ({ data: event.data }))],
+        },
+        STOP: { target: "idle" },
+      },
+    },
+  },
+});
+```
+
+### With Invoke
+
+```typescript
+const machine = createMachine({
+  id: "userLoader",
+  initial: "idle",
+  context: ContextSchema,
+  initialContext: { user: null, error: null },
+  states: {
+    idle: {
+      on: { LOAD: { target: "loading" } },
+    },
+    loading: {
+      invoke: {
+        id: "loadUser",
+        src: ({ context }) => fetchUser(context.userId),
+        onSuccess: {
+          target: "ready",
+          actions: [assign(({ event }) => ({ user: event.output }))],
+        },
+        onFailure: {
+          target: "error",
+          actions: [assign(({ event }) => ({ error: event.error }))],
+        },
+      },
+    },
+    ready: {},
+    error: {},
+  },
+});
+```
+
+## See Also
+
+- [interpret](/api/interpret/) - Create an actor from a machine definition
+- [Actions](/api/actions/) - Available action creators
+- [Guards](/api/guards/) - Guard helpers

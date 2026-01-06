@@ -1,0 +1,296 @@
+---
+title: MachineActor
+description: API reference for MachineActor interface
+---
+
+
+The actor interface returned by `interpret` and `interpretSync`. Provides methods for sending events, subscribing to state changes, and managing the actor lifecycle.
+
+## Interface
+
+```typescript
+interface MachineActor<TStateValue, TContext, TEvent> {
+  send: (event: TEvent) => void;
+  getSnapshot: () => MachineSnapshot<TStateValue, TContext>;
+  subscribe: (observer: (snapshot: MachineSnapshot) => void) => () => void;
+  on: <T extends EmittedEvent>(type: string, handler: (event: T) => void) => () => void;
+  onError: (handler: (error: StateMachineError) => void) => () => void;
+  waitFor: (predicate: (snapshot: MachineSnapshot) => boolean) => Effect<MachineSnapshot>;
+  children: ReadonlyMap<string, MachineActor>;
+  stop: () => void;
+  _syncSnapshot: (snapshot: MachineSnapshot, childSnapshots?: Map) => void;
+  _pauseActivities: () => void;
+  _resumeActivities: () => void;
+}
+```
+
+## Methods
+
+### send
+
+Sends an event to the machine, potentially triggering a transition.
+
+```typescript
+send(event: TEvent): void
+```
+
+**Example:**
+
+```typescript
+actor.send(new Increment({ amount: 5 }));
+actor.send(new Reset());
+```
+
+---
+
+### getSnapshot
+
+Returns the current state snapshot synchronously.
+
+```typescript
+getSnapshot(): MachineSnapshot<TStateValue, TContext>
+```
+
+**Returns:**
+
+```typescript
+interface MachineSnapshot<TStateValue, TContext> {
+  value: TStateValue;      // Current state value
+  context: TContext;       // Current context
+  event: MachineEvent | null;  // Last processed event
+}
+```
+
+**Example:**
+
+```typescript
+const snapshot = actor.getSnapshot();
+console.log("Current state:", snapshot.value);
+console.log("Context:", snapshot.context);
+```
+
+---
+
+### subscribe
+
+Subscribes to state changes. Returns an unsubscribe function.
+
+```typescript
+subscribe(observer: (snapshot: MachineSnapshot) => void): () => void
+```
+
+**Example:**
+
+```typescript
+const unsubscribe = actor.subscribe((snapshot) => {
+  console.log("State changed to:", snapshot.value);
+  updateUI(snapshot);
+});
+
+// Later: stop receiving updates
+unsubscribe();
+```
+
+---
+
+### on
+
+Subscribes to emitted events (from `emit` actions). Returns an unsubscribe function.
+
+```typescript
+on<T extends EmittedEvent>(
+  eventType: string,
+  handler: (event: T) => void
+): () => void
+```
+
+**Example:**
+
+```typescript
+// In machine config:
+// actions: [emit({ type: "notification", message: "Done!" })]
+
+// Subscribe to emitted events
+const unsubscribe = actor.on("notification", (event) => {
+  showToast(event.message);
+});
+```
+
+---
+
+### onError
+
+Subscribes to machine errors (effect failures, activity errors). Returns an unsubscribe function.
+
+```typescript
+onError(handler: (error: StateMachineError) => void): () => void
+```
+
+**Error Types:**
+
+- `EffectActionError` - An effect action failed
+- `ActivityError` - An activity threw an error
+
+**Example:**
+
+```typescript
+actor.onError((error) => {
+  if (error._tag === "EffectActionError") {
+    console.error("Effect action failed:", error.message);
+  } else if (error._tag === "ActivityError") {
+    console.error(`Activity "${error.activityId}" failed:`, error.message);
+  }
+});
+```
+
+---
+
+### waitFor
+
+Returns an Effect that resolves when the machine reaches a state matching the predicate.
+
+```typescript
+waitFor(
+  predicate: (snapshot: MachineSnapshot) => boolean
+): Effect.Effect<MachineSnapshot>
+```
+
+**Example:**
+
+```typescript
+const program = Effect.gen(function* () {
+  const actor = yield* interpret(machine);
+
+  actor.send(new Start());
+
+  // Wait for completion
+  const finalSnapshot = yield* actor.waitFor((s) => s.value === "done");
+
+  return finalSnapshot.context.result;
+});
+```
+
+---
+
+### children
+
+Read-only map of child actors spawned by this machine.
+
+```typescript
+children: ReadonlyMap<string, MachineActor<string, MachineContext, MachineEvent>>
+```
+
+**Example:**
+
+```typescript
+// Access a specific child
+const childActor = actor.children.get("myChild");
+if (childActor) {
+  console.log("Child state:", childActor.getSnapshot().value);
+}
+
+// Iterate all children
+actor.children.forEach((child, id) => {
+  console.log(`Child ${id}:`, child.getSnapshot().value);
+});
+```
+
+---
+
+### stop
+
+Stops the actor and all its children, cleaning up activities and timers.
+
+```typescript
+stop(): void
+```
+
+**Example:**
+
+```typescript
+// When using interpretSync, always clean up
+const actor = interpretSync(machine);
+
+// ... use the actor ...
+
+// Clean up when done
+actor.stop();
+```
+
+Note: When using `interpret` with `Effect.scoped`, cleanup is automatic.
+
+---
+
+## Internal Methods
+
+These methods are prefixed with `_` and are primarily for internal use (cross-tab sync, visibility handling).
+
+### _syncSnapshot
+
+Synchronizes the actor's state from external data without going through normal transitions.
+
+```typescript
+_syncSnapshot(
+  newSnapshot: MachineSnapshot,
+  childSnapshots?: ReadonlyMap<string, MachineSnapshot>
+): void
+```
+
+**Use cases:**
+
+- Cross-tab synchronization
+- Server-pushed state updates
+- State restoration
+
+**Example:**
+
+```typescript
+// Receiving state from another tab
+window.addEventListener("storage", (event) => {
+  if (event.key === "machineState") {
+    const newState = JSON.parse(event.newValue);
+    actor._syncSnapshot(newState.snapshot, newState.childSnapshots);
+  }
+});
+```
+
+---
+
+### _pauseActivities
+
+Pauses all activities and delayed transitions without stopping the actor.
+
+```typescript
+_pauseActivities(): void
+```
+
+**Use case:** Tab visibility changes (pause when hidden)
+
+---
+
+### _resumeActivities
+
+Resumes activities for the current state.
+
+```typescript
+_resumeActivities(): void
+```
+
+**Use case:** Tab visibility changes (resume when visible)
+
+**Example:**
+
+```typescript
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    actor._pauseActivities();
+  } else {
+    actor._resumeActivities();
+  }
+});
+```
+
+## See Also
+
+- [interpret](/api/interpret/) - Create an actor
+- [createMachine](/api/create-machine/) - Define a machine

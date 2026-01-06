@@ -1,0 +1,219 @@
+---
+title: Guards
+description: API reference for guard helpers
+---
+
+
+Guard creators and combinators for conditional transitions.
+
+## Guard Type
+
+```typescript
+type Guard<TContext, TEvent> = (params: {
+  context: TContext;
+  event: TEvent;
+}) => boolean;
+```
+
+---
+
+## guard
+
+Creates a named, reusable guard function.
+
+```typescript
+function guard<TContext, TEvent>(
+  predicate: (params: { context: TContext; event: TEvent }) => boolean
+): Guard<TContext, TEvent>
+```
+
+**Example:**
+
+```typescript
+import { guard } from "effstate";
+
+const isAdmin = guard<MyContext, MyEvent>(
+  ({ context }) => context.user.role === "admin"
+);
+
+const hasBalance = guard<MyContext, TransferEvent>(
+  ({ context, event }) => context.balance >= event.amount
+);
+
+// Use in transition
+on: {
+  TRANSFER: {
+    target: "transferring",
+    guard: hasBalance,
+  },
+}
+```
+
+---
+
+## and
+
+Combines guards with logical AND. Returns true only if all guards return true.
+
+```typescript
+function and<TContext, TEvent>(
+  ...guards: Guard<TContext, TEvent>[]
+): Guard<TContext, TEvent>
+```
+
+**Example:**
+
+```typescript
+import { and, guard } from "effstate";
+
+const isAdmin = guard(({ context }) => context.user.role === "admin");
+const isVerified = guard(({ context }) => context.user.verified);
+
+const canModerate = and(isAdmin, isVerified);
+
+on: {
+  DELETE_POST: {
+    target: "deleting",
+    guard: canModerate,
+  },
+}
+```
+
+---
+
+## or
+
+Combines guards with logical OR. Returns true if any guard returns true.
+
+```typescript
+function or<TContext, TEvent>(
+  ...guards: Guard<TContext, TEvent>[]
+): Guard<TContext, TEvent>
+```
+
+**Example:**
+
+```typescript
+import { or, guard } from "effstate";
+
+const isAdmin = guard(({ context }) => context.user.role === "admin");
+const isOwner = guard(({ context }) => context.user.id === context.resource.ownerId);
+
+const canEdit = or(isAdmin, isOwner);
+
+on: {
+  EDIT: {
+    target: "editing",
+    guard: canEdit,
+  },
+}
+```
+
+---
+
+## not
+
+Negates a guard. Returns true if the guard returns false.
+
+```typescript
+function not<TContext, TEvent>(
+  guard: Guard<TContext, TEvent>
+): Guard<TContext, TEvent>
+```
+
+**Example:**
+
+```typescript
+import { not, guard } from "effstate";
+
+const isLocked = guard(({ context }) => context.locked);
+const isUnlocked = not(isLocked);
+
+on: {
+  EDIT: {
+    target: "editing",
+    guard: isUnlocked,
+  },
+}
+```
+
+---
+
+## Combining Combinators
+
+Combinators can be nested for complex conditions.
+
+```typescript
+import { and, or, not, guard } from "effstate";
+
+const isAdmin = guard(({ context }) => context.user.role === "admin");
+const isOwner = guard(({ context }) => context.user.id === context.post.authorId);
+const isPublished = guard(({ context }) => context.post.status === "published");
+const isDeleted = guard(({ context }) => context.post.deleted);
+
+// Complex permission: (admin OR owner) AND (not published) AND (not deleted)
+const canEditDraft = and(
+  or(isAdmin, isOwner),
+  not(isPublished),
+  not(isDeleted)
+);
+
+// admin OR (owner AND not published)
+const canModify = or(
+  isAdmin,
+  and(isOwner, not(isPublished))
+);
+```
+
+---
+
+## Inline Guards
+
+Guards can also be defined inline in transition config:
+
+```typescript
+on: {
+  SUBMIT: {
+    target: "submitting",
+    guard: ({ context }) => context.form.isValid,
+  },
+  TRANSFER: {
+    target: "transferring",
+    guard: ({ context, event }) =>
+      event.amount > 0 &&
+      event.amount <= context.balance,
+  },
+}
+```
+
+---
+
+## Multiple Guarded Transitions
+
+Define multiple transitions for the same event with different guards:
+
+```typescript
+on: {
+  SUBMIT: [
+    {
+      target: "premium",
+      guard: ({ context }) => context.user.tier === "premium",
+    },
+    {
+      target: "standard",
+      guard: ({ context }) => context.user.tier === "standard",
+    },
+    {
+      // Fallback - no guard
+      target: "basic",
+    },
+  ],
+}
+```
+
+The first matching guard wins. If no guards match and there's no guardless fallback, no transition occurs.
+
+## See Also
+
+- [Guards Guide](/guides/guards/) - Detailed usage examples
+- [createMachine](/api/create-machine/) - Using guards in transitions

@@ -1,0 +1,178 @@
+---
+title: Types
+description: Core type definitions
+---
+
+
+Key types you'll work with when using effstate.
+
+## MachineEvent
+
+Base interface for all events. Events must have a `_tag` discriminator.
+
+```typescript
+interface MachineEvent {
+  readonly _tag: string;
+}
+```
+
+**Define events with Data.TaggedClass:**
+
+```typescript
+import { Data } from "effect";
+
+class Increment extends Data.TaggedClass("INCREMENT")<{
+  amount: number;
+}> {}
+
+class Reset extends Data.TaggedClass("RESET")<{}> {}
+
+type CounterEvent = Increment | Reset;
+```
+
+---
+
+## MachineSnapshot
+
+The current state of a machine.
+
+```typescript
+interface MachineSnapshot<TStateValue extends string, TContext> {
+  /** Current state value */
+  readonly value: TStateValue;
+  /** Current context */
+  readonly context: TContext;
+  /** Last processed event (null initially) */
+  readonly event: MachineEvent | null;
+}
+```
+
+**Usage:**
+
+```typescript
+const snapshot = actor.getSnapshot();
+console.log(snapshot.value);   // "idle"
+console.log(snapshot.context); // { count: 0 }
+```
+
+---
+
+## MachineDefinition
+
+The machine definition returned by `createMachine()`.
+
+```typescript
+interface MachineDefinition<
+  TId extends string,
+  TStateValue extends string,
+  TContext,
+  TEvent extends MachineEvent,
+  R,      // Effect requirements
+  E,      // Effect error type
+  TContextEncoded,  // JSON-encoded context type
+> {
+  readonly _tag: "MachineDefinition";
+  readonly id: TId;
+  readonly initialSnapshot: MachineSnapshot<TStateValue, TContext>;
+  readonly contextSchema: Schema.Schema<TContext, TContextEncoded>;
+}
+```
+
+**Type helpers for extracting types:**
+
+```typescript
+import type {
+  MachineDefinitionState,
+  MachineDefinitionContext,
+  MachineDefinitionEvent,
+  MachineDefinitionR,
+} from "effstate";
+
+type State = MachineDefinitionState<typeof myMachine>;
+type Context = MachineDefinitionContext<typeof myMachine>;
+type Event = MachineDefinitionEvent<typeof myMachine>;
+type Requirements = MachineDefinitionR<typeof myMachine>;
+```
+
+---
+
+## StateMachineError
+
+Error types emitted via `actor.onError()`.
+
+```typescript
+// Effect action failed
+class EffectActionError {
+  readonly _tag = "EffectActionError";
+  readonly message: string;
+  readonly cause: Cause.Cause<unknown>;
+}
+
+// Activity threw an error
+class ActivityError {
+  readonly _tag = "ActivityError";
+  readonly message: string;
+  readonly activityId: string;
+  readonly cause: Cause.Cause<unknown>;
+}
+
+type StateMachineError = EffectActionError | ActivityError;
+```
+
+**Handling errors:**
+
+```typescript
+actor.onError((error) => {
+  switch (error._tag) {
+    case "EffectActionError":
+      console.error("Effect failed:", error.message);
+      break;
+    case "ActivityError":
+      console.error(`Activity ${error.activityId} failed:`, error.message);
+      break;
+  }
+});
+```
+
+---
+
+## EmittedEvent
+
+Events emitted via the `emit` action and received via `actor.on()`.
+
+```typescript
+interface EmittedEvent {
+  type: string;
+  [key: string]: unknown;
+}
+```
+
+**Example:**
+
+```typescript
+// In machine config
+emit({ type: "notification", message: "Done!" })
+
+// Listening
+actor.on<{ type: "notification"; message: string }>("notification", (event) => {
+  showToast(event.message);
+});
+```
+
+---
+
+## Effect.Service Pattern Types
+
+When using the Effect.Service pattern, these utility types help extract service requirements:
+
+```typescript
+import type { MachineServiceR } from "effstate";
+
+// Get R channel from a machine service
+type Requirements = MachineServiceR<typeof MyMachineService>;
+```
+
+## See Also
+
+- [createMachine](/api/create-machine/) - Creating machine definitions
+- [MachineActor](/api/machine-actor/) - The actor interface

@@ -1,0 +1,221 @@
+---
+title: interpret
+description: API reference for interpret and interpretSync
+---
+
+
+Creates a running actor from a machine definition.
+
+## interpret
+
+The primary API for Effect users. Returns an Effect that creates an actor with full service access and automatic cleanup.
+
+### Signature
+
+```typescript
+function interpret<TStateValue, TContext, TEvent, R, E>(
+  machine: MachineDefinition<..., R, E, ...>,
+  options?: InterpretOptions,
+): Effect.Effect<MachineActor<TStateValue, TContext, TEvent>, never, R | Scope.Scope>
+```
+
+### Options
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `parent` | `MachineActor` | Parent actor for child machines |
+| `snapshot` | `MachineSnapshot` | Initial snapshot for state restoration |
+| `childSnapshots` | `Map<string, MachineSnapshot>` | Child snapshots for restoration |
+
+### Returns
+
+An Effect that yields a `MachineActor`. The actor is automatically stopped when the Effect's scope closes.
+
+### Example
+
+```typescript
+import { interpret, createMachine } from "effstate";
+import { Effect, Scope } from "effect";
+
+const program = Effect.gen(function* () {
+  const actor = yield* interpret(machine);
+
+  // Subscribe to state changes
+  actor.subscribe((snapshot) => {
+    console.log("State:", snapshot.value);
+  });
+
+  // Send events
+  actor.send(new MyEvent());
+
+  // Wait for a specific state
+  const result = yield* actor.waitFor((s) => s.value === "done");
+
+  return result;
+});
+
+// Run with automatic cleanup
+Effect.runPromise(
+  program.pipe(
+    Effect.scoped, // Scope ensures cleanup
+    Effect.provide(MyService.Default), // Provide services
+  )
+);
+```
+
+### With Service Dependencies
+
+```typescript
+class ApiClient extends Effect.Service<ApiClient>()("ApiClient", {
+  succeed: {
+    fetchUser: (id: string) => Effect.tryPromise(() => fetch(`/api/users/${id}`)),
+  },
+}) {}
+
+// Machine uses ApiClient in invoke.src
+const userMachine = createMachine({
+  states: {
+    loading: {
+      invoke: {
+        src: ({ context }) =>
+          Effect.gen(function* () {
+            const api = yield* ApiClient;
+            return yield* api.fetchUser(context.userId);
+          }),
+        onSuccess: { target: "ready" },
+      },
+    },
+  },
+});
+
+// Provide the service when running
+const program = Effect.gen(function* () {
+  const actor = yield* interpret(userMachine);
+  actor.send(new Load());
+});
+
+Effect.runPromise(
+  program.pipe(
+    Effect.scoped,
+    Effect.provide(ApiClient.Default),
+  )
+);
+```
+
+### With State Restoration
+
+```typescript
+// Load persisted state
+const persisted = loadFromStorage();
+
+const program = Effect.gen(function* () {
+  const actor = yield* interpret(machine, {
+    snapshot: persisted.snapshot,
+    childSnapshots: persisted.childSnapshots,
+  });
+
+  return actor;
+});
+```
+
+---
+
+## interpretSync
+
+Synchronously creates an actor without Effect context. Use this for simple cases or when managing lifecycle manually.
+
+### Signature
+
+```typescript
+function interpretSync<TStateValue, TContext, TEvent, R, E>(
+  machine: MachineDefinition<..., R, E, ...>,
+  options?: { parent?: MachineActor },
+): MachineActor<TStateValue, TContext, TEvent>
+```
+
+### Returns
+
+A `MachineActor` directly (not wrapped in Effect).
+
+### Example
+
+```typescript
+import { interpretSync, createMachine } from "effstate";
+
+const actor = interpretSync(machine);
+
+actor.subscribe((snapshot) => {
+  console.log("State:", snapshot.value);
+});
+
+actor.send(new MyEvent());
+
+// Important: manually clean up when done
+actor.stop();
+```
+
+### When to Use
+
+Use `interpretSync` when:
+
+- You're in a non-Effect context (e.g., vanilla JS)
+- Your machine doesn't need service dependencies (R = never)
+- You're managing lifecycle manually (e.g., in a React useEffect)
+
+Use `interpret` when:
+
+- Your machine uses services (via Effect.Service)
+- You want automatic cleanup via Scope
+- You're already in an Effect context
+
+### Warning
+
+If your machine has service dependencies (R !== never) and you use `interpretSync`, effect actions that require those services will fail at runtime.
+
+---
+
+## withRequirements
+
+Type helper to narrow the R channel of a machine definition.
+
+### Signature
+
+```typescript
+function withRequirements<R>(): <...>(
+  machine: MachineDefinition<...>
+) => MachineDefinition<..., R, ...>
+```
+
+### Example
+
+```typescript
+import { withRequirements, createMachine } from "effstate";
+
+// Machine that uses WeatherService in its invoke
+const garageDoorMachine = withRequirements<WeatherService>()(
+  createMachine({
+    id: "garageDoor",
+    states: {
+      checking: {
+        invoke: {
+          src: () =>
+            Effect.gen(function* () {
+              const weather = yield* WeatherService;
+              return yield* weather.getCurrentWeather();
+            }),
+          onSuccess: { target: "ready" },
+        },
+      },
+    },
+  })
+);
+
+// Now TypeScript knows this machine requires WeatherService
+// type R = MachineDefinitionR<typeof garageDoorMachine>
+// => WeatherService
+```
+
+## See Also
+
+- [createMachine](/api/create-machine/) - Create a machine definition
+- [MachineActor](/api/machine-actor/) - The actor interface

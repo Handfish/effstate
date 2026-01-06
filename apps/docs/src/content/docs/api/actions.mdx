@@ -1,0 +1,378 @@
+---
+title: Actions
+description: API reference for action creators
+---
+
+
+Action creators for use in state machine transitions, entry, and exit handlers.
+
+## assign
+
+Updates the machine's context.
+
+```typescript
+function assign<TContext, TEvent>(
+  assignment: Partial<TContext> | ((params: { context: TContext; event: TEvent }) => Partial<TContext>)
+): AssignAction
+```
+
+**Examples:**
+
+```typescript
+// Static assignment
+assign({ count: 0 })
+
+// Dynamic from context
+assign(({ context }) => ({ count: context.count + 1 }))
+
+// Dynamic from event
+assign(({ event }) => ({ value: event.payload }))
+```
+
+---
+
+## effect
+
+Runs an Effect for side effects.
+
+```typescript
+function effect<TContext, TEvent, R, E>(
+  fn: (params: { context: TContext; event: TEvent }) => Effect.Effect<void, E, R>
+): EffectAction
+```
+
+**Examples:**
+
+```typescript
+// Simple logging
+effect(() => Effect.log("State entered"))
+
+// Using context
+effect(({ context }) => Effect.log(`Count: ${context.count}`))
+
+// Service call
+effect(({ context }) =>
+  Effect.gen(function* () {
+    const api = yield* ApiService;
+    yield* api.saveProgress(context);
+  })
+)
+```
+
+---
+
+## raise
+
+Sends an event to self.
+
+```typescript
+function raise<TContext, TEvent>(
+  event: TEvent | ((params: { context: TContext; event: TEvent }) => TEvent)
+): RaiseAction
+```
+
+**Examples:**
+
+```typescript
+// Static event
+raise(new Done())
+
+// Dynamic event
+raise(({ context }) => new SetValue({ value: context.computed }))
+```
+
+---
+
+## emit
+
+Emits an event to external listeners (via `actor.on()`).
+
+```typescript
+function emit<TContext, TEvent>(
+  event: EmittedEvent | ((params: { context: TContext; event: TEvent }) => EmittedEvent)
+): EmitAction
+```
+
+**Examples:**
+
+```typescript
+// Static event
+emit({ type: "notification", message: "Complete!" })
+
+// Dynamic event
+emit(({ context }) => ({ type: "progress", percent: context.progress }))
+```
+
+---
+
+## log
+
+Shorthand for logging.
+
+```typescript
+function log<TContext, TEvent>(
+  message: string | ((params: { context: TContext; event: TEvent }) => string)
+): EffectAction
+```
+
+**Examples:**
+
+```typescript
+log("Entering state")
+log(({ context }) => `Count is ${context.count}`)
+```
+
+---
+
+## sendTo
+
+Sends an event to a child actor.
+
+```typescript
+function sendTo<TContext, TEvent>(
+  target: string | ((params: { context: TContext; event: TEvent }) => string),
+  event: MachineEvent | ((params: { context: TContext; event: TEvent }) => MachineEvent)
+): SendToAction
+```
+
+**Examples:**
+
+```typescript
+// Static target and event
+sendTo("childMachine", new Start())
+
+// Dynamic target
+sendTo(({ context }) => `child-${context.activeId}`, new Ping())
+
+// Dynamic event
+sendTo("timer", ({ context }) => new SetDuration({ ms: context.timeout }))
+```
+
+---
+
+## sendParent
+
+Sends an event to the parent actor.
+
+```typescript
+function sendParent<TContext, TEvent>(
+  event: MachineEvent | ((params: { context: TContext; event: TEvent }) => MachineEvent)
+): SendParentAction
+```
+
+**Examples:**
+
+```typescript
+// Static event
+sendParent(new ChildComplete())
+
+// Dynamic event
+sendParent(({ context }) => new ResultReady({ data: context.result }))
+```
+
+---
+
+## forwardTo
+
+Forwards the current event to a child actor.
+
+```typescript
+function forwardTo<TContext, TEvent>(
+  target: string | ((params: { context: TContext; event: TEvent }) => string)
+): ForwardToAction
+```
+
+**Examples:**
+
+```typescript
+// Static target
+forwardTo("childMachine")
+
+// Dynamic target
+forwardTo(({ context }) => context.activeChildId)
+```
+
+---
+
+## spawnChild
+
+Spawns a child machine actor.
+
+```typescript
+function spawnChild<TContext, TEvent>(
+  machine: MachineDefinition,
+  options: {
+    id: string | ((params: { context: TContext; event: TEvent }) => string)
+  }
+): SpawnChildAction
+```
+
+**Examples:**
+
+```typescript
+// Static ID
+spawnChild(ChildMachine, { id: "myChild" })
+
+// Dynamic ID
+spawnChild(WorkerMachine, {
+  id: ({ context }) => `worker-${context.workers.length}`
+})
+```
+
+---
+
+## stopChild
+
+Stops a child machine actor.
+
+```typescript
+function stopChild<TContext, TEvent>(
+  childId: string | ((params: { context: TContext; event: TEvent }) => string)
+): StopChildAction
+```
+
+**Examples:**
+
+```typescript
+// Static ID
+stopChild("myChild")
+
+// Dynamic ID
+stopChild(({ event }) => event.childToStop)
+```
+
+---
+
+## cancel
+
+Cancels a pending delayed transition.
+
+```typescript
+function cancel<TContext, TEvent>(
+  sendId: string | ((params: { context: TContext; event: TEvent }) => string)
+): CancelAction
+```
+
+**Example:**
+
+```typescript
+// State config with cancellable delay
+{
+  after: {
+    5000: { id: "timeout", target: "timedOut" }
+  },
+  on: {
+    CANCEL: {
+      target: "cancelled",
+      actions: [cancel("timeout")]
+    }
+  }
+}
+```
+
+---
+
+## enqueueActions
+
+Dynamically build an action list at runtime.
+
+```typescript
+function enqueueActions<TContext, TEvent, R, E>(
+  collect: (params: {
+    context: TContext;
+    event: TEvent;
+    enqueue: ActionEnqueuer<TContext, TEvent, R, E>;
+  }) => void
+): EnqueueActionsAction
+```
+
+**ActionEnqueuer interface:**
+
+```typescript
+interface ActionEnqueuer {
+  (action: Action): void;
+  assign: (assignment: Partial<TContext> | ((p) => Partial<TContext>)) => void;
+  raise: (event: TEvent | ((p) => TEvent)) => void;
+  effect: (fn: (p) => Effect) => void;
+}
+```
+
+**Example:**
+
+```typescript
+enqueueActions(({ context, event, enqueue }) => {
+  // Always do this
+  enqueue.assign({ lastAction: Date.now() });
+
+  // Conditional actions
+  if (context.count > 10) {
+    enqueue.assign({ status: "high" });
+    enqueue.effect(() => Effect.log("High count!"));
+  }
+
+  // Based on event
+  if (event.notify) {
+    enqueue.raise(new SendNotification());
+  }
+})
+```
+
+---
+
+## Invoke Action Helpers
+
+Type-safe assign helpers for invoke result handlers.
+
+### assignOnSuccess
+
+```typescript
+function assignOnSuccess<TContext, TOutput>(
+  fn: (params: { context: TContext; output: TOutput }) => Partial<TContext>
+): AssignAction
+```
+
+### assignOnFailure
+
+```typescript
+function assignOnFailure<TContext, TError>(
+  fn: (params: { context: TContext; error: TError }) => Partial<TContext>
+): AssignAction
+```
+
+### assignOnDefect
+
+```typescript
+function assignOnDefect<TContext>(
+  fn: (params: { context: TContext; defect: unknown }) => Partial<TContext>
+): AssignAction
+```
+
+**Example:**
+
+```typescript
+invoke: {
+  src: () => fetchUser(),
+  onSuccess: {
+    target: "ready",
+    actions: [
+      assignOnSuccess<MyContext, User>(({ output }) => ({
+        user: output,
+        loading: false,
+      })),
+    ],
+  },
+  onFailure: {
+    target: "error",
+    actions: [
+      assignOnFailure<MyContext, ApiError>(({ error }) => ({
+        errorMessage: error.message,
+      })),
+    ],
+  },
+}
+```
+
+## See Also
+
+- [Actions Guide](/guides/actions/) - Detailed usage examples
+- [createMachine](/api/create-machine/) - Using actions in machine config
