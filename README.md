@@ -9,6 +9,7 @@
 </p>
 
 <p align="center">
+  <a href="https://handfish.github.io/effstate/"><img src="https://img.shields.io/badge/docs-website-blue.svg" alt="documentation" /></a>
   <a href="https://www.npmjs.com/package/effstate"><img src="https://img.shields.io/npm/v/effstate.svg" alt="npm version" /></a>
   <a href="https://www.npmjs.com/package/effstate"><img src="https://img.shields.io/npm/dm/effstate.svg" alt="npm downloads" /></a>
   <a href="https://github.com/handfish/effstate/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/effstate.svg" alt="license" /></a>
