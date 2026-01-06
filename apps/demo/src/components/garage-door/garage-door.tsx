@@ -59,9 +59,10 @@ const WeatherDisplay = ({ weather }: { weather: WeatherStatus }) => {
 interface GarageDoorProps {
   useHook?: GarageDoorHook;
   title?: string;
+  mobileTitle?: string;
 }
 
-export const GarageDoor = ({ useHook = useGarageDoorLeft, title = "Garage Door" }: GarageDoorProps) => {
+export const GarageDoor = ({ useHook = useGarageDoorLeft, title = "Garage Door", mobileTitle }: GarageDoorProps) => {
   const { send, isLoading, context, state } = useHook();
 
   // Handle animation completion
@@ -99,21 +100,30 @@ export const GarageDoor = ({ useHook = useGarageDoorLeft, title = "Garage Door" 
 
   return (
     <div className={cn(
-      "flex flex-col items-center gap-6 p-8 rounded-lg transition-all duration-500",
+      "flex flex-col items-center gap-4 md:gap-6 p-4 md:p-8 rounded-lg transition-all duration-500",
       !hasElectricity && "opacity-70"
     )}>
       <div className="flex items-center gap-2">
         <h2 className={cn(
-          "text-2xl font-bold transition-colors duration-500",
+          "text-xl md:text-2xl font-bold transition-colors duration-500",
           hasElectricity ? "text-gray-100" : "text-gray-300"
-        )}>{title}</h2>
+        )}>
+          {mobileTitle ? (
+            <>
+              <span className="lg:hidden">{mobileTitle}</span>
+              <span className="hidden lg:inline">{title}</span>
+            </>
+          ) : (
+            title
+          )}
+        </h2>
         {!hasElectricity && (
-          <span className="text-red-500 text-xl" title="No Power">🔌</span>
+          <span className="text-red-500 text-lg md:text-xl" title="No Power">🔌</span>
         )}
       </div>
 
       {/* Garage Frame */}
-      <div className="relative w-64 h-48 border-4 border-gray-700 rounded-t-lg bg-gray-900 overflow-hidden">
+      <div className="relative w-48 h-36 md:w-64 md:h-48 border-4 border-gray-700 rounded-t-lg bg-gray-900 overflow-hidden">
         {/* Inside of garage (visible when door opens) */}
         <div className="absolute inset-0 bg-gray-800 flex items-center justify-center">
           <WeatherDisplay weather={status.weather} />
@@ -158,19 +168,19 @@ export const GarageDoor = ({ useHook = useGarageDoorLeft, title = "Garage Door" 
       </div>
 
       {/* Floor/Driveway */}
-      <div className="w-64 h-4 bg-gray-600 -mt-6 rounded-b" />
+      <div className="w-48 md:w-64 h-3 md:h-4 bg-gray-600 -mt-4 md:-mt-6 rounded-b" />
 
       {/* Status Display */}
       <div className={cn(
         "text-center space-y-1 transition-colors duration-500",
         hasElectricity ? "text-gray-100" : "text-gray-300"
       )}>
-        <div className="text-lg font-medium">{getStateLabel(status.state)}</div>
-        <div className="text-sm opacity-70">
+        <div className="text-base md:text-lg font-medium">{getStateLabel(status.state)}</div>
+        <div className="text-xs md:text-sm opacity-70">
           Position: {status.position.toFixed(0)}%
         </div>
         {isPausedDueToNoPower && (
-          <div className="text-sm text-orange-500 animate-pulse">
+          <div className="text-xs md:text-sm text-orange-500 animate-pulse">
             Paused - No Power
           </div>
         )}
@@ -187,7 +197,7 @@ export const GarageDoor = ({ useHook = useGarageDoorLeft, title = "Garage Door" 
               ? "destructive"
               : "default"
         }
-        className="min-w-32"
+        className="min-w-28 md:min-w-32"
         disabled={!hasElectricity}
       >
         {!hasElectricity ? "No Power" : getButtonLabel(status.state)}
@@ -199,22 +209,22 @@ export const GarageDoor = ({ useHook = useGarageDoorLeft, title = "Garage Door" 
           onClick={() => send(new BangHammer())}
           size="lg"
           variant="outline"
-          className="min-w-32 border-orange-500 text-orange-500 hover:bg-orange-500 hover:text-white"
+          className="min-w-28 md:min-w-32 border-orange-500 text-orange-500 hover:bg-orange-500 hover:text-white text-xs md:text-sm"
         >
-          🔨 Bang Hammer (Wake Hamster)
+          🔨 Wake Hamster
         </Button>
       )}
 
       {/* State Machine Debug Info */}
       <div className={cn(
-        "text-xs mt-4 p-4 rounded-lg font-mono transition-colors duration-500",
+        "text-[10px] md:text-xs mt-2 md:mt-4 p-3 md:p-4 rounded-lg font-mono transition-colors duration-500 w-full max-w-[200px] md:max-w-none",
         hasElectricity ? "bg-gray-700 text-gray-100" : "bg-gray-800 text-gray-300"
       )}>
         <div>State: {status.state}</div>
         <div>Position: {status.position.toFixed(2)}%</div>
         <div>Power: {hasElectricity ? "On" : "Off"}</div>
         {isPausedDueToNoPower && <div className="text-orange-400">Animation Paused (no power)</div>}
-        <div className="mt-2 text-[10px]">
+        <div className="mt-2 text-[8px] md:text-[10px]">
           Click behavior:
           {status.state === "closed" && " Start opening"}
           {status.state === "opening" && " Pause (will close on resume)"}
