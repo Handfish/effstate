@@ -4,8 +4,8 @@ import react from '@astrojs/react';
 import tailwind from '@astrojs/tailwind';
 
 export default defineConfig({
-  site: 'https://handfish.github.io/effstate',
-  // base: '/effstate',
+  site: 'https://handfish.github.io',
+  base: '/effstate',
   integrations: [
     starlight({
       title: 'effstate',
