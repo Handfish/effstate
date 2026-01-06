@@ -1,5 +1,6 @@
 ---
 import { HamsterWheel } from "@/components/hamster-wheel/hamster-wheel";
+import "../styles/demo.css";
 ---
 
 <!doctype html>
@@ -9,8 +10,9 @@ import { HamsterWheel } from "@/components/hamster-wheel/hamster-wheel";
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>effstate Demo - Hamster Power Generator</title>
     <meta name="description" content="Interactive demo of effstate state machine library" />
+    <link rel="icon" type="image/png" href="/logo.png" />
   </head>
-  <body class="dark">
+  <body class="dark bg-background text-foreground min-h-screen">
     <HamsterWheel client:only="react" />
   </body>
 </html>

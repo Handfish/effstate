@@ -2,6 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Starlight logo sizing */
+.site-title img {
+  max-height: 2rem;
+  width: auto;
+}
+
 /* Demo CSS Variables */
 :root {
   --radius: 0.5rem;

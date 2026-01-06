@@ -10,6 +10,7 @@ export default defineConfig({
     starlight({
       title: 'effstate',
       description: 'Effect-first state machine library for TypeScript',
+      favicon: '/logo.png',
       logo: {
         src: './public/logo.png',
         alt: 'effstate logo',
