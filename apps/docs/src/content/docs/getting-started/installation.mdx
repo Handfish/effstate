@@ -1,0 +1,59 @@
+---
+title: Installation
+description: How to install effstate in your project
+---
+
+# Installation
+
+## Prerequisites
+
+effstate requires:
+- Node.js 18+
+- TypeScript 5.0+
+- Effect 3.0+
+
+## Install the Core Package
+
+```bash
+# npm
+npm install effstate effect
+
+# pnpm
+pnpm add effstate effect
+
+# yarn
+yarn add effstate effect
+```
+
+## React Integration (Optional)
+
+If you're using React, install the React integration package:
+
+```bash
+# npm
+npm install @effstate/react @effect-atom/atom-react
+
+# pnpm
+pnpm add @effstate/react @effect-atom/atom-react
+
+# yarn
+yarn add @effstate/react @effect-atom/atom-react
+```
+
+## TypeScript Configuration
+
+effstate works best with strict TypeScript settings. We recommend:
+
+```json
+{
+  "compilerOptions": {
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true
+  }
+}
+```
+
+## Next Steps
+
+Now that you have effstate installed, check out the [Quick Start](/getting-started/quick-start/) guide to build your first state machine.

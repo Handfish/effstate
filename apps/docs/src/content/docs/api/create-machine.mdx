@@ -1,0 +1,63 @@
+---
+title: createMachine
+description: API reference for createMachine
+---
+
+# createMachine
+
+Creates a state machine definition.
+
+## Signature
+
+```typescript
+function createMachine<
+  TStateValue extends string,
+  TEvent extends MachineEvent,
+  TContextSchema extends Schema.Schema.Any,
+  R = never,
+  E = never,
+>(config: MachineConfig): MachineDefinition
+```
+
+## Parameters
+
+### config
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `id` | `string` | Unique identifier for the machine |
+| `initial` | `TStateValue` | Initial state value |
+| `context` | `Schema.Schema` | Effect Schema for context |
+| `initialContext` | `TContext` | Initial context value |
+| `states` | `Record<TStateValue, StateNodeConfig>` | State definitions |
+
+## Returns
+
+Returns a `MachineDefinition` that can be passed to `interpret` or `interpretSync`.
+
+## Example
+
+```typescript
+import { createMachine, assign } from "effstate";
+import { Schema } from "effect";
+
+const ContextSchema = Schema.Struct({
+  count: Schema.Number,
+});
+
+const machine = createMachine({
+  id: "counter",
+  initial: "idle",
+  context: ContextSchema,
+  initialContext: { count: 0 },
+  states: {
+    idle: {
+      on: {
+        INCREMENT: {
+          actions: [assign(({ context }) => ({ count: context.count + 1 }))],
+        },
+      },
+    },
+  },
+});
+```

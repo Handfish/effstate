@@ -1,0 +1,74 @@
+---
+title: Guards
+description: Using guards for conditional transitions
+---
+
+# Guards
+
+Guards are pure synchronous predicates that determine whether a transition should occur.
+
+## Basic Guard
+
+```typescript
+import { createMachine, guard } from "effstate";
+
+const machine = createMachine({
+  // ...
+  states: {
+    idle: {
+      on: {
+        SUBMIT: {
+          target: "submitting",
+          guard: ({ context }) => context.isValid,
+        },
+      },
+    },
+  },
+});
+```
+
+## Guard Combinators
+
+Use `and`, `or`, and `not` to compose guards:
+
+```typescript
+import { and, or, not, guard } from "effstate";
+
+const isAdmin = guard(({ context }) => context.role === "admin");
+const isOwner = guard(({ context }) => context.isOwner);
+const isPublished = guard(({ context }) => context.status === "published");
+
+const canEdit = or(isAdmin, and(isOwner, not(isPublished)));
+
+const machine = createMachine({
+  states: {
+    viewing: {
+      on: {
+        EDIT: {
+          target: "editing",
+          guard: canEdit,
+        },
+      },
+    },
+  },
+});
+```
+
+## Event-Based Guards
+
+Guards receive both context and event:
+
+```typescript
+const machine = createMachine({
+  states: {
+    idle: {
+      on: {
+        SET_VALUE: {
+          target: "active",
+          guard: ({ context, event }) => event.value > context.threshold,
+        },
+      },
+    },
+  },
+});
+```

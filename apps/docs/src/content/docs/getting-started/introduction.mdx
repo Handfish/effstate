@@ -1,0 +1,75 @@
+---
+title: Introduction
+description: Learn about effstate - an Effect-first state machine library
+---
+
+# Introduction to effstate
+
+**effstate** is a state machine library built on [Effect](https://effect.website), designed for TypeScript applications that need robust, type-safe state management.
+
+## Key Features
+
+- **Effect-First Architecture** - Built on Effect for composable, type-safe side effects
+- **Schema-Based Context** - Use Effect Schema for type-safe serialization
+- **Actor Model** - Parent-child machine composition with proper lifecycle management
+- **React Integration** - First-class React support via `@effstate/react`
+- **Full Type Safety** - Compile-time guarantees for events, states, and context
+
+## Why effstate?
+
+Unlike other state machine libraries, effstate embraces Effect's functional programming paradigm:
+
+- **Typed Error Handling** - Distinguish between expected failures and defects
+- **Dependency Injection** - Use Effect's service layer for clean architecture
+- **Resource Management** - Automatic cleanup with Scope
+- **Testability** - Pure functions and injectable dependencies
+
+## Quick Example
+
+```typescript
+import { createMachine, interpret, assign } from "effstate";
+import { Data, Effect, Schema } from "effect";
+
+// Define events
+class Toggle extends Data.TaggedClass("TOGGLE")<{}> {}
+
+// Define context schema
+const ContextSchema = Schema.Struct({
+  count: Schema.Number,
+});
+
+// Create machine
+const counterMachine = createMachine({
+  id: "counter",
+  initial: "idle",
+  context: ContextSchema,
+  initialContext: { count: 0 },
+  states: {
+    idle: {
+      on: {
+        TOGGLE: {
+          target: "active",
+          actions: [assign(({ context }) => ({ count: context.count + 1 }))],
+        },
+      },
+    },
+    active: {
+      on: {
+        TOGGLE: { target: "idle" },
+      },
+    },
+  },
+});
+
+// Use the machine
+const program = Effect.gen(function* () {
+  const actor = yield* interpret(counterMachine);
+  actor.send(new Toggle());
+  console.log(actor.getSnapshot().value); // "active"
+});
+```
+
+## Next Steps
+
+- [Installation](/getting-started/installation/) - Get effstate set up in your project
+- [Quick Start](/getting-started/quick-start/) - Build your first state machine

@@ -23,5 +23,13 @@ dist-ssr
 *.sln
 *.sw?
 
+# Turborepo
+.turbo
+
+# Astro
+.astro
+
+# Build outputs
+coverage
 
 resources

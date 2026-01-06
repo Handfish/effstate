@@ -1,0 +1,146 @@
+---
+title: Quick Start
+description: Build your first state machine with effstate
+---
+
+# Quick Start
+
+This guide will walk you through building a simple toggle state machine.
+
+## 1. Define Your Events
+
+Events are defined using Effect's `Data.TaggedClass`:
+
+```typescript
+import { Data } from "effect";
+
+class Toggle extends Data.TaggedClass("TOGGLE")<{}> {}
+class Reset extends Data.TaggedClass("RESET")<{}> {}
+
+type MyEvent = Toggle | Reset;
+```
+
+## 2. Define Your Context Schema
+
+Context is defined using Effect Schema for type-safe serialization:
+
+```typescript
+import { Schema } from "effect";
+
+const ContextSchema = Schema.Struct({
+  toggleCount: Schema.Number,
+  lastToggled: Schema.DateFromString,
+});
+
+type MyContext = typeof ContextSchema.Type;
+```
+
+## 3. Create Your Machine
+
+```typescript
+import { createMachine, assign } from "effstate";
+
+const toggleMachine = createMachine<
+  "off" | "on",
+  MyEvent,
+  typeof ContextSchema
+>({
+  id: "toggle",
+  initial: "off",
+  context: ContextSchema,
+  initialContext: {
+    toggleCount: 0,
+    lastToggled: new Date(),
+  },
+  states: {
+    off: {
+      on: {
+        TOGGLE: {
+          target: "on",
+          actions: [
+            assign(({ context }) => ({
+              toggleCount: context.toggleCount + 1,
+              lastToggled: new Date(),
+            })),
+          ],
+        },
+      },
+    },
+    on: {
+      on: {
+        TOGGLE: { target: "off" },
+        RESET: {
+          target: "off",
+          actions: [assign({ toggleCount: 0 })],
+        },
+      },
+    },
+  },
+});
+```
+
+## 4. Interpret the Machine
+
+```typescript
+import { interpret } from "effstate";
+import { Effect } from "effect";
+
+const program = Effect.scoped(
+  Effect.gen(function* () {
+    const actor = yield* interpret(toggleMachine);
+
+    // Subscribe to state changes
+    actor.subscribe((snapshot) => {
+      console.log("State:", snapshot.value);
+      console.log("Count:", snapshot.context.toggleCount);
+    });
+
+    // Send events
+    actor.send(new Toggle()); // off -> on
+    actor.send(new Toggle()); // on -> off
+    actor.send(new Toggle()); // off -> on
+    actor.send(new Reset());  // on -> off, count reset
+
+    return actor.getSnapshot();
+  })
+);
+
+Effect.runPromise(program);
+```
+
+## 5. Use with React (Optional)
+
+```typescript
+import { createUseMachineHook } from "@effstate/react";
+import { Atom } from "@effect-atom/atom-react";
+
+// Create atoms for the machine
+const actorAtom = appRuntime
+  .atom(interpret(toggleMachine))
+  .pipe(Atom.keepAlive);
+
+// Create the hook
+const useToggleMachine = createUseMachineHook(
+  actorAtom,
+  snapshotAtom,
+  toggleMachine.initialSnapshot,
+);
+
+// Use in a component
+function ToggleButton() {
+  const { state, context, send } = useToggleMachine();
+
+  return (
+    <button onClick={() => send(new Toggle())}>
+      {state === "on" ? "Turn Off" : "Turn On"}
+      (toggled {context.toggleCount} times)
+    </button>
+  );
+}
+```
+
+## Next Steps
+
+- Learn about [Guards](/guides/guards/) for conditional transitions
+- Explore [Activities](/guides/activities/) for long-running effects
+- See [Invoke](/guides/invoke/) for async operations
