@@ -594,12 +594,49 @@ export interface StateNodeConfig<
   /** Invoke an Effect when entering this state. Auto-sends done/error events. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly invoke?: InvokeConfig<TStateValue, TContext, TEvent, any, any, R>;
-  /** After delay, auto-transition */
+  /**
+   * After delay, auto-transition.
+   *
+   * @example Numeric shorthand (milliseconds)
+   * ```ts
+   * after: { 1000: { target: "done" } }
+   * ```
+   *
+   * @example Duration-based delay
+   * ```ts
+   * after: {
+   *   delay: Duration.seconds(2),
+   *   transition: { target: "done" }
+   * }
+   * ```
+   *
+   * @example Persistent delay (survives state exits)
+   * ```ts
+   * after: {
+   *   delay: Duration.minutes(30),
+   *   transition: { target: "timeout" },
+   *   persistent: true
+   * }
+   * ```
+   *
+   * @example Effect-based delay (full control)
+   * ```ts
+   * after: {
+   *   delay: Effect.sleep(Duration.seconds(2)).pipe(
+   *     Effect.onInterrupt(() => Console.log("cancelled"))
+   *   ),
+   *   transition: { target: "done" }
+   * }
+   * ```
+   */
   readonly after?: {
     readonly [delay: number]: TransitionConfig<TStateValue, TContext, TEvent, R, E>;
   } | {
-    readonly delay: Duration.DurationInput;
+    /** Duration or Effect to wait before transitioning */
+    readonly delay: Duration.DurationInput | Effect.Effect<void, never, R>;
     readonly transition: TransitionConfig<TStateValue, TContext, TEvent, R, E>;
+    /** If true, delay survives state exits (not auto-cancelled) */
+    readonly persistent?: boolean;
   };
 }
 

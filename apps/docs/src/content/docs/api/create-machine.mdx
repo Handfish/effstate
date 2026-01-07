@@ -155,7 +155,11 @@ const machine = createMachine({
 
 ### With Delayed Transitions
 
+Delayed transitions automatically fire after a specified delay. By default, delays are **auto-cancelled** when exiting the state (preventing the "spam button" bug).
+
 ```typescript
+import { Duration, Effect } from "effect";
+
 const machine = createMachine({
   id: "timeout",
   initial: "idle",
@@ -168,6 +172,7 @@ const machine = createMachine({
       },
     },
     running: {
+      // Simple duration-based delay (auto-cancelled on state exit)
       after: {
         delay: Duration.seconds(5),
         transition: { target: "timedOut" },
@@ -181,6 +186,56 @@ const machine = createMachine({
   },
 });
 ```
+
+**Delay formats:**
+
+```typescript
+// Numeric shorthand (milliseconds)
+after: {
+  5000: { target: "timedOut" }
+}
+
+// Duration-based (recommended)
+after: {
+  delay: Duration.seconds(5),
+  transition: { target: "timedOut" }
+}
+
+// Persistent delay (survives state exits - for global timeouts)
+after: {
+  delay: Duration.minutes(30),
+  transition: { target: "sessionTimeout" },
+  persistent: true
+}
+
+// Effect-based delay (full control with interruption handlers)
+after: {
+  delay: Effect.sleep(Duration.seconds(5)).pipe(
+    Effect.onInterrupt(() => telemetry.trackCancellation())
+  ),
+  transition: { target: "timedOut" }
+}
+
+// Persistent + Effect (both features combined)
+after: {
+  delay: Effect.gen(function* () {
+    yield* Effect.sleep(Duration.minutes(1));
+    yield* metrics.recordHeartbeat();
+  }),
+  transition: { target: "timeout" },
+  persistent: true
+}
+```
+
+| Option | Description |
+|--------|-------------|
+| `delay` | `Duration.DurationInput` or `Effect<void, never, R>` |
+| `transition` | Target state and optional actions |
+| `persistent` | If `true`, delay survives state exits (only cancelled on `actor.stop()`) |
+
+:::note
+Effect-based delays require `interpret()` with a runtime. Using `interpretSync()` with Effect delays that require services will log a warning and may fail at runtime.
+:::
 
 ### With Activities
 

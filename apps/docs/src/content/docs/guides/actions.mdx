@@ -267,6 +267,104 @@ states: {
 }
 ```
 
+## Delayed Transitions
+
+The `after` property on a state configures delayed transitions. By default, delays are **auto-cancelled** when exiting the state.
+
+### Basic Usage
+
+```typescript
+import { Duration } from "effect";
+
+states: {
+  loading: {
+    after: {
+      delay: Duration.seconds(30),
+      transition: { target: "timeout" },
+    },
+    on: {
+      SUCCESS: { target: "ready" }, // Cancels the delay automatically
+    },
+  },
+}
+```
+
+### Persistent Delays
+
+Use `persistent: true` for delays that should survive state exits (e.g., session timeouts):
+
+```typescript
+states: {
+  active: {
+    after: {
+      delay: Duration.minutes(30),
+      transition: { target: "sessionExpired" },
+      persistent: true, // Fires even if user navigates to other states
+    },
+    on: {
+      NAVIGATE: { target: "otherState" }, // Delay keeps running!
+    },
+  },
+}
+```
+
+Persistent delays can still be explicitly cancelled:
+
+```typescript
+states: {
+  active: {
+    after: {
+      delay: Duration.minutes(30),
+      transition: { target: "sessionExpired", id: "sessionTimeout" },
+      persistent: true,
+    },
+    on: {
+      REFRESH_SESSION: {
+        actions: [cancel("sessionTimeout")], // Explicit cancellation
+      },
+    },
+  },
+}
+```
+
+### Effect-Based Delays
+
+For full control, use an Effect instead of a Duration:
+
+```typescript
+import { Effect, Duration } from "effect";
+
+states: {
+  waiting: {
+    after: {
+      delay: Effect.sleep(Duration.seconds(5)).pipe(
+        Effect.onInterrupt(() =>
+          telemetry.track("delay_cancelled")
+        )
+      ),
+      transition: { target: "done" },
+    },
+  },
+}
+```
+
+Complex multi-step delays:
+
+```typescript
+after: {
+  delay: Effect.gen(function* () {
+    yield* Effect.sleep(Duration.seconds(30));
+    yield* metrics.recordWarning("approaching timeout");
+    yield* Effect.sleep(Duration.seconds(30));
+  }),
+  transition: { target: "timeout" },
+}
+```
+
+:::note
+Effect-based delays require `interpret()` with a runtime. `interpretSync()` will log a warning if you use Effect delays that require services.
+:::
+
 ## enqueueActions
 
 Dynamically build an action list at runtime based on conditions.

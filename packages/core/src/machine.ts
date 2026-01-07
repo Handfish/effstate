@@ -293,7 +293,9 @@ function createActor<
   const errorHandlers = new Set<(error: StateMachineError) => void>();
   const activityCleanups = new Map<string, () => void>();
   const invokeCleanups = new Map<string, () => void>();
-  const delayTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const delayCleanups = new Map<string, () => void>();
+  const persistentDelayCleanups = new Map<string, () => void>(); // survives state exits
+  let delayCounter = 0;
   const listenersRef = new Map<string, Set<(event: EmittedEvent) => void>>();
   const childrenRef = new Map<string, MachineActor<any, any, any>>();
 
@@ -348,11 +350,27 @@ function createActor<
   let actor: MachineActor<TStateValue, TContext, TEvent>;
 
   const cancelDelay = (id: string) => {
-    const timer = delayTimers.get(id);
-    if (timer) {
-      clearTimeout(timer);
-      delayTimers.delete(id);
+    // Check both regular and persistent delays
+    const cleanup = delayCleanups.get(id) ?? persistentDelayCleanups.get(id);
+    if (cleanup) {
+      cleanup();
+      delayCleanups.delete(id);
+      persistentDelayCleanups.delete(id);
     }
+  };
+
+  const stopAllDelays = () => {
+    delayCleanups.forEach((cleanup) => {
+      try { cleanup(); } catch { /* ignore */ }
+    });
+    delayCleanups.clear();
+  };
+
+  const stopAllPersistentDelays = () => {
+    persistentDelayCleanups.forEach((cleanup) => {
+      try { cleanup(); } catch { /* ignore */ }
+    });
+    persistentDelayCleanups.clear();
   };
 
   const sendToChild = (childId: string, event: MachineEvent): void => {
@@ -371,21 +389,34 @@ function createActor<
 
     // Handle $after events
     if (event._tag === "$after") {
-      const afterEvent = event as unknown as { _tag: "$after"; delay: number | string };
-      const afterConfig = stateConfig?.after;
-      if (!afterConfig) return;
+      const afterEvent = event as unknown as {
+        _tag: "$after";
+        delay: number | string;
+        target?: TStateValue; // For persistent delays, target is encoded in event
+      };
 
+      let targetState: TStateValue;
       let transitionConfig: TransitionConfig<TStateValue, TContext, TEvent, R, E> | undefined;
-      if ("delay" in afterConfig && "transition" in afterConfig) {
-        transitionConfig = afterConfig.transition as TransitionConfig<TStateValue, TContext, TEvent, R, E>;
+
+      // Persistent delays include the target in the event
+      if (afterEvent.target) {
+        targetState = afterEvent.target;
+        transitionConfig = { target: targetState };
       } else {
-        const delays = afterConfig as Record<number, TransitionConfig<TStateValue, TContext, TEvent, R, E>>;
-        transitionConfig = delays[Number(afterEvent.delay)];
+        // Normal delays look up config from current state
+        const afterConfig = stateConfig?.after;
+        if (!afterConfig) return;
+
+        if ("delay" in afterConfig && "transition" in afterConfig) {
+          transitionConfig = afterConfig.transition as TransitionConfig<TStateValue, TContext, TEvent, R, E>;
+        } else {
+          const delays = afterConfig as Record<number, TransitionConfig<TStateValue, TContext, TEvent, R, E>>;
+          transitionConfig = delays[Number(afterEvent.delay)];
+        }
+
+        if (!transitionConfig?.target) return;
+        targetState = transitionConfig.target;
       }
-
-      if (!transitionConfig?.target) return;
-
-      const targetState = transitionConfig.target;
       let newContext = snapshot.context;
 
       if (stateConfig?.exit) {
@@ -394,6 +425,7 @@ function createActor<
 
       stopAllActivities();
       stopAllInvokes();
+      stopAllDelays();
 
       if (transitionConfig.actions) {
         newContext = runActionsSync(
@@ -473,6 +505,7 @@ function createActor<
       if (isTransition) {
         stopAllActivities();
         stopAllInvokes();
+        stopAllDelays();
       }
 
       if (handler.actions) {
@@ -595,6 +628,7 @@ function createActor<
       if (isTransition) {
         stopAllActivities();
         stopAllInvokes();
+        stopAllDelays();
       }
 
       if (handler.actions) {
@@ -666,6 +700,7 @@ function createActor<
       if (isTransition) {
         stopAllActivities();
         stopAllInvokes();
+        stopAllDelays();
       }
 
       if (invokeConfig.onDefect.actions) {
@@ -722,6 +757,7 @@ function createActor<
       if (isTransition) {
         stopAllActivities();
         stopAllInvokes();
+        stopAllDelays();
       }
 
       if (invokeConfig.onInterrupt.actions) {
@@ -781,6 +817,7 @@ function createActor<
     if (isTransition) {
       stopAllActivities();
       stopAllInvokes();
+      stopAllDelays();
     }
 
     if (transitionConfig.actions) {
@@ -1075,31 +1112,108 @@ function createActor<
   ) => {
     if (!after) return;
 
+    // Schedule a delay with Duration (milliseconds)
+    const scheduleDelayMs = (
+      delayMs: number,
+      delayKey: number | string,
+      transitionId?: string,
+      persistent = false,
+      target?: TStateValue,
+    ) => {
+      const cleanupId = transitionId ?? `$delay_${delayCounter++}`;
+      const cleanupMap = persistent ? persistentDelayCleanups : delayCleanups;
+
+      // For persistent delays, include target in the event so it works across state changes
+      const afterEvent = persistent && target
+        ? { _tag: "$after", delay: delayKey, target }
+        : { _tag: "$after", delay: delayKey };
+
+      const delayEffect = Effect.sleep(Duration.millis(delayMs)).pipe(
+        Effect.flatMap(() =>
+          Effect.sync(() => {
+            cleanupMap.delete(cleanupId);
+            mailbox.enqueue(afterEvent as unknown as TEvent);
+          })
+        ),
+      );
+
+      const fiber = runtime
+        ? Runtime.runFork(runtime)(delayEffect as Effect.Effect<void, never, R>)
+        : Effect.runFork(delayEffect);
+
+      cleanupMap.set(cleanupId, () => {
+        Effect.runFork(Fiber.interrupt(fiber));
+      });
+    };
+
+    // Schedule a delay with a user-provided Effect
+    const scheduleDelayEffect = (
+      userEffect: Effect.Effect<void, never, R>,
+      delayKey: string,
+      transitionId?: string,
+      persistent = false,
+      target?: TStateValue,
+    ) => {
+      const cleanupId = transitionId ?? `$delay_${delayCounter++}`;
+      const cleanupMap = persistent ? persistentDelayCleanups : delayCleanups;
+
+      // For persistent delays, include target in the event so it works across state changes
+      const afterEvent = persistent && target
+        ? { _tag: "$after", delay: delayKey, target }
+        : { _tag: "$after", delay: delayKey };
+
+      const delayEffect = userEffect.pipe(
+        Effect.flatMap(() =>
+          Effect.sync(() => {
+            cleanupMap.delete(cleanupId);
+            mailbox.enqueue(afterEvent as unknown as TEvent);
+          })
+        ),
+      );
+
+      // Cast needed for else branch: user is warned via console.warn if using Effect delays without runtime
+      const fiber = runtime
+        ? Runtime.runFork(runtime)(delayEffect as Effect.Effect<void, never, R>)
+        : Effect.runFork(delayEffect as Effect.Effect<void, never, never>);
+
+      cleanupMap.set(cleanupId, () => {
+        Effect.runFork(Fiber.interrupt(fiber));
+      });
+    };
+
     if ("delay" in after && "transition" in after) {
-      const delayMs = Duration.toMillis(Duration.decode(after.delay));
-      const transitionId = (after.transition as TransitionConfig<TStateValue, TContext, TEvent, any, any>).id;
+      const transition = after.transition as TransitionConfig<TStateValue, TContext, TEvent, any, any>;
+      const transitionId = transition.id;
+      const persistent = (after as { persistent?: boolean }).persistent ?? false;
+      const target = transition.target;
 
-      const timer = setTimeout(() => {
-        if (transitionId) delayTimers.delete(transitionId);
-        mailbox.enqueue({ _tag: "$after", delay: delayMs } as unknown as TEvent);
-      }, delayMs);
-
-      if (transitionId) {
-        delayTimers.set(transitionId, timer);
+      // Check if delay is an Effect or Duration
+      if (Effect.isEffect(after.delay)) {
+        if (!runtime) {
+          console.warn(
+            "[effstate] Effect-based delays require interpret() with a runtime. " +
+            "Using interpretSync() with Effect delays that require services will fail. " +
+            "Consider using Duration-based delays or switch to interpret()."
+          );
+        }
+        scheduleDelayEffect(
+          after.delay as Effect.Effect<void, never, R>,
+          "$effect",
+          transitionId,
+          persistent,
+          target,
+        );
+      } else {
+        const delayMs = Duration.toMillis(Duration.decode(after.delay as Duration.DurationInput));
+        scheduleDelayMs(delayMs, delayMs, transitionId, persistent, target);
       }
       return;
     }
 
+    // Numeric shorthand: { 1000: { target: "done" } }
     const entries = Object.entries(after as Record<number, TransitionConfig<TStateValue, TContext, TEvent, any, any>>);
     for (const [delayMs, config] of entries) {
-      const timer = setTimeout(() => {
-        if (config.id) delayTimers.delete(config.id);
-        mailbox.enqueue({ _tag: "$after", delay: delayMs } as unknown as TEvent);
-      }, Number(delayMs));
-
-      if (config.id) {
-        delayTimers.set(config.id, timer);
-      }
+      scheduleDelayMs(Number(delayMs), delayMs, config.id, false);
     }
   };
 
@@ -1107,8 +1221,8 @@ function createActor<
     stopped = true;
     stopAllActivities();
     stopAllInvokes();
-    delayTimers.forEach((timer) => clearTimeout(timer));
-    delayTimers.clear();
+    stopAllDelays();
+    stopAllPersistentDelays();
     childrenRef.forEach((child) => child.stop());
     childrenRef.clear();
   };
@@ -1149,8 +1263,7 @@ function createActor<
   // Pause activities without stopping the actor (for tab visibility changes)
   const pauseActivities = () => {
     stopAllActivities();
-    delayTimers.forEach((timer) => clearTimeout(timer));
-    delayTimers.clear();
+    stopAllDelays();
     // Recursively pause children
     childrenRef.forEach((child) => {
       child._pauseActivities();
@@ -1184,8 +1297,7 @@ function createActor<
     // Only stop/restart activities if state actually changed
     if (stateChanged) {
       stopAllActivities();
-      delayTimers.forEach((timer) => clearTimeout(timer));
-      delayTimers.clear();
+      stopAllDelays();
     }
 
     // Update the snapshot
