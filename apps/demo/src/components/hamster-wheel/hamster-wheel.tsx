@@ -68,12 +68,13 @@ const HamsterWheelContent = ({
         )}
       </div>
 
-      {/* Hamster wheel container */}
-      <div className="relative mb-4 md:mb-8">
-        {/* Wheel */}
+      {/* Hamster wheel container - explicit size for proper centering */}
+      <div className="relative mb-4 md:mb-8 w-32 h-32 md:w-48 md:h-48">
+
+        {/* Spinning wheel (visual ring + spokes + edge decoration) */}
         <div
           className={cn(
-            "w-32 h-32 md:w-48 md:h-48 rounded-full border-4 md:border-8 relative",
+            "absolute inset-0 rounded-full border-4 md:border-8",
             hasElectricity
               ? "border-amber-700 bg-amber-100/80"
               : "border-gray-600 bg-gray-800"
@@ -88,30 +89,41 @@ const HamsterWheelContent = ({
             <div
               key={angle}
               className={cn(
-                "absolute top-1/2 left-1/2 w-full h-1 -translate-x-1/2 -translate-y-1/2",
+                "absolute top-1/2 left-1/2 w-full h-1 origin-center",
                 hasElectricity ? "bg-amber-700" : "bg-gray-600"
               )}
-              style={{ transform: `rotate(${angle}deg)` }}
+              style={{ transform: `translate(-50%, -50%) rotate(${angle}deg)` }}
             />
           ))}
 
-          {/* Center hub */}
+          {/* Decorative circle on wheel edge (spins with wheel) */}
           <div
             className={cn(
-              "absolute top-1/2 left-1/2 w-5 h-5 md:w-8 md:h-8 rounded-full -translate-x-1/2 -translate-y-1/2",
-              hasElectricity ? "bg-amber-800" : "bg-gray-700"
+              "absolute w-6 h-6 md:w-9 md:h-9 rounded-full left-1/2 -translate-x-1/2",
+              hasElectricity ? "bg-amber-700" : "bg-gray-600"
             )}
+            style={{ top: "-20px" }}
           />
         </div>
 
-        {/* Hamster */}
+        {/* Center hub - stationary, outside the spinning div */}
         <div
           className={cn(
-            "absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-3xl md:text-5xl transition-transform duration-200",
+            "absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-5 h-5 md:w-8 md:h-8 rounded-full z-10",
+            hasElectricity ? "bg-amber-800" : "bg-gray-700"
+          )}
+        />
+
+        {/* Hamster - stationary, on top */}
+        <div
+          className={cn(
+            "absolute text-3xl md:text-5xl z-20 transition-[top,left] duration-300",
             isRunning && "animate-bounce"
           )}
           style={{
-            transform: `translate(-50%, -50%) ${isRunning ? "" : "scale(0.9)"}`,
+            top: isRunning ? "55%" : "50%",
+            left: isRunning ? "60%" : "50%",
+            transform: "translate(-50%, -50%)",
             animation: status.state === "idle" ? "breathe 3s ease-in-out infinite" : undefined,
           }}
         >
@@ -119,14 +131,14 @@ const HamsterWheelContent = ({
         </div>
         <style>{`
           @keyframes breathe {
-            0%, 100% { transform: translate(-50%, -50%) scale(0.85); }
-            50% { transform: translate(-50%, -50%) scale(0.95); }
+            0%, 100% { transform: translate(-50%, -50%) scale(0.9); }
+            50% { transform: translate(-50%, -50%) scale(1); }
           }
         `}</style>
 
         {/* Running indicator */}
         {isRunning && (
-          <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 text-xs md:text-sm text-gray-300 whitespace-nowrap flex">
+          <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 text-xs md:text-sm text-gray-300 whitespace-nowrap flex z-20">
             {"*running noises*".split("").map((char, i) => (
               <span
                 key={i}
