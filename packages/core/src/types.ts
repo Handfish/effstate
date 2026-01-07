@@ -65,9 +65,12 @@ export interface EffectAction<
 /**
  * Raise action to send events to self
  */
-export interface RaiseAction<TEvent extends MachineEvent> {
+export interface RaiseAction<
+  TContext extends MachineContext,
+  TEvent extends MachineEvent,
+> {
   readonly _tag: "raise";
-  readonly event: TEvent | ((params: { context: unknown; event: MachineEvent }) => TEvent);
+  readonly event: TEvent | ((params: { context: TContext; event: MachineEvent }) => TEvent);
 }
 
 /**
@@ -265,7 +268,7 @@ export type Action<
 > =
   | AssignAction<TContext, TEvent>
   | EffectAction<TContext, TEvent, R, E>
-  | RaiseAction<MachineEvent>
+  | RaiseAction<TContext, MachineEvent>
   | CancelAction<TContext, TEvent>
   | EmitAction<TContext, TEvent>
   | EnqueueActionsAction<TContext, TEvent, R, E>
@@ -405,6 +408,30 @@ export type TaggedError = { readonly _tag: string };
 export type ErrorByTag<TError, TTag extends string> = Extract<TError, { _tag: TTag }>;
 
 /**
+ * Type for a catchTags handler when accessed by dynamic key lookup.
+ * Since the error tag is only known at runtime, the error type is unknown.
+ * This is used internally when processing $invoke.failure events.
+ */
+export type CatchTagHandler<
+  TStateValue extends string,
+  TContext extends MachineContext,
+  R = never,
+  E = never,
+> = {
+  readonly target?: TStateValue;
+  readonly guard?: Guard<TContext, InvokeFailureEvent<TaggedError>>;
+  readonly actions?: ReadonlyArray<Action<TContext, InvokeFailureEvent<TaggedError>, R, E>>;
+};
+
+/**
+ * Type for an assignResult.catchTags handler when accessed by dynamic key lookup.
+ * Since the error tag is only known at runtime, the error type is TaggedError.
+ */
+export type AssignResultCatchTagHandler<TContext extends MachineContext> = (
+  params: { context: TContext; error: TaggedError }
+) => Partial<TContext>;
+
+/**
  * Invoke configuration for async operations.
  * Uses Effect's Cause to distinguish between typed failures, defects, and interrupts.
  *
@@ -477,6 +504,9 @@ export interface InvokeConfig<
    * Handle specific tagged error types differently.
    * Only works with errors that have a `_tag` property (e.g., Data.TaggedError).
    * Takes precedence over onFailure for matching error tags.
+   *
+   * When TError is a known tagged error union, provides strict typing for each tag.
+   * When TError is unknown (e.g., in StateNodeConfig), allows any string key with TaggedError typing.
    */
   readonly catchTags?: TError extends TaggedError
     ? {
@@ -486,7 +516,11 @@ export interface InvokeConfig<
           readonly actions?: ReadonlyArray<Action<TContext, InvokeFailureEvent<ErrorByTag<TError, K>>, R, never>>;
         };
       }
-    : never;
+    : Record<string, {
+        readonly target?: TStateValue;
+        readonly guard?: Guard<TContext, InvokeFailureEvent<TaggedError>>;
+        readonly actions?: ReadonlyArray<Action<TContext, InvokeFailureEvent<TaggedError>, R, never>>;
+      }>;
 
   /**
    * Fallback transition for typed errors (E channel) not handled by catchTags.
@@ -557,12 +591,15 @@ export interface InvokeConfig<
    */
   readonly assignResult?: {
     readonly success: (params: { context: TContext; output: TOutput }) => Partial<TContext>;
-    /** Handle specific tagged error types differently */
+    /**
+     * Handle specific tagged error types differently.
+     * When TError is known, provides strict typing. Otherwise allows any string key.
+     */
     readonly catchTags?: TError extends TaggedError
       ? {
           readonly [K in TError["_tag"]]?: (params: { context: TContext; error: ErrorByTag<TError, K> }) => Partial<TContext>;
         }
-      : never;
+      : Record<string, (params: { context: TContext; error: TaggedError }) => Partial<TContext>>;
     /** Fallback for errors not handled by catchTags */
     readonly failure?: (params: { context: TContext; error: TError }) => Partial<TContext>;
     readonly defect?: (params: { context: TContext; defect: unknown }) => Partial<TContext>;
@@ -612,8 +649,14 @@ export interface StateNodeConfig<
     readonly [K in TEvent["_tag"]]?: NarrowedTransitionConfig<TStateValue, TContext, TEvent, K, R, E>;
   };
   readonly activities?: ReadonlyArray<ActivityConfig<TContext, TEvent, R, E>>;
-  /** Invoke an Effect when entering this state. Auto-sends done/error events. */
-  readonly invoke?: InvokeConfig<TStateValue, TContext, TEvent, unknown, unknown, R>;
+  /**
+   * Invoke an Effect when entering this state. Auto-sends done/error events.
+   *
+   * Note: TOutput uses `any` because we can't infer the output type from `src` at this level.
+   * TError uses `unknown` with a Record fallback in catchTags (see InvokeConfig).
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly invoke?: InvokeConfig<TStateValue, TContext, TEvent, any, unknown, R>;
   /**
    * After delay, auto-transition.
    *

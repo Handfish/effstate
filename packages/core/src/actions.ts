@@ -173,9 +173,12 @@ export function effect<
  * raise(({ context }) => ({ type: "UPDATE", payload: context.value }))
  * ```
  */
-export function raise<TEvent extends MachineEvent>(
-  event: TEvent | ((params: { context: unknown; event: MachineEvent }) => TEvent),
-): RaiseAction<TEvent> {
+export function raise<
+  TContext extends MachineContext,
+  TEvent extends MachineEvent,
+>(
+  event: TEvent | ((params: { context: TContext; event: MachineEvent }) => TEvent),
+): RaiseAction<TContext, TEvent> {
   return {
     _tag: "raise",
     event,

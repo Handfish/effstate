@@ -3,6 +3,8 @@ import type {
   Action,
   ActionEnqueuer,
   AfterEvent,
+  AssignResultCatchTagHandler,
+  CatchTagHandler,
   EmittedEvent,
   Guard,
   InternalEvent,
@@ -578,10 +580,10 @@ function createActor<
           "_tag" in failureEvent.error
         ) {
           const errorTag = (failureEvent.error as { _tag: string })._tag;
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const tagHandler = (invokeConfig.assignResult.catchTags as Record<string, any>)[errorTag];
+          // Dynamic lookup by runtime error tag - handler type is narrowed to the base TaggedError shape
+          const tagHandler = (invokeConfig.assignResult.catchTags as Record<string, AssignResultCatchTagHandler<TContext>>)[errorTag];
           if (tagHandler) {
-            updates = tagHandler({ context: snapshot.context, error: failureEvent.error });
+            updates = tagHandler({ context: snapshot.context, error: failureEvent.error as { _tag: string } });
           }
         }
 
@@ -605,8 +607,8 @@ function createActor<
       }
 
       // First, check catchTags if error has _tag
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let handler: { target?: TStateValue; guard?: Guard<TContext, any>; actions?: ReadonlyArray<Action<TContext, any, R, E>> } | undefined;
+      // Dynamic lookup by runtime error tag - handler type uses base TaggedError shape
+      let handler: CatchTagHandler<TStateValue, TContext, R, E> | undefined;
 
       if (
         invokeConfig?.catchTags &&
@@ -615,14 +617,13 @@ function createActor<
         "_tag" in failureEvent.error
       ) {
         const errorTag = (failureEvent.error as { _tag: string })._tag;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        handler = (invokeConfig.catchTags as Record<string, any>)[errorTag];
+        handler = (invokeConfig.catchTags as Record<string, CatchTagHandler<TStateValue, TContext, R, E>>)[errorTag];
       }
 
       // Fall back to onFailure or onError
+      // onFailure/onError have the same shape but with InvokeFailureEvent<unknown> instead of TaggedError
       if (!handler) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        handler = (invokeConfig?.onFailure ?? invokeConfig?.onError) as typeof handler;
+        handler = (invokeConfig?.onFailure ?? invokeConfig?.onError) as CatchTagHandler<TStateValue, TContext, R, E> | undefined;
       }
 
       if (!handler) return;
