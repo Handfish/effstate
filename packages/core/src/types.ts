@@ -65,9 +65,12 @@ export interface EffectAction<
 /**
  * Raise action to send events to self
  */
-export interface RaiseAction<TEvent extends MachineEvent> {
+export interface RaiseAction<
+  TContext extends MachineContext,
+  TEvent extends MachineEvent,
+> {
   readonly _tag: "raise";
-  readonly event: TEvent | ((params: { context: unknown; event: MachineEvent }) => TEvent);
+  readonly event: TEvent | ((params: { context: TContext; event: MachineEvent }) => TEvent);
 }
 
 /**
@@ -265,7 +268,7 @@ export type Action<
 > =
   | AssignAction<TContext, TEvent>
   | EffectAction<TContext, TEvent, R, E>
-  | RaiseAction<MachineEvent>
+  | RaiseAction<TContext, MachineEvent>
   | CancelAction<TContext, TEvent>
   | EmitAction<TContext, TEvent>
   | EnqueueActionsAction<TContext, TEvent, R, E>
@@ -367,6 +370,27 @@ export interface InvokeInterruptEvent {
   readonly id: string;
 }
 
+/**
+ * Internal event emitted when a delay timer fires
+ */
+export interface AfterEvent<TStateValue extends string = string> {
+  readonly _tag: "$after";
+  readonly delay: number | string;
+  /** For persistent delays, target state is encoded in the event */
+  readonly target?: TStateValue;
+}
+
+/**
+ * Union of all internal events synthesized by the machine.
+ * These are not part of the user's TEvent union but are processed internally.
+ */
+export type InternalEvent<TStateValue extends string = string> =
+  | InvokeSuccessEvent
+  | InvokeFailureEvent
+  | InvokeDefectEvent
+  | InvokeInterruptEvent
+  | AfterEvent<TStateValue>;
+
 /** @deprecated Use InvokeSuccessEvent instead */
 export type InvokeDoneEvent<TOutput = unknown> = InvokeSuccessEvent<TOutput>;
 
@@ -382,6 +406,127 @@ export type TaggedError = { readonly _tag: string };
  * Extract the specific error type from a union based on its _tag field
  */
 export type ErrorByTag<TError, TTag extends string> = Extract<TError, { _tag: TTag }>;
+
+// ============================================================================
+// Effect Type Extraction Helpers
+// ============================================================================
+
+/**
+ * Extract the success type (A) from an Effect.Effect<A, E, R>
+ */
+export type EffectSuccess<T> = T extends Effect.Effect<infer A, infer _E, infer _R> ? A : never;
+
+/**
+ * Extract the error type (E) from an Effect.Effect<A, E, R>
+ */
+export type EffectError<T> = T extends Effect.Effect<infer _A, infer E, infer _R> ? E : never;
+
+/**
+ * Extract the requirements type (R) from an Effect.Effect<A, E, R>
+ */
+export type EffectRequirements<T> = T extends Effect.Effect<infer _A, infer _E, infer R> ? R : never;
+
+/**
+ * Type constraint for invoke src functions
+ */
+export type InvokeSrc<TContext extends MachineContext, TEvent extends MachineEvent, R = never> =
+  (params: { context: TContext; event: TEvent }) => Effect.Effect<unknown, unknown, R>;
+
+/**
+ * Unique symbol for branding InvokeResult.
+ * This ensures only the invoke() helper can create valid invoke configs.
+ */
+declare const InvokeResultBrand: unique symbol;
+
+/**
+ * Branded type for invoke configurations.
+ * Can only be created via the invoke() helper function.
+ * This ensures proper type inference for output/error types.
+ */
+export interface InvokeResult<R = never> {
+  /** Brand to prevent direct object literal creation */
+  readonly [InvokeResultBrand]: true;
+  /** Requirements channel extracted from the src Effect */
+  readonly _R: R;
+}
+
+/**
+ * Internal type for accessing invoke config properties at runtime.
+ * This is the actual structure of what invoke() returns, used by machine.ts.
+ * Not exported in the public API.
+ */
+export interface InvokeConfigInternal<
+  TStateValue extends string,
+  TContext extends MachineContext,
+  TEvent extends MachineEvent,
+  R = never,
+> {
+  readonly id?: string;
+  readonly src: (params: { context: TContext; event: TEvent }) => Effect.Effect<unknown, unknown, R>;
+  readonly onSuccess?: {
+    readonly target?: TStateValue;
+    readonly guard?: Guard<TContext, InvokeSuccessEvent<unknown>>;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeSuccessEvent<unknown>, R, never>>;
+  };
+  readonly onDone?: {
+    readonly target?: TStateValue;
+    readonly guard?: Guard<TContext, InvokeSuccessEvent<unknown>>;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeSuccessEvent<unknown>, R, never>>;
+  };
+  readonly catchTags?: Record<string, {
+    readonly target?: TStateValue;
+    readonly guard?: Guard<TContext, InvokeFailureEvent<unknown>>;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeFailureEvent<unknown>, R, never>>;
+  }>;
+  readonly onFailure?: {
+    readonly target?: TStateValue;
+    readonly guard?: Guard<TContext, InvokeFailureEvent<unknown>>;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeFailureEvent<unknown>, R, never>>;
+  };
+  readonly onError?: {
+    readonly target?: TStateValue;
+    readonly guard?: Guard<TContext, InvokeFailureEvent<unknown>>;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeFailureEvent<unknown>, R, never>>;
+  };
+  readonly onDefect?: {
+    readonly target?: TStateValue;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeDefectEvent, R, never>>;
+  };
+  readonly onInterrupt?: {
+    readonly target?: TStateValue;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeInterruptEvent, R, never>>;
+  };
+  readonly assignResult?: {
+    readonly success: (params: { context: TContext; output: unknown }) => Partial<TContext>;
+    readonly catchTags?: Record<string, (params: { context: TContext; error: unknown }) => Partial<TContext>>;
+    readonly failure?: (params: { context: TContext; error: unknown }) => Partial<TContext>;
+    readonly defect?: (params: { context: TContext; defect: unknown }) => Partial<TContext>;
+  };
+}
+
+/**
+ * Type for a catchTags handler when accessed by dynamic key lookup.
+ * Since the error tag is only known at runtime, the error type is unknown.
+ * This is used internally when processing $invoke.failure events.
+ */
+export type CatchTagHandler<
+  TStateValue extends string,
+  TContext extends MachineContext,
+  R = never,
+  E = never,
+> = {
+  readonly target?: TStateValue;
+  readonly guard?: Guard<TContext, InvokeFailureEvent<TaggedError>>;
+  readonly actions?: ReadonlyArray<Action<TContext, InvokeFailureEvent<TaggedError>, R, E>>;
+};
+
+/**
+ * Type for an assignResult.catchTags handler when accessed by dynamic key lookup.
+ * Since the error tag is only known at runtime, the error type is TaggedError.
+ */
+export type AssignResultCatchTagHandler<TContext extends MachineContext> = (
+  params: { context: TContext; error: TaggedError }
+) => Partial<TContext>;
 
 /**
  * Invoke configuration for async operations.
@@ -418,22 +563,22 @@ export type ErrorByTag<TError, TTag extends string> = Extract<TError, { _tag: TT
  * }
  * ```
  */
+/**
+ * Invoke configuration parameterized by the src function type.
+ * TOutput and TError are inferred from TSrc's return type.
+ */
 export interface InvokeConfig<
   TStateValue extends string,
   TContext extends MachineContext,
   TEvent extends MachineEvent,
-  TOutput = unknown,
-  TError = unknown,
+  TSrc extends InvokeSrc<TContext, TEvent, R>,
   R = never,
 > {
   /** Unique identifier for this invoke (used for cancellation) */
   readonly id?: string;
 
   /** Effect to execute - receives context and triggering event */
-  readonly src: (params: {
-    context: TContext;
-    event: TEvent;
-  }) => Effect.Effect<TOutput, TError, R>;
+  readonly src: TSrc;
 
   /**
    * Transition when Effect succeeds.
@@ -441,15 +586,15 @@ export interface InvokeConfig<
    */
   readonly onSuccess?: {
     readonly target?: TStateValue;
-    readonly guard?: Guard<TContext, InvokeSuccessEvent<TOutput>>;
-    readonly actions?: ReadonlyArray<Action<TContext, InvokeSuccessEvent<TOutput>, R, never>>;
+    readonly guard?: Guard<TContext, InvokeSuccessEvent<EffectSuccess<ReturnType<TSrc>>>>;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeSuccessEvent<EffectSuccess<ReturnType<TSrc>>>, R, never>>;
   };
 
   /** @deprecated Use onSuccess instead */
   readonly onDone?: {
     readonly target?: TStateValue;
-    readonly guard?: Guard<TContext, InvokeSuccessEvent<TOutput>>;
-    readonly actions?: ReadonlyArray<Action<TContext, InvokeSuccessEvent<TOutput>, R, never>>;
+    readonly guard?: Guard<TContext, InvokeSuccessEvent<EffectSuccess<ReturnType<TSrc>>>>;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeSuccessEvent<EffectSuccess<ReturnType<TSrc>>>, R, never>>;
   };
 
   /**
@@ -457,15 +602,19 @@ export interface InvokeConfig<
    * Only works with errors that have a `_tag` property (e.g., Data.TaggedError).
    * Takes precedence over onFailure for matching error tags.
    */
-  readonly catchTags?: TError extends TaggedError
+  readonly catchTags?: EffectError<ReturnType<TSrc>> extends TaggedError
     ? {
-        readonly [K in TError["_tag"]]?: {
+        readonly [K in EffectError<ReturnType<TSrc>>["_tag"]]?: {
           readonly target?: TStateValue;
-          readonly guard?: Guard<TContext, InvokeFailureEvent<ErrorByTag<TError, K>>>;
-          readonly actions?: ReadonlyArray<Action<TContext, InvokeFailureEvent<ErrorByTag<TError, K>>, R, never>>;
+          readonly guard?: Guard<TContext, InvokeFailureEvent<ErrorByTag<EffectError<ReturnType<TSrc>>, K>>>;
+          readonly actions?: ReadonlyArray<Action<TContext, InvokeFailureEvent<ErrorByTag<EffectError<ReturnType<TSrc>>, K>>, R, never>>;
         };
       }
-    : never;
+    : Record<string, {
+        readonly target?: TStateValue;
+        readonly guard?: Guard<TContext, InvokeFailureEvent<TaggedError>>;
+        readonly actions?: ReadonlyArray<Action<TContext, InvokeFailureEvent<TaggedError>, R, never>>;
+      }>;
 
   /**
    * Fallback transition for typed errors (E channel) not handled by catchTags.
@@ -473,15 +622,15 @@ export interface InvokeConfig<
    */
   readonly onFailure?: {
     readonly target?: TStateValue;
-    readonly guard?: Guard<TContext, InvokeFailureEvent<TError>>;
-    readonly actions?: ReadonlyArray<Action<TContext, InvokeFailureEvent<TError>, R, never>>;
+    readonly guard?: Guard<TContext, InvokeFailureEvent<EffectError<ReturnType<TSrc>>>>;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeFailureEvent<EffectError<ReturnType<TSrc>>>, R, never>>;
   };
 
   /** @deprecated Use onFailure instead */
   readonly onError?: {
     readonly target?: TStateValue;
-    readonly guard?: Guard<TContext, InvokeFailureEvent<TError>>;
-    readonly actions?: ReadonlyArray<Action<TContext, InvokeFailureEvent<TError>, R, never>>;
+    readonly guard?: Guard<TContext, InvokeFailureEvent<EffectError<ReturnType<TSrc>>>>;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeFailureEvent<EffectError<ReturnType<TSrc>>>, R, never>>;
   };
 
   /**
@@ -535,15 +684,18 @@ export interface InvokeConfig<
    * ```
    */
   readonly assignResult?: {
-    readonly success: (params: { context: TContext; output: TOutput }) => Partial<TContext>;
-    /** Handle specific tagged error types differently */
-    readonly catchTags?: TError extends TaggedError
+    readonly success: (params: { context: TContext; output: EffectSuccess<ReturnType<TSrc>> }) => Partial<TContext>;
+    /**
+     * Handle specific tagged error types differently.
+     * When error type is a tagged error union, provides strict typing for each tag.
+     */
+    readonly catchTags?: EffectError<ReturnType<TSrc>> extends TaggedError
       ? {
-          readonly [K in TError["_tag"]]?: (params: { context: TContext; error: ErrorByTag<TError, K> }) => Partial<TContext>;
+          readonly [K in EffectError<ReturnType<TSrc>>["_tag"]]?: (params: { context: TContext; error: ErrorByTag<EffectError<ReturnType<TSrc>>, K> }) => Partial<TContext>;
         }
-      : never;
+      : Record<string, (params: { context: TContext; error: TaggedError }) => Partial<TContext>>;
     /** Fallback for errors not handled by catchTags */
-    readonly failure?: (params: { context: TContext; error: TError }) => Partial<TContext>;
+    readonly failure?: (params: { context: TContext; error: EffectError<ReturnType<TSrc>> }) => Partial<TContext>;
     readonly defect?: (params: { context: TContext; defect: unknown }) => Partial<TContext>;
   };
 }
@@ -591,9 +743,20 @@ export interface StateNodeConfig<
     readonly [K in TEvent["_tag"]]?: NarrowedTransitionConfig<TStateValue, TContext, TEvent, K, R, E>;
   };
   readonly activities?: ReadonlyArray<ActivityConfig<TContext, TEvent, R, E>>;
-  /** Invoke an Effect when entering this state. Auto-sends done/error events. */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly invoke?: InvokeConfig<TStateValue, TContext, TEvent, any, any, R>;
+  /**
+   * Invoke an Effect when entering this state. Auto-sends done/error events.
+   * Must use the `invoke()` helper for proper type inference:
+   * @example
+   * ```ts
+   * invoke: invoke({
+   *   src: () => fetchData(), // Effect<Data, MyError, never>
+   *   assignResult: {
+   *     success: ({ output }) => ({ data: output }), // output is Data
+   *   },
+   * })
+   * ```
+   */
+  readonly invoke?: InvokeResult<R>;
   /**
    * After delay, auto-transition.
    *
@@ -835,9 +998,9 @@ type ExtractActionsR<T> = T extends ReadonlyArray<infer TAction>
   : never;
 
 /**
- * Extract the R channel from an InvokeConfig.
+ * Extract the R channel from an InvokeResult.
  */
-type ExtractInvokeR<T> = T extends InvokeConfig<string, MachineContext, MachineEvent, unknown, unknown, infer R>
+type ExtractInvokeR<T> = T extends InvokeResult<infer R>
   ? R
   : never;
 

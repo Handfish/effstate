@@ -397,9 +397,9 @@ Special assign helpers for invoke handlers with proper typing:
 ### assignOnSuccess
 
 ```typescript
-import { assignOnSuccess } from "effstate";
+import { assignOnSuccess, invoke } from "effstate";
 
-invoke: {
+invoke: invoke({
   src: () => fetchUser(),
   onSuccess: {
     target: "ready",
@@ -410,15 +410,15 @@ invoke: {
       })),
     ],
   },
-}
+})
 ```
 
 ### assignOnFailure
 
 ```typescript
-import { assignOnFailure } from "effstate";
+import { assignOnFailure, invoke } from "effstate";
 
-invoke: {
+invoke: invoke({
   src: () => fetchUser(),
   onFailure: {
     target: "error",
@@ -428,15 +428,15 @@ invoke: {
       })),
     ],
   },
-}
+})
 ```
 
 ### assignOnDefect
 
 ```typescript
-import { assignOnDefect } from "effstate";
+import { assignOnDefect, invoke } from "effstate";
 
-invoke: {
+invoke: invoke({
   src: () => fetchUser(),
   onDefect: {
     target: "crashed",
@@ -446,7 +446,7 @@ invoke: {
       })),
     ],
   },
-}
+})
 ```
 
 ## Action Order

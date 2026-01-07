@@ -350,7 +350,7 @@ function assignOnDefect<TContext>(
 **Example:**
 
 ```typescript
-invoke: {
+invoke: invoke({
   src: () => fetchUser(),
   onSuccess: {
     target: "ready",
@@ -369,7 +369,7 @@ invoke: {
       })),
     ],
   },
-}
+})
 ```
 
 ---
@@ -379,7 +379,7 @@ invoke: {
 A shorthand for handling all invoke outcomes in one place. Use this when you want to update context without transitioning to different states.
 
 ```typescript
-invoke: {
+invoke: invoke({
   src: () => Effect<TOutput, TError, R>,
   assignResult: {
     success: (params: { context: TContext; output: TOutput }) => Partial<TContext>;
@@ -389,13 +389,13 @@ invoke: {
     };
     defect?: (params: { context: TContext; defect: unknown }) => Partial<TContext>;
   }
-}
+})
 ```
 
 **Example:**
 
 ```typescript
-invoke: {
+invoke: invoke({
   src: () => fetchWeather(),
   assignResult: {
     success: ({ output }) => ({
@@ -408,13 +408,13 @@ invoke: {
       weather: { status: "crashed", message: String(defect) },
     }),
   },
-}
+})
 ```
 
 **With typed error handling:**
 
 ```typescript
-invoke: {
+invoke: invoke({
   src: () => fetchWeather(), // Effect<Weather, NetworkError | ParseError, never>
   assignResult: {
     success: ({ output }) => ({ weather: output }),
@@ -429,7 +429,7 @@ invoke: {
     failure: ({ error }) => ({ error: error.message }), // Fallback
     defect: ({ defect }) => ({ error: String(defect) }),
   },
-}
+})
 ```
 
 ## See Also

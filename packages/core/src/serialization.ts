@@ -1,5 +1,5 @@
 import { Effect, ParseResult, Schema } from "effect";
-import type { MachineContext, MachineDefinition, MachineSnapshot } from "./types.js";
+import type { MachineContext, MachineDefinition, MachineEvent, MachineSnapshot } from "./types.js";
 
 // ============================================================================
 // Encoded Snapshot Type
@@ -31,7 +31,7 @@ export const encodeSnapshot = <
   TContext extends MachineContext,
   TContextEncoded,
 >(
-  machine: MachineDefinition<string, TStateValue, TContext, any, any, any, TContextEncoded>,
+  machine: MachineDefinition<string, TStateValue, TContext, MachineEvent, unknown, unknown, TContextEncoded>,
   snapshot: MachineSnapshot<TStateValue, TContext>,
 ): Effect.Effect<EncodedSnapshot<TStateValue, TContextEncoded>, ParseResult.ParseError> => {
   if (!machine.contextSchema) {
@@ -54,7 +54,7 @@ export const encodeSnapshotSync = <
   TContext extends MachineContext,
   TContextEncoded,
 >(
-  machine: MachineDefinition<string, TStateValue, TContext, any, any, any, TContextEncoded>,
+  machine: MachineDefinition<string, TStateValue, TContext, MachineEvent, unknown, unknown, TContextEncoded>,
   snapshot: MachineSnapshot<TStateValue, TContext>,
 ): EncodedSnapshot<TStateValue, TContextEncoded> => {
   if (!machine.contextSchema) {
@@ -81,7 +81,7 @@ export const decodeSnapshot = <
   TContext extends MachineContext,
   TContextEncoded,
 >(
-  machine: MachineDefinition<string, TStateValue, TContext, any, any, any, TContextEncoded>,
+  machine: MachineDefinition<string, TStateValue, TContext, MachineEvent, unknown, unknown, TContextEncoded>,
   encoded: EncodedSnapshot<TStateValue, TContextEncoded>,
 ): Effect.Effect<MachineSnapshot<TStateValue, TContext>, ParseResult.ParseError> => {
   if (!machine.contextSchema) {
@@ -105,7 +105,7 @@ export const decodeSnapshotSync = <
   TContext extends MachineContext,
   TContextEncoded,
 >(
-  machine: MachineDefinition<string, TStateValue, TContext, any, any, any, TContextEncoded>,
+  machine: MachineDefinition<string, TStateValue, TContext, MachineEvent, unknown, unknown, TContextEncoded>,
   encoded: EncodedSnapshot<TStateValue, TContextEncoded>,
 ): MachineSnapshot<TStateValue, TContext> => {
   if (!machine.contextSchema) {
@@ -130,7 +130,7 @@ export const getContextSchema = <
   TContext extends MachineContext,
   TContextEncoded,
 >(
-  machine: MachineDefinition<string, string, TContext, any, any, any, TContextEncoded>,
+  machine: MachineDefinition<string, string, TContext, MachineEvent, unknown, unknown, TContextEncoded>,
 ): Schema.Schema<TContext, TContextEncoded> => {
   if (!machine.contextSchema) {
     throw new Error("Machine does not have a context schema");
@@ -154,7 +154,7 @@ export const createSnapshotSchema = <
   TContext extends MachineContext,
   TContextEncoded,
 >(
-  machine: MachineDefinition<string, TStateValue, TContext, any, any, any, TContextEncoded>,
+  machine: MachineDefinition<string, TStateValue, TContext, MachineEvent, unknown, unknown, TContextEncoded>,
 ): Schema.Schema<
   MachineSnapshot<TStateValue, TContext>,
   EncodedSnapshot<TStateValue, TContextEncoded>

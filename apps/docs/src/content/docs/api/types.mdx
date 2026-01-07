@@ -161,17 +161,6 @@ actor.on<{ type: "notification"; message: string }>("notification", (event) => {
 
 ---
 
-## Effect.Service Pattern Types
-
-When using the Effect.Service pattern, these utility types help extract service requirements:
-
-```typescript
-import type { MachineServiceR } from "effstate";
-
-// Get R channel from a machine service
-type Requirements = MachineServiceR<typeof MyMachineService>;
-```
-
 ## See Also
 
 - [createMachine](/api/create-machine/) - Creating machine definitions

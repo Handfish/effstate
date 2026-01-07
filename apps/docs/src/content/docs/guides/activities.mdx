@@ -254,9 +254,9 @@ activities: [
 ]
 
 // Invoke: one-shot operation with result handling
-invoke: {
+invoke: invoke({
   src: () => fetchUser(),
   onSuccess: { target: "ready" },
   onFailure: { target: "error" },
-}
+})
 ```

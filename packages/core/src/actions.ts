@@ -1,16 +1,22 @@
-import type { Effect } from "effect";
+import { Effect } from "effect";
 import type {
   Action,
   AssignAction,
   CancelAction,
   EffectAction,
+  EffectError,
+  EffectSuccess,
   EmitAction,
   EmittedEvent,
   EnqueueActionsAction,
   EnqueueActionsParams,
+  ErrorByTag,
   ForwardToAction,
+  Guard,
   InvokeDefectEvent,
   InvokeFailureEvent,
+  InvokeInterruptEvent,
+  InvokeResult,
   InvokeSuccessEvent,
   MachineContext,
   MachineDefinitionE,
@@ -21,6 +27,7 @@ import type {
   SendToAction,
   SpawnChildAction,
   StopChildAction,
+  TaggedError,
 } from "./types.js";
 
 // ============================================================================
@@ -73,12 +80,13 @@ export function assign<
  */
 export function assignOnSuccess<TContext extends MachineContext, TOutput>(
   fn: (params: { context: TContext; output: TOutput }) => Partial<TContext>,
-): AssignAction<TContext> {
+): AssignAction<TContext, InvokeSuccessEvent<TOutput>> {
   return {
     _tag: "assign",
+    // Cast needed: AssignAction.fn receives MachineEvent, but we know this is used in onSuccess handlers
     fn: ({ context, event }) => fn({
       context: context as TContext,
-      output: (event as unknown as InvokeSuccessEvent<TOutput>).output,
+      output: (event as InvokeSuccessEvent<TOutput>).output,
     }),
   };
 }
@@ -102,12 +110,13 @@ export function assignOnSuccess<TContext extends MachineContext, TOutput>(
  */
 export function assignOnFailure<TContext extends MachineContext, TError>(
   fn: (params: { context: TContext; error: TError }) => Partial<TContext>,
-): AssignAction<TContext> {
+): AssignAction<TContext, InvokeFailureEvent<TError>> {
   return {
     _tag: "assign",
+    // Cast needed: AssignAction.fn receives MachineEvent, but we know this is used in onFailure handlers
     fn: ({ context, event }) => fn({
       context: context as TContext,
-      error: (event as unknown as InvokeFailureEvent<TError>).error,
+      error: (event as InvokeFailureEvent<TError>).error,
     }),
   };
 }
@@ -129,12 +138,13 @@ export function assignOnFailure<TContext extends MachineContext, TError>(
  */
 export function assignOnDefect<TContext extends MachineContext>(
   fn: (params: { context: TContext; defect: unknown }) => Partial<TContext>,
-): AssignAction<TContext> {
+): AssignAction<TContext, InvokeDefectEvent> {
   return {
     _tag: "assign",
+    // Cast needed: AssignAction.fn receives MachineEvent, but we know this is used in onDefect handlers
     fn: ({ context, event }) => fn({
       context: context as TContext,
-      defect: (event as unknown as InvokeDefectEvent).defect,
+      defect: (event as InvokeDefectEvent).defect,
     }),
   };
 }
@@ -170,9 +180,12 @@ export function effect<
  * raise(({ context }) => ({ type: "UPDATE", payload: context.value }))
  * ```
  */
-export function raise<TEvent extends MachineEvent>(
-  event: TEvent | ((params: { context: unknown; event: MachineEvent }) => TEvent),
-): RaiseAction<TEvent> {
+export function raise<
+  TContext extends MachineContext,
+  TEvent extends MachineEvent,
+>(
+  event: TEvent | ((params: { context: TContext; event: MachineEvent }) => TEvent),
+): RaiseAction<TContext, TEvent> {
   return {
     _tag: "raise",
     event,
@@ -248,7 +261,7 @@ export function log<
 ): EffectAction<TContext, TEvent, never, never> {
   return effect(({ context, event }) => {
     const msg = typeof message === "function" ? message({ context, event }) : message;
-    return import("effect").then(({ Effect }) => Effect.log(msg)) as any;
+    return Effect.log(msg);
   });
 }
 
@@ -429,6 +442,97 @@ export function forwardTo<
     _tag: "forwardTo",
     target,
   };
+}
+
+// ============================================================================
+// Invoke Helper
+// ============================================================================
+
+/**
+ * Helper to create invoke configurations with proper type inference.
+ *
+ * When defining invoke directly in state config, TypeScript can't infer
+ * output/error types from the src function. This helper enables inference.
+ *
+ * @example
+ * ```ts
+ * invoke: invoke({
+ *   src: () => fetchWeather(), // Effect<WeatherData, WeatherError, never>
+ *   assignResult: {
+ *     success: ({ output }) => ({ data: output }), // output is WeatherData
+ *     catchTags: {
+ *       WeatherError: ({ error }) => ({ error: error.message }), // error is WeatherError
+ *     },
+ *   },
+ * })
+ * ```
+ */
+export function invoke<
+  TStateValue extends string,
+  TContext extends MachineContext,
+  TEvent extends MachineEvent,
+  A,
+  E,
+  R,
+>(config: {
+  readonly id?: string;
+  readonly src: (params: { context: TContext; event: TEvent }) => Effect.Effect<A, E, R>;
+  readonly onSuccess?: {
+    readonly target?: TStateValue;
+    readonly guard?: Guard<TContext, InvokeSuccessEvent<A>>;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeSuccessEvent<A>, R, never>>;
+  };
+  readonly onDone?: {
+    readonly target?: TStateValue;
+    readonly guard?: Guard<TContext, InvokeSuccessEvent<A>>;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeSuccessEvent<A>, R, never>>;
+  };
+  readonly catchTags?: E extends TaggedError
+    ? {
+        readonly [K in E["_tag"]]?: {
+          readonly target?: TStateValue;
+          readonly guard?: Guard<TContext, InvokeFailureEvent<ErrorByTag<E, K>>>;
+          readonly actions?: ReadonlyArray<Action<TContext, InvokeFailureEvent<ErrorByTag<E, K>>, R, never>>;
+        };
+      }
+    : Record<string, {
+        readonly target?: TStateValue;
+        readonly guard?: Guard<TContext, InvokeFailureEvent<TaggedError>>;
+        readonly actions?: ReadonlyArray<Action<TContext, InvokeFailureEvent<TaggedError>, R, never>>;
+      }>;
+  readonly onFailure?: {
+    readonly target?: TStateValue;
+    readonly guard?: Guard<TContext, InvokeFailureEvent<E>>;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeFailureEvent<E>, R, never>>;
+  };
+  readonly onError?: {
+    readonly target?: TStateValue;
+    readonly guard?: Guard<TContext, InvokeFailureEvent<E>>;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeFailureEvent<E>, R, never>>;
+  };
+  readonly onDefect?: {
+    readonly target?: TStateValue;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeDefectEvent, R, never>>;
+  };
+  readonly onInterrupt?: {
+    readonly target?: TStateValue;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeInterruptEvent, R, never>>;
+  };
+  readonly assignResult?: {
+    readonly success: (params: { context: TContext; output: A }) => Partial<TContext>;
+    readonly catchTags?: E extends TaggedError
+      ? {
+          readonly [K in E["_tag"]]?: (params: { context: TContext; error: ErrorByTag<E, K> }) => Partial<TContext>;
+        }
+      : Record<string, (params: { context: TContext; error: TaggedError }) => Partial<TContext>>;
+    readonly failure?: (params: { context: TContext; error: E }) => Partial<TContext>;
+    readonly defect?: (params: { context: TContext; defect: unknown }) => Partial<TContext>;
+  };
+}): InvokeResult<R> {
+  // Return the config as InvokeResult. At runtime it's the full object,
+  // but the branded type ensures users must use invoke() to create it.
+  // Type safety is provided by the config parameter type.
+  return config as unknown as InvokeResult<R>;
 }
 
 // ============================================================================

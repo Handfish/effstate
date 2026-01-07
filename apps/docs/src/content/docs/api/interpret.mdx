@@ -66,6 +66,8 @@ Effect.runPromise(
 ### With Service Dependencies
 
 ```typescript
+import { createMachine, invoke, interpret } from "effstate";
+
 class ApiClient extends Effect.Service<ApiClient>()("ApiClient", {
   succeed: {
     fetchUser: (id: string) => Effect.tryPromise(() => fetch(`/api/users/${id}`)),
@@ -76,14 +78,14 @@ class ApiClient extends Effect.Service<ApiClient>()("ApiClient", {
 const userMachine = createMachine({
   states: {
     loading: {
-      invoke: {
+      invoke: invoke({
         src: ({ context }) =>
           Effect.gen(function* () {
             const api = yield* ApiClient;
             return yield* api.fetchUser(context.userId);
           }),
         onSuccess: { target: "ready" },
-      },
+      }),
     },
   },
 });
@@ -189,7 +191,7 @@ function withRequirements<R>(): <...>(
 ### Example
 
 ```typescript
-import { withRequirements, createMachine } from "effstate";
+import { withRequirements, createMachine, invoke } from "effstate";
 
 // Machine that uses WeatherService in its invoke
 const garageDoorMachine = withRequirements<WeatherService>()(
@@ -197,14 +199,14 @@ const garageDoorMachine = withRequirements<WeatherService>()(
     id: "garageDoor",
     states: {
       checking: {
-        invoke: {
+        invoke: invoke({
           src: () =>
             Effect.gen(function* () {
               const weather = yield* WeatherService;
               return yield* weather.getCurrentWeather();
             }),
           onSuccess: { target: "ready" },
-        },
+        }),
       },
     },
   })

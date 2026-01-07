@@ -2,9 +2,13 @@ import { Cause, Duration, Effect, Exit, Fiber, Option, Runtime, Scope } from "ef
 import type {
   Action,
   ActionEnqueuer,
+  AfterEvent,
+  AssignResultCatchTagHandler,
+  CatchTagHandler,
   EmittedEvent,
   Guard,
-  InvokeConfig,
+  InternalEvent,
+  InvokeConfigInternal,
   InvokeSuccessEvent,
   InvokeFailureEvent,
   InvokeDefectEvent,
@@ -97,18 +101,24 @@ export function createMachine<
   E,
   import("effect").Schema.Schema.Encoded<TContextSchema>
 > {
+  // Cast necessary: TypeScript can't unify TContextSchema (Schema<any, any, unknown>)
+  // with Schema<Type<T>, Encoded<T>, never> due to the third type parameter (Context/R).
+  // Fixing this would require exposing Schema's R parameter throughout the API.
+  type Def = MachineDefinition<
+    string, TStateValue, import("effect").Schema.Schema.Type<TContextSchema>,
+    TEvent, R, E, import("effect").Schema.Schema.Encoded<TContextSchema>
+  >;
+
   const definition = {
     _tag: "MachineDefinition" as const,
     id: config.id,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    config: config as any,
+    config: config as unknown as Def["config"],
     initialSnapshot: {
       value: config.initial,
       context: config.initialContext,
       event: null,
     },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    contextSchema: config.context as any,
+    contextSchema: config.context as unknown as Def["contextSchema"],
   };
 
   return definition;
@@ -297,7 +307,12 @@ function createActor<
   const persistentDelayCleanups = new Map<string, () => void>(); // survives state exits
   let delayCounter = 0;
   const listenersRef = new Map<string, Set<(event: EmittedEvent) => void>>();
-  const childrenRef = new Map<string, MachineActor<any, any, any>>();
+  const childrenRef = new Map<string, MachineActor<string, MachineContext, MachineEvent>>();
+
+  // Helper to access invoke config properties at runtime.
+  // InvokeResult is a branded type for public API, but at runtime it's InvokeConfigInternal.
+  type InvokeInternal = InvokeConfigInternal<TStateValue, TContext, TEvent, R>;
+  const asInvokeConfig = (invoke: unknown): InvokeInternal => invoke as InvokeInternal;
 
   // Emit error to all error handlers
   const emitError = (error: StateMachineError) => {
@@ -382,18 +397,22 @@ function createActor<
     if (actor._parent) actor._parent.send(event);
   };
 
-  const processEvent = (event: TEvent): void => {
+  // Type alias for events that can be processed (user events + internal events)
+  type ProcessableEvent = TEvent | InternalEvent<TStateValue>;
+
+  // Internal events can trigger state transitions which call user callbacks (activities, invokes).
+  // User callbacks are typed to receive TEvent, but may receive internal events.
+  // This cast is safe because internal events satisfy MachineEvent (they have _tag).
+  const asUserEvent = (e: ProcessableEvent): TEvent => e as TEvent;
+
+  const processEvent = (event: ProcessableEvent): void => {
     if (stopped) return;
 
     const stateConfig = machine.config.states[snapshot.value];
 
     // Handle $after events
     if (event._tag === "$after") {
-      const afterEvent = event as unknown as {
-        _tag: "$after";
-        delay: number | string;
-        target?: TStateValue; // For persistent delays, target is encoded in event
-      };
+      const afterEvent = event as AfterEvent<TStateValue>;
 
       let targetState: TStateValue;
       let transitionConfig: TransitionConfig<TStateValue, TContext, TEvent, R, E> | undefined;
@@ -418,9 +437,10 @@ function createActor<
         targetState = transitionConfig.target;
       }
       let newContext = snapshot.context;
+      const userEvent = asUserEvent(event);
 
       if (stateConfig?.exit) {
-        newContext = runActionsSync(stateConfig.exit, newContext, event);
+        newContext = runActionsSync(stateConfig.exit, newContext, userEvent);
       }
 
       stopAllActivities();
@@ -431,23 +451,24 @@ function createActor<
         newContext = runActionsSync(
           transitionConfig.actions as ReadonlyArray<Action<TContext, TEvent, R, E>>,
           newContext,
-          event,
+          userEvent,
         );
       }
 
       const targetStateConfig = machine.config.states[targetState];
       if (targetStateConfig?.entry) {
-        newContext = runActionsSync(targetStateConfig.entry, newContext, event);
+        newContext = runActionsSync(targetStateConfig.entry, newContext, userEvent);
       }
 
-      snapshot = { value: targetState, context: newContext, event };
+      snapshot = { value: targetState, context: newContext, event: userEvent };
 
       if (targetStateConfig?.activities) {
-        startActivities(targetStateConfig.activities, newContext, event);
+        startActivities(targetStateConfig.activities, newContext, userEvent);
       }
 
       if (targetStateConfig?.invoke) {
-        startInvoke(targetStateConfig.invoke, newContext, event);
+        // Cast InvokeResult to InvokeConfigInternal - same object at runtime
+        startInvoke(asInvokeConfig(targetStateConfig.invoke), newContext, userEvent);
       }
 
       if (targetStateConfig?.after) {
@@ -461,8 +482,10 @@ function createActor<
 
     // Handle $invoke.success events (also handles legacy $invoke.done)
     if (event._tag === "$invoke.success") {
-      const successEvent = event as unknown as InvokeSuccessEvent;
-      const invokeConfig = stateConfig?.invoke;
+      // Cast required: TS doesn't narrow TEvent | InternalEvent because TEvent could have same _tag
+      const successEvent = event as InvokeSuccessEvent;
+      const userEvent = asUserEvent(event);
+      const invokeConfig = stateConfig?.invoke ? asInvokeConfig(stateConfig.invoke) : undefined;
 
       // Check for assignResult shorthand first
       if (invokeConfig?.assignResult?.success) {
@@ -474,7 +497,7 @@ function createActor<
         snapshot = {
           value: snapshot.value,
           context: { ...snapshot.context, ...updates },
-          event,
+          event: userEvent,
         };
         notifyObservers();
         return;
@@ -499,7 +522,7 @@ function createActor<
       let newContext = snapshot.context;
 
       if (isTransition && stateConfig?.exit) {
-        newContext = runActionsSync(stateConfig.exit, newContext, event);
+        newContext = runActionsSync(stateConfig.exit, newContext, userEvent);
       }
 
       if (isTransition) {
@@ -509,6 +532,7 @@ function createActor<
       }
 
       if (handler.actions) {
+        // Cast needed: handler.actions is typed for InvokeSuccessEvent, runActionsSync expects TEvent
         newContext = runActionsSync(
           handler.actions as ReadonlyArray<Action<TContext, TEvent, R, E>>,
           newContext,
@@ -518,17 +542,17 @@ function createActor<
 
       const targetStateConfig = machine.config.states[targetState];
       if (isTransition && targetStateConfig?.entry) {
-        newContext = runActionsSync(targetStateConfig.entry, newContext, event);
+        newContext = runActionsSync(targetStateConfig.entry, newContext, userEvent);
       }
 
-      snapshot = { value: targetState, context: newContext, event };
+      snapshot = { value: targetState, context: newContext, event: userEvent };
 
       if (isTransition && targetStateConfig?.activities) {
-        startActivities(targetStateConfig.activities, newContext, event);
+        startActivities(targetStateConfig.activities, newContext, userEvent);
       }
 
       if (isTransition && targetStateConfig?.invoke) {
-        startInvoke(targetStateConfig.invoke, newContext, event);
+        startInvoke(asInvokeConfig(targetStateConfig.invoke), newContext, userEvent);
       }
 
       if (isTransition && targetStateConfig?.after) {
@@ -542,8 +566,10 @@ function createActor<
 
     // Handle $invoke.failure events (typed errors with catchTags support)
     if (event._tag === "$invoke.failure") {
-      const failureEvent = event as unknown as InvokeFailureEvent;
-      const invokeConfig = stateConfig?.invoke;
+      // Cast required: TS doesn't narrow TEvent | InternalEvent because TEvent could have same _tag
+      const failureEvent = event as InvokeFailureEvent;
+      const userEvent = asUserEvent(event);
+      const invokeConfig = stateConfig?.invoke ? asInvokeConfig(stateConfig.invoke) : undefined;
 
       // Clean up the invoke
       invokeCleanups.delete(failureEvent.id);
@@ -560,10 +586,10 @@ function createActor<
           "_tag" in failureEvent.error
         ) {
           const errorTag = (failureEvent.error as { _tag: string })._tag;
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const tagHandler = (invokeConfig.assignResult.catchTags as Record<string, any>)[errorTag];
+          // Dynamic lookup by runtime error tag - handler type is narrowed to the base TaggedError shape
+          const tagHandler = (invokeConfig.assignResult.catchTags as Record<string, AssignResultCatchTagHandler<TContext>>)[errorTag];
           if (tagHandler) {
-            updates = tagHandler({ context: snapshot.context, error: failureEvent.error });
+            updates = tagHandler({ context: snapshot.context, error: failureEvent.error as { _tag: string } });
           }
         }
 
@@ -579,7 +605,7 @@ function createActor<
           snapshot = {
             value: snapshot.value,
             context: { ...snapshot.context, ...updates },
-            event,
+            event: userEvent,
           };
           notifyObservers();
           return;
@@ -587,8 +613,8 @@ function createActor<
       }
 
       // First, check catchTags if error has _tag
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let handler: { target?: TStateValue; guard?: Guard<TContext, any>; actions?: ReadonlyArray<Action<TContext, any, R, E>> } | undefined;
+      // Dynamic lookup by runtime error tag - handler type uses base TaggedError shape
+      let handler: CatchTagHandler<TStateValue, TContext, R, E> | undefined;
 
       if (
         invokeConfig?.catchTags &&
@@ -597,14 +623,13 @@ function createActor<
         "_tag" in failureEvent.error
       ) {
         const errorTag = (failureEvent.error as { _tag: string })._tag;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        handler = (invokeConfig.catchTags as Record<string, any>)[errorTag];
+        handler = (invokeConfig.catchTags as Record<string, CatchTagHandler<TStateValue, TContext, R, E>>)[errorTag];
       }
 
       // Fall back to onFailure or onError
+      // onFailure/onError have the same shape but with InvokeFailureEvent<unknown> instead of TaggedError
       if (!handler) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        handler = (invokeConfig?.onFailure ?? invokeConfig?.onError) as typeof handler;
+        handler = (invokeConfig?.onFailure ?? invokeConfig?.onError) as CatchTagHandler<TStateValue, TContext, R, E> | undefined;
       }
 
       if (!handler) return;
@@ -622,7 +647,7 @@ function createActor<
       let newContext = snapshot.context;
 
       if (isTransition && stateConfig?.exit) {
-        newContext = runActionsSync(stateConfig.exit, newContext, event);
+        newContext = runActionsSync(stateConfig.exit, newContext, userEvent);
       }
 
       if (isTransition) {
@@ -632,6 +657,7 @@ function createActor<
       }
 
       if (handler.actions) {
+        // Cast needed: handler.actions is typed for InvokeFailureEvent, runActionsSync expects TEvent
         newContext = runActionsSync(
           handler.actions as ReadonlyArray<Action<TContext, TEvent, R, E>>,
           newContext,
@@ -641,17 +667,17 @@ function createActor<
 
       const targetStateConfig = machine.config.states[targetState];
       if (isTransition && targetStateConfig?.entry) {
-        newContext = runActionsSync(targetStateConfig.entry, newContext, event);
+        newContext = runActionsSync(targetStateConfig.entry, newContext, userEvent);
       }
 
-      snapshot = { value: targetState, context: newContext, event };
+      snapshot = { value: targetState, context: newContext, event: userEvent };
 
       if (isTransition && targetStateConfig?.activities) {
-        startActivities(targetStateConfig.activities, newContext, event);
+        startActivities(targetStateConfig.activities, newContext, userEvent);
       }
 
       if (isTransition && targetStateConfig?.invoke) {
-        startInvoke(targetStateConfig.invoke, newContext, event);
+        startInvoke(asInvokeConfig(targetStateConfig.invoke), newContext, userEvent);
       }
 
       if (isTransition && targetStateConfig?.after) {
@@ -665,8 +691,10 @@ function createActor<
 
     // Handle $invoke.defect events (unexpected errors)
     if (event._tag === "$invoke.defect") {
-      const defectEvent = event as unknown as InvokeDefectEvent;
-      const invokeConfig = stateConfig?.invoke;
+      // Cast required: TS doesn't narrow TEvent | InternalEvent because TEvent could have same _tag
+      const defectEvent = event as InvokeDefectEvent;
+      const userEvent = asUserEvent(event);
+      const invokeConfig = stateConfig?.invoke ? asInvokeConfig(stateConfig.invoke) : undefined;
 
       // Clean up the invoke
       invokeCleanups.delete(defectEvent.id);
@@ -680,7 +708,7 @@ function createActor<
         snapshot = {
           value: snapshot.value,
           context: { ...snapshot.context, ...updates },
-          event,
+          event: userEvent,
         };
         notifyObservers();
         return;
@@ -694,7 +722,7 @@ function createActor<
       let newContext = snapshot.context;
 
       if (isTransition && stateConfig?.exit) {
-        newContext = runActionsSync(stateConfig.exit, newContext, event);
+        newContext = runActionsSync(stateConfig.exit, newContext, userEvent);
       }
 
       if (isTransition) {
@@ -704,6 +732,7 @@ function createActor<
       }
 
       if (invokeConfig.onDefect.actions) {
+        // Cast needed: onDefect.actions is typed for InvokeDefectEvent, runActionsSync expects TEvent
         newContext = runActionsSync(
           invokeConfig.onDefect.actions as ReadonlyArray<Action<TContext, TEvent, R, E>>,
           newContext,
@@ -713,17 +742,17 @@ function createActor<
 
       const targetStateConfig = machine.config.states[targetState];
       if (isTransition && targetStateConfig?.entry) {
-        newContext = runActionsSync(targetStateConfig.entry, newContext, event);
+        newContext = runActionsSync(targetStateConfig.entry, newContext, userEvent);
       }
 
-      snapshot = { value: targetState, context: newContext, event };
+      snapshot = { value: targetState, context: newContext, event: userEvent };
 
       if (isTransition && targetStateConfig?.activities) {
-        startActivities(targetStateConfig.activities, newContext, event);
+        startActivities(targetStateConfig.activities, newContext, userEvent);
       }
 
       if (isTransition && targetStateConfig?.invoke) {
-        startInvoke(targetStateConfig.invoke, newContext, event);
+        startInvoke(asInvokeConfig(targetStateConfig.invoke), newContext, userEvent);
       }
 
       if (isTransition && targetStateConfig?.after) {
@@ -737,8 +766,10 @@ function createActor<
 
     // Handle $invoke.interrupt events
     if (event._tag === "$invoke.interrupt") {
-      const interruptEvent = event as unknown as InvokeInterruptEvent;
-      const invokeConfig = stateConfig?.invoke;
+      // Cast required: TS doesn't narrow TEvent | InternalEvent because TEvent could have same _tag
+      const interruptEvent = event as InvokeInterruptEvent;
+      const userEvent = asUserEvent(event);
+      const invokeConfig = stateConfig?.invoke ? asInvokeConfig(stateConfig.invoke) : undefined;
 
       // Clean up the invoke
       invokeCleanups.delete(interruptEvent.id);
@@ -751,7 +782,7 @@ function createActor<
       let newContext = snapshot.context;
 
       if (isTransition && stateConfig?.exit) {
-        newContext = runActionsSync(stateConfig.exit, newContext, event);
+        newContext = runActionsSync(stateConfig.exit, newContext, userEvent);
       }
 
       if (isTransition) {
@@ -761,6 +792,7 @@ function createActor<
       }
 
       if (invokeConfig.onInterrupt.actions) {
+        // Cast needed: onInterrupt.actions is typed for InvokeInterruptEvent, runActionsSync expects TEvent
         newContext = runActionsSync(
           invokeConfig.onInterrupt.actions as ReadonlyArray<Action<TContext, TEvent, R, E>>,
           newContext,
@@ -770,17 +802,17 @@ function createActor<
 
       const targetStateConfig = machine.config.states[targetState];
       if (isTransition && targetStateConfig?.entry) {
-        newContext = runActionsSync(targetStateConfig.entry, newContext, event);
+        newContext = runActionsSync(targetStateConfig.entry, newContext, userEvent);
       }
 
-      snapshot = { value: targetState, context: newContext, event };
+      snapshot = { value: targetState, context: newContext, event: userEvent };
 
       if (isTransition && targetStateConfig?.activities) {
-        startActivities(targetStateConfig.activities, newContext, event);
+        startActivities(targetStateConfig.activities, newContext, userEvent);
       }
 
       if (isTransition && targetStateConfig?.invoke) {
-        startInvoke(targetStateConfig.invoke, newContext, event);
+        startInvoke(asInvokeConfig(targetStateConfig.invoke), newContext, userEvent);
       }
 
       if (isTransition && targetStateConfig?.after) {
@@ -794,13 +826,17 @@ function createActor<
 
     if (!stateConfig?.on) return;
 
-    const transitionConfig = stateConfig.on[event._tag as TEvent["_tag"]];
+    // At this point, we know event is a user event (all internal events returned early above)
+    const userEvent = event as TEvent;
+
+    // Index with type assertion since TS can't narrow the mapped type key
+    const transitionConfig = stateConfig.on[userEvent._tag as TEvent["_tag"]];
     if (!transitionConfig) return;
 
     if (transitionConfig.guard) {
       // Cast guard to accept the event (narrowed event type is compatible)
       const guardFn = transitionConfig.guard as Guard<TContext, TEvent>;
-      if (!guardFn({ context: snapshot.context, event })) {
+      if (!guardFn({ context: snapshot.context, event: userEvent })) {
         return;
       }
     }
@@ -811,7 +847,7 @@ function createActor<
     let newContext = snapshot.context;
 
     if (isTransition && stateConfig.exit) {
-      newContext = runActionsSync(stateConfig.exit, newContext, event);
+      newContext = runActionsSync(stateConfig.exit, newContext, userEvent);
     }
 
     if (isTransition) {
@@ -824,23 +860,23 @@ function createActor<
       newContext = runActionsSync(
         transitionConfig.actions as ReadonlyArray<Action<TContext, TEvent, R, E>>,
         newContext,
-        event,
+        userEvent,
       );
     }
 
-    const targetStateConfig = machine.config.states[targetState];
+    const targetStateConfig = machine.config.states[targetState as TStateValue];
     if (isTransition && targetStateConfig?.entry) {
-      newContext = runActionsSync(targetStateConfig.entry, newContext, event);
+      newContext = runActionsSync(targetStateConfig.entry, newContext, userEvent);
     }
 
-    snapshot = { value: targetState, context: newContext, event };
+    snapshot = { value: targetState as TStateValue, context: newContext, event: userEvent };
 
     if (isTransition && targetStateConfig?.activities) {
-      startActivities(targetStateConfig.activities, newContext, event);
+      startActivities(targetStateConfig.activities, newContext, userEvent);
     }
 
     if (isTransition && targetStateConfig?.invoke) {
-      startInvoke(targetStateConfig.invoke, newContext, event);
+      startInvoke(asInvokeConfig(targetStateConfig.invoke), newContext, userEvent);
     }
 
     if (isTransition && targetStateConfig?.after) {
@@ -1034,7 +1070,7 @@ function createActor<
   };
 
   const startInvoke = (
-    invoke: InvokeConfig<TStateValue, TContext, TEvent, unknown, unknown, R>,
+    invoke: InvokeConfigInternal<TStateValue, TContext, TEvent, R>,
     context: TContext,
     event: TEvent,
   ) => {
@@ -1048,7 +1084,7 @@ function createActor<
               _tag: "$invoke.success",
               id: invokeId,
               output,
-            } as unknown as TEvent);
+            });
           }
           return Effect.void;
         },
@@ -1060,7 +1096,7 @@ function createActor<
             mailbox.enqueue({
               _tag: "$invoke.interrupt",
               id: invokeId,
-            } as unknown as TEvent);
+            });
             return Effect.void;
           }
 
@@ -1071,7 +1107,7 @@ function createActor<
               _tag: "$invoke.failure",
               id: invokeId,
               error: failure.value,
-            } as unknown as TEvent);
+            });
             return Effect.void;
           }
 
@@ -1082,7 +1118,7 @@ function createActor<
               _tag: "$invoke.defect",
               id: invokeId,
               defect: defect.value,
-            } as unknown as TEvent);
+            });
             return Effect.void;
           }
 
@@ -1091,7 +1127,7 @@ function createActor<
             _tag: "$invoke.defect",
             id: invokeId,
             defect: cause,
-          } as unknown as TEvent);
+          });
           return Effect.void;
         },
       }),
@@ -1124,7 +1160,7 @@ function createActor<
       const cleanupMap = persistent ? persistentDelayCleanups : delayCleanups;
 
       // For persistent delays, include target in the event so it works across state changes
-      const afterEvent = persistent && target
+      const afterEvent: AfterEvent<TStateValue> = persistent && target
         ? { _tag: "$after", delay: delayKey, target }
         : { _tag: "$after", delay: delayKey };
 
@@ -1132,7 +1168,7 @@ function createActor<
         Effect.flatMap(() =>
           Effect.sync(() => {
             cleanupMap.delete(cleanupId);
-            mailbox.enqueue(afterEvent as unknown as TEvent);
+            mailbox.enqueue(afterEvent);
           })
         ),
       );
@@ -1158,7 +1194,7 @@ function createActor<
       const cleanupMap = persistent ? persistentDelayCleanups : delayCleanups;
 
       // For persistent delays, include target in the event so it works across state changes
-      const afterEvent = persistent && target
+      const afterEvent: AfterEvent<TStateValue> = persistent && target
         ? { _tag: "$after", delay: delayKey, target }
         : { _tag: "$after", delay: delayKey };
 
@@ -1166,7 +1202,7 @@ function createActor<
         Effect.flatMap(() =>
           Effect.sync(() => {
             cleanupMap.delete(cleanupId);
-            mailbox.enqueue(afterEvent as unknown as TEvent);
+            mailbox.enqueue(afterEvent);
           })
         ),
       );
@@ -1227,8 +1263,8 @@ function createActor<
     childrenRef.clear();
   };
 
-  // Create mailbox
-  const mailbox = new Mailbox<TEvent>(processEvent);
+  // Create mailbox - accepts both user events and internal events
+  const mailbox = new Mailbox<TEvent | InternalEvent<TStateValue>>(processEvent);
 
   // waitFor implementation - returns Effect that resolves when predicate matches
   const waitFor = (
@@ -1391,7 +1427,7 @@ function createActor<
 
   // Start invoke for current state (always needed, even when restoring)
   if (currentState?.invoke) {
-    startInvoke(currentState.invoke, snapshot.context, { _tag: "$init" } as TEvent);
+    startInvoke(asInvokeConfig(currentState.invoke), snapshot.context, { _tag: "$init" } as TEvent);
   }
 
   // Handle delayed transitions for current state (always needed, even when restoring)

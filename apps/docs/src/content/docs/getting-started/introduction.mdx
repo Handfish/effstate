@@ -16,7 +16,7 @@ The recommended pattern for using effstate is to wrap your machines in `Effect.S
 - **Type Safety** - Full inference for dependencies and effects
 
 ```typescript
-import { createMachine, interpret, assign, effect } from "effstate";
+import { createMachine, interpret, assign, effect, invoke } from "effstate";
 import { Data, Effect, Schema } from "effect";
 
 // Define events
@@ -57,7 +57,7 @@ export class ConnectionMachine extends Effect.Service<ConnectionMachine>()(
             },
           },
           connecting: {
-            invoke: {
+            invoke: invoke({
               src: () => api.connect(), // Use injected service
               onSuccess: { target: "connected" },
               onFailure: {
@@ -69,7 +69,7 @@ export class ConnectionMachine extends Effect.Service<ConnectionMachine>()(
                   })),
                 ],
               },
-            },
+            }),
           },
           connected: {
             entry: [assign({ status: "connected", retryCount: 0 })],
