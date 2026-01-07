@@ -3,6 +3,7 @@ import {
   createMachine,
   effect,
   interpret,
+  invoke,
   sendParent,
   type MachineSnapshot,
   type MachineActor,
@@ -205,7 +206,7 @@ export class GarageDoorMachineService extends Effect.Service<GarageDoorMachineSe
               assign(() => ({ position: 100, lastUpdated: new Date(), weather: { status: "loading" } })),
               effect(() => Effect.log("Entering: open - fetching weather")),
             ],
-            invoke: {
+            invoke: invoke({
               id: "fetchWeather",
               src: () => weatherService.getWeather(DEFAULT_LAT, DEFAULT_LON),
               assignResult: {
@@ -229,7 +230,7 @@ export class GarageDoorMachineService extends Effect.Service<GarageDoorMachineSe
                   weather: { status: "error", error: `Unexpected: ${String(defect)}` },
                 }),
               },
-            },
+            }),
             on: {
               CLICK: { target: "closing", guard: ({ context }) => context.isPowered },
               POWER_ON: { actions: [assign(() => ({ isPowered: true }))] },

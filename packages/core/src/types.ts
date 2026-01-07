@@ -433,6 +433,78 @@ export type InvokeSrc<TContext extends MachineContext, TEvent extends MachineEve
   (params: { context: TContext; event: TEvent }) => Effect.Effect<unknown, unknown, R>;
 
 /**
+ * Unique symbol for branding InvokeResult.
+ * This ensures only the invoke() helper can create valid invoke configs.
+ */
+declare const InvokeResultBrand: unique symbol;
+
+/**
+ * Branded type for invoke configurations.
+ * Can only be created via the invoke() helper function.
+ * This ensures proper type inference for output/error types.
+ */
+export interface InvokeResult<R = never> {
+  /** Brand to prevent direct object literal creation */
+  readonly [InvokeResultBrand]: true;
+  /** Requirements channel extracted from the src Effect */
+  readonly _R: R;
+}
+
+/**
+ * Internal type for accessing invoke config properties at runtime.
+ * This is the actual structure of what invoke() returns, used by machine.ts.
+ * Not exported in the public API.
+ */
+export interface InvokeConfigInternal<
+  TStateValue extends string,
+  TContext extends MachineContext,
+  TEvent extends MachineEvent,
+  R = never,
+> {
+  readonly id?: string;
+  readonly src: (params: { context: TContext; event: TEvent }) => Effect.Effect<unknown, unknown, R>;
+  readonly onSuccess?: {
+    readonly target?: TStateValue;
+    readonly guard?: Guard<TContext, InvokeSuccessEvent<unknown>>;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeSuccessEvent<unknown>, R, never>>;
+  };
+  readonly onDone?: {
+    readonly target?: TStateValue;
+    readonly guard?: Guard<TContext, InvokeSuccessEvent<unknown>>;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeSuccessEvent<unknown>, R, never>>;
+  };
+  readonly catchTags?: Record<string, {
+    readonly target?: TStateValue;
+    readonly guard?: Guard<TContext, InvokeFailureEvent<unknown>>;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeFailureEvent<unknown>, R, never>>;
+  }>;
+  readonly onFailure?: {
+    readonly target?: TStateValue;
+    readonly guard?: Guard<TContext, InvokeFailureEvent<unknown>>;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeFailureEvent<unknown>, R, never>>;
+  };
+  readonly onError?: {
+    readonly target?: TStateValue;
+    readonly guard?: Guard<TContext, InvokeFailureEvent<unknown>>;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeFailureEvent<unknown>, R, never>>;
+  };
+  readonly onDefect?: {
+    readonly target?: TStateValue;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeDefectEvent, R, never>>;
+  };
+  readonly onInterrupt?: {
+    readonly target?: TStateValue;
+    readonly actions?: ReadonlyArray<Action<TContext, InvokeInterruptEvent, R, never>>;
+  };
+  readonly assignResult?: {
+    readonly success: (params: { context: TContext; output: unknown }) => Partial<TContext>;
+    readonly catchTags?: Record<string, (params: { context: TContext; error: unknown }) => Partial<TContext>>;
+    readonly failure?: (params: { context: TContext; error: unknown }) => Partial<TContext>;
+    readonly defect?: (params: { context: TContext; defect: unknown }) => Partial<TContext>;
+  };
+}
+
+/**
  * Type for a catchTags handler when accessed by dynamic key lookup.
  * Since the error tag is only known at runtime, the error type is unknown.
  * This is used internally when processing $invoke.failure events.
@@ -673,9 +745,18 @@ export interface StateNodeConfig<
   readonly activities?: ReadonlyArray<ActivityConfig<TContext, TEvent, R, E>>;
   /**
    * Invoke an Effect when entering this state. Auto-sends done/error events.
-   * Types are inferred from the `src` function's return type.
+   * Must use the `invoke()` helper for proper type inference:
+   * @example
+   * ```ts
+   * invoke: invoke({
+   *   src: () => fetchData(), // Effect<Data, MyError, never>
+   *   assignResult: {
+   *     success: ({ output }) => ({ data: output }), // output is Data
+   *   },
+   * })
+   * ```
    */
-  readonly invoke?: InvokeConfig<TStateValue, TContext, TEvent, InvokeSrc<TContext, TEvent, R>, R>;
+  readonly invoke?: InvokeResult<R>;
   /**
    * After delay, auto-transition.
    *
@@ -917,10 +998,9 @@ type ExtractActionsR<T> = T extends ReadonlyArray<infer TAction>
   : never;
 
 /**
- * Extract the R channel from an InvokeConfig.
- * Uses `never` for TSrc constraint to ensure any InvokeSrc matches.
+ * Extract the R channel from an InvokeResult.
  */
-type ExtractInvokeR<T> = T extends InvokeConfig<string, MachineContext, MachineEvent, InvokeSrc<MachineContext, MachineEvent, never>, infer R>
+type ExtractInvokeR<T> = T extends InvokeResult<infer R>
   ? R
   : never;
 

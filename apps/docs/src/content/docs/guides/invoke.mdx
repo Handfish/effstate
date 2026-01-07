@@ -8,8 +8,10 @@ Invoke runs an Effect when entering a state and handles the result. Unlike activ
 
 ## Basic Usage
 
+Use the `invoke()` helper for proper type inference of output and error types:
+
 ```typescript
-import { createMachine, assign } from "effstate";
+import { createMachine, assign, invoke } from "effstate";
 
 const machine = createMachine({
   id: "userLoader",
@@ -23,7 +25,7 @@ const machine = createMachine({
       },
     },
     loading: {
-      invoke: {
+      invoke: invoke({
         src: ({ context }) => fetchUser(context.userId),
         onSuccess: {
           target: "ready",
@@ -33,7 +35,7 @@ const machine = createMachine({
           target: "error",
           actions: [assign(({ event }) => ({ error: event.error.message }))],
         },
-      },
+      }),
     },
     ready: {
       on: {
@@ -59,7 +61,7 @@ Invoke fully supports Effect's error model, distinguishing between:
 - **Interrupt** (`onInterrupt`) - Effect was interrupted (state changed before completion)
 
 ```typescript
-invoke: {
+invoke: invoke({
   src: () => riskyOperation(), // Effect<User, ApiError | ValidationError, never>
   onSuccess: {
     target: "ready",
@@ -76,7 +78,7 @@ invoke: {
   onInterrupt: {
     target: "cancelled",
   },
-}
+})
 ```
 
 ## Typed Error Handling with catchTags
@@ -97,7 +99,7 @@ class ValidationError extends Data.TaggedError("ValidationError")<{
 }> {}
 
 // Use catchTags to handle each error type
-invoke: {
+invoke: invoke({
   src: () => fetchAndValidateUser(), // Effect<User, NetworkError | ValidationError, never>
   onSuccess: {
     target: "ready",
@@ -119,7 +121,7 @@ invoke: {
     // Fallback for any errors not caught by catchTags
     target: "unknownError",
   },
-}
+})
 ```
 
 ## assignResult Shorthand
@@ -127,7 +129,7 @@ invoke: {
 For simple cases where you just need to update context, use `assignResult`:
 
 ```typescript
-invoke: {
+invoke: invoke({
   src: () => fetchWeather(),
   assignResult: {
     success: ({ output }) => ({
@@ -140,13 +142,13 @@ invoke: {
       weather: { status: "crashed", message: String(defect) },
     }),
   },
-}
+})
 ```
 
 With typed error handling:
 
 ```typescript
-invoke: {
+invoke: invoke({
   src: () => fetchWeather(), // Effect<Weather, NetworkError | ParseError, never>
   assignResult: {
     success: ({ output }) => ({ weather: output }),
@@ -161,7 +163,7 @@ invoke: {
     failure: ({ error }) => ({ error: error.message }), // Fallback
     defect: ({ defect }) => ({ error: String(defect) }),
   },
-}
+})
 ```
 
 ## Invoke with Dependencies
@@ -177,7 +179,7 @@ export class UserMachine extends Effect.Service<UserMachine>()("UserMachine", {
     const machine = createMachine({
       states: {
         loading: {
-          invoke: {
+          invoke: invoke({
             src: ({ context }) =>
               Effect.gen(function* () {
                 // Check cache first
@@ -191,7 +193,7 @@ export class UserMachine extends Effect.Service<UserMachine>()("UserMachine", {
               }),
             onSuccess: { target: "ready" },
             onFailure: { target: "error" },
-          },
+          }),
         },
       },
     });
@@ -207,7 +209,7 @@ export class UserMachine extends Effect.Service<UserMachine>()("UserMachine", {
 Apply guards to conditionally handle results:
 
 ```typescript
-invoke: {
+invoke: invoke({
   src: () => fetchUser(),
   onSuccess: {
     target: "admin",
@@ -219,7 +221,7 @@ invoke: {
     target: "regular",
     actions: [assign(({ event }) => ({ user: event.output }))],
   },
-}
+})
 ```
 
 Note: You can have multiple `onSuccess` handlers with different guards. The first one whose guard returns `true` will be used.
@@ -229,11 +231,11 @@ Note: You can have multiple `onSuccess` handlers with different guards. The firs
 Give invokes an ID to reference them:
 
 ```typescript
-invoke: {
+invoke: invoke({
   id: "loadUser",
   src: () => fetchUser(),
   onSuccess: { target: "ready" },
-}
+})
 ```
 
 The invoke is automatically cancelled if:
@@ -246,13 +248,13 @@ Omit `target` to stay in the current state after invoke completes:
 
 ```typescript
 loading: {
-  invoke: {
+  invoke: invoke({
     src: () => fetchData(),
     onSuccess: {
       // No target - stay in "loading" state
       actions: [assign(({ event }) => ({ data: event.output }))],
     },
-  },
+  }),
 }
 ```
 
@@ -263,18 +265,18 @@ To run multiple async operations in sequence, use intermediate states:
 ```typescript
 states: {
   fetchingUser: {
-    invoke: {
+    invoke: invoke({
       src: () => fetchUser(),
       onSuccess: { target: "fetchingProfile" },
       onFailure: { target: "error" },
-    },
+    }),
   },
   fetchingProfile: {
-    invoke: {
+    invoke: invoke({
       src: ({ context }) => fetchProfile(context.user.id),
       onSuccess: { target: "ready" },
       onFailure: { target: "error" },
-    },
+    }),
   },
   ready: { /* ... */ },
   error: { /* ... */ },
@@ -285,7 +287,7 @@ Or combine them in a single Effect:
 
 ```typescript
 loading: {
-  invoke: {
+  invoke: invoke({
     src: () => Effect.gen(function* () {
       const user = yield* fetchUser();
       const profile = yield* fetchProfile(user.id);
@@ -294,6 +296,6 @@ loading: {
     }),
     onSuccess: { target: "ready" },
     onFailure: { target: "error" },
-  },
+  }),
 }
 ```

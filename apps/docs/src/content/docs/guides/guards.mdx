@@ -167,7 +167,7 @@ The first transition whose guard returns `true` (or has no guard) will be taken.
 Guards can also control invoke result handling:
 
 ```typescript
-invoke: {
+invoke: invoke({
   src: () => fetchUser(),
   onSuccess: [
     {
@@ -179,7 +179,7 @@ invoke: {
       // No guard - default case
     },
   ],
-}
+})
 ```
 
 ## Type-Safe Guards
@@ -212,7 +212,7 @@ states: {
     },
   },
   validating: {
-    invoke: {
+    invoke: invoke({
       src: ({ context }) => validateData(context.data),
       onSuccess: {
         target: "valid",
@@ -223,7 +223,7 @@ states: {
         // Fallback when validation fails
       },
       onFailure: { target: "error" },
-    },
+    }),
   },
   valid: { /* proceed */ },
   invalid: { /* show errors */ },

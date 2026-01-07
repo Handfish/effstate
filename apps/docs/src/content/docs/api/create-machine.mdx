@@ -276,7 +276,11 @@ const machine = createMachine({
 
 ### With Invoke
 
+Use the `invoke()` helper for proper type inference:
+
 ```typescript
+import { createMachine, assign, invoke } from "effstate";
+
 const machine = createMachine({
   id: "userLoader",
   initial: "idle",
@@ -287,7 +291,7 @@ const machine = createMachine({
       on: { LOAD: { target: "loading" } },
     },
     loading: {
-      invoke: {
+      invoke: invoke({
         id: "loadUser",
         src: ({ context }) => fetchUser(context.userId),
         onSuccess: {
@@ -298,7 +302,7 @@ const machine = createMachine({
           target: "error",
           actions: [assign(({ event }) => ({ error: event.error }))],
         },
-      },
+      }),
     },
     ready: {},
     error: {},

@@ -8,8 +8,7 @@ import type {
   EmittedEvent,
   Guard,
   InternalEvent,
-  InvokeConfig,
-  InvokeSrc,
+  InvokeConfigInternal,
   InvokeSuccessEvent,
   InvokeFailureEvent,
   InvokeDefectEvent,
@@ -308,7 +307,12 @@ function createActor<
   const persistentDelayCleanups = new Map<string, () => void>(); // survives state exits
   let delayCounter = 0;
   const listenersRef = new Map<string, Set<(event: EmittedEvent) => void>>();
-  const childrenRef = new Map<string, MachineActor<any, any, any>>();
+  const childrenRef = new Map<string, MachineActor<string, MachineContext, MachineEvent>>();
+
+  // Helper to access invoke config properties at runtime.
+  // InvokeResult is a branded type for public API, but at runtime it's InvokeConfigInternal.
+  type InvokeInternal = InvokeConfigInternal<TStateValue, TContext, TEvent, R>;
+  const asInvokeConfig = (invoke: unknown): InvokeInternal => invoke as InvokeInternal;
 
   // Emit error to all error handlers
   const emitError = (error: StateMachineError) => {
@@ -463,7 +467,8 @@ function createActor<
       }
 
       if (targetStateConfig?.invoke) {
-        startInvoke(targetStateConfig.invoke, newContext, userEvent);
+        // Cast InvokeResult to InvokeConfigInternal - same object at runtime
+        startInvoke(asInvokeConfig(targetStateConfig.invoke), newContext, userEvent);
       }
 
       if (targetStateConfig?.after) {
@@ -480,7 +485,7 @@ function createActor<
       // Cast required: TS doesn't narrow TEvent | InternalEvent because TEvent could have same _tag
       const successEvent = event as InvokeSuccessEvent;
       const userEvent = asUserEvent(event);
-      const invokeConfig = stateConfig?.invoke;
+      const invokeConfig = stateConfig?.invoke ? asInvokeConfig(stateConfig.invoke) : undefined;
 
       // Check for assignResult shorthand first
       if (invokeConfig?.assignResult?.success) {
@@ -547,7 +552,7 @@ function createActor<
       }
 
       if (isTransition && targetStateConfig?.invoke) {
-        startInvoke(targetStateConfig.invoke, newContext, userEvent);
+        startInvoke(asInvokeConfig(targetStateConfig.invoke), newContext, userEvent);
       }
 
       if (isTransition && targetStateConfig?.after) {
@@ -564,7 +569,7 @@ function createActor<
       // Cast required: TS doesn't narrow TEvent | InternalEvent because TEvent could have same _tag
       const failureEvent = event as InvokeFailureEvent;
       const userEvent = asUserEvent(event);
-      const invokeConfig = stateConfig?.invoke;
+      const invokeConfig = stateConfig?.invoke ? asInvokeConfig(stateConfig.invoke) : undefined;
 
       // Clean up the invoke
       invokeCleanups.delete(failureEvent.id);
@@ -672,7 +677,7 @@ function createActor<
       }
 
       if (isTransition && targetStateConfig?.invoke) {
-        startInvoke(targetStateConfig.invoke, newContext, userEvent);
+        startInvoke(asInvokeConfig(targetStateConfig.invoke), newContext, userEvent);
       }
 
       if (isTransition && targetStateConfig?.after) {
@@ -689,7 +694,7 @@ function createActor<
       // Cast required: TS doesn't narrow TEvent | InternalEvent because TEvent could have same _tag
       const defectEvent = event as InvokeDefectEvent;
       const userEvent = asUserEvent(event);
-      const invokeConfig = stateConfig?.invoke;
+      const invokeConfig = stateConfig?.invoke ? asInvokeConfig(stateConfig.invoke) : undefined;
 
       // Clean up the invoke
       invokeCleanups.delete(defectEvent.id);
@@ -747,7 +752,7 @@ function createActor<
       }
 
       if (isTransition && targetStateConfig?.invoke) {
-        startInvoke(targetStateConfig.invoke, newContext, userEvent);
+        startInvoke(asInvokeConfig(targetStateConfig.invoke), newContext, userEvent);
       }
 
       if (isTransition && targetStateConfig?.after) {
@@ -764,7 +769,7 @@ function createActor<
       // Cast required: TS doesn't narrow TEvent | InternalEvent because TEvent could have same _tag
       const interruptEvent = event as InvokeInterruptEvent;
       const userEvent = asUserEvent(event);
-      const invokeConfig = stateConfig?.invoke;
+      const invokeConfig = stateConfig?.invoke ? asInvokeConfig(stateConfig.invoke) : undefined;
 
       // Clean up the invoke
       invokeCleanups.delete(interruptEvent.id);
@@ -807,7 +812,7 @@ function createActor<
       }
 
       if (isTransition && targetStateConfig?.invoke) {
-        startInvoke(targetStateConfig.invoke, newContext, userEvent);
+        startInvoke(asInvokeConfig(targetStateConfig.invoke), newContext, userEvent);
       }
 
       if (isTransition && targetStateConfig?.after) {
@@ -871,7 +876,7 @@ function createActor<
     }
 
     if (isTransition && targetStateConfig?.invoke) {
-      startInvoke(targetStateConfig.invoke, newContext, userEvent);
+      startInvoke(asInvokeConfig(targetStateConfig.invoke), newContext, userEvent);
     }
 
     if (isTransition && targetStateConfig?.after) {
@@ -1065,7 +1070,7 @@ function createActor<
   };
 
   const startInvoke = (
-    invoke: InvokeConfig<TStateValue, TContext, TEvent, InvokeSrc<TContext, TEvent, R>, R>,
+    invoke: InvokeConfigInternal<TStateValue, TContext, TEvent, R>,
     context: TContext,
     event: TEvent,
   ) => {
@@ -1422,7 +1427,7 @@ function createActor<
 
   // Start invoke for current state (always needed, even when restoring)
   if (currentState?.invoke) {
-    startInvoke(currentState.invoke, snapshot.context, { _tag: "$init" } as TEvent);
+    startInvoke(asInvokeConfig(currentState.invoke), snapshot.context, { _tag: "$init" } as TEvent);
   }
 
   // Handle delayed transitions for current state (always needed, even when restoring)
