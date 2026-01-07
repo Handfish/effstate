@@ -9,6 +9,7 @@ import type {
   Guard,
   InternalEvent,
   InvokeConfig,
+  InvokeSrc,
   InvokeSuccessEvent,
   InvokeFailureEvent,
   InvokeDefectEvent,
@@ -1064,7 +1065,7 @@ function createActor<
   };
 
   const startInvoke = (
-    invoke: InvokeConfig<TStateValue, TContext, TEvent, unknown, unknown, R>,
+    invoke: InvokeConfig<TStateValue, TContext, TEvent, InvokeSrc<TContext, TEvent, R>, R>,
     context: TContext,
     event: TEvent,
   ) => {
