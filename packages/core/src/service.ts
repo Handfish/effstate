@@ -1,3 +1,26 @@
+// ============================================================================
+// ⚠️  ADVANCED TYPE UTILITIES - NOT REQUIRED FOR RECOMMENDED PATTERNS  ⚠️
+// ============================================================================
+//
+// These type utilities are NOT needed when using the recommended Effect.Service
+// pattern. Effect handles dependency composition automatically.
+//
+// The types in this file are only useful for advanced type-level programming
+// scenarios, such as manually computing requirement types when composing
+// multiple child services.
+//
+// For standard usage, simply extend Effect.Service directly:
+//
+//   class MyMachine extends Effect.Service<MyMachine>()("MyMachine", {
+//     effect: Effect.gen(function* () {
+//       const dep = yield* SomeDependency;
+//       return { definition: createMachine(...) };
+//     }),
+//     dependencies: [SomeDependency.Default],
+//   }) {}
+//
+// ============================================================================
+
 import type { Context } from "effect";
 import type { MachineContext, MachineDefinition, MachineEvent } from "./types.js";
 

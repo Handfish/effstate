@@ -367,6 +367,27 @@ export interface InvokeInterruptEvent {
   readonly id: string;
 }
 
+/**
+ * Internal event emitted when a delay timer fires
+ */
+export interface AfterEvent<TStateValue extends string = string> {
+  readonly _tag: "$after";
+  readonly delay: number | string;
+  /** For persistent delays, target state is encoded in the event */
+  readonly target?: TStateValue;
+}
+
+/**
+ * Union of all internal events synthesized by the machine.
+ * These are not part of the user's TEvent union but are processed internally.
+ */
+export type InternalEvent<TStateValue extends string = string> =
+  | InvokeSuccessEvent
+  | InvokeFailureEvent
+  | InvokeDefectEvent
+  | InvokeInterruptEvent
+  | AfterEvent<TStateValue>;
+
 /** @deprecated Use InvokeSuccessEvent instead */
 export type InvokeDoneEvent<TOutput = unknown> = InvokeSuccessEvent<TOutput>;
 
@@ -592,8 +613,7 @@ export interface StateNodeConfig<
   };
   readonly activities?: ReadonlyArray<ActivityConfig<TContext, TEvent, R, E>>;
   /** Invoke an Effect when entering this state. Auto-sends done/error events. */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly invoke?: InvokeConfig<TStateValue, TContext, TEvent, any, any, R>;
+  readonly invoke?: InvokeConfig<TStateValue, TContext, TEvent, unknown, unknown, R>;
   /**
    * After delay, auto-transition.
    *

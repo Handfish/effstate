@@ -1,4 +1,4 @@
-import type { Effect } from "effect";
+import { Effect } from "effect";
 import type {
   Action,
   AssignAction,
@@ -73,12 +73,13 @@ export function assign<
  */
 export function assignOnSuccess<TContext extends MachineContext, TOutput>(
   fn: (params: { context: TContext; output: TOutput }) => Partial<TContext>,
-): AssignAction<TContext> {
+): AssignAction<TContext, InvokeSuccessEvent<TOutput>> {
   return {
     _tag: "assign",
+    // Cast needed: AssignAction.fn receives MachineEvent, but we know this is used in onSuccess handlers
     fn: ({ context, event }) => fn({
       context: context as TContext,
-      output: (event as unknown as InvokeSuccessEvent<TOutput>).output,
+      output: (event as InvokeSuccessEvent<TOutput>).output,
     }),
   };
 }
@@ -102,12 +103,13 @@ export function assignOnSuccess<TContext extends MachineContext, TOutput>(
  */
 export function assignOnFailure<TContext extends MachineContext, TError>(
   fn: (params: { context: TContext; error: TError }) => Partial<TContext>,
-): AssignAction<TContext> {
+): AssignAction<TContext, InvokeFailureEvent<TError>> {
   return {
     _tag: "assign",
+    // Cast needed: AssignAction.fn receives MachineEvent, but we know this is used in onFailure handlers
     fn: ({ context, event }) => fn({
       context: context as TContext,
-      error: (event as unknown as InvokeFailureEvent<TError>).error,
+      error: (event as InvokeFailureEvent<TError>).error,
     }),
   };
 }
@@ -129,12 +131,13 @@ export function assignOnFailure<TContext extends MachineContext, TError>(
  */
 export function assignOnDefect<TContext extends MachineContext>(
   fn: (params: { context: TContext; defect: unknown }) => Partial<TContext>,
-): AssignAction<TContext> {
+): AssignAction<TContext, InvokeDefectEvent> {
   return {
     _tag: "assign",
+    // Cast needed: AssignAction.fn receives MachineEvent, but we know this is used in onDefect handlers
     fn: ({ context, event }) => fn({
       context: context as TContext,
-      defect: (event as unknown as InvokeDefectEvent).defect,
+      defect: (event as InvokeDefectEvent).defect,
     }),
   };
 }
@@ -248,7 +251,7 @@ export function log<
 ): EffectAction<TContext, TEvent, never, never> {
   return effect(({ context, event }) => {
     const msg = typeof message === "function" ? message({ context, event }) : message;
-    return import("effect").then(({ Effect }) => Effect.log(msg)) as any;
+    return Effect.log(msg);
   });
 }
 
