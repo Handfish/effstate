@@ -888,7 +888,7 @@ function createActor<
   };
 
   const runActionsSync = (
-    actions: ReadonlyArray<Action<TContext, TEvent, any, any>>,
+    actions: ReadonlyArray<Action<TContext, TEvent, R, E>>,
     context: TContext,
     event: TEvent,
   ): TContext => {
@@ -945,8 +945,8 @@ function createActor<
           break;
         }
         case "enqueueActions": {
-          const queue: Array<Action<TContext, TEvent, any, any>> = [];
-          const enqueue = createActionEnqueuer<TContext, TEvent, any, any>(queue);
+          const queue: Array<Action<TContext, TEvent, R, E>> = [];
+          const enqueue = createActionEnqueuer<TContext, TEvent, R, E>(queue);
           action.collect({ context: ctx, event, enqueue });
           ctx = runActionsSync(queue, ctx, event);
           break;
@@ -1034,7 +1034,7 @@ function createActor<
   const startActivities = (
     activities: ReadonlyArray<{
       readonly id: string;
-      readonly src: (params: { context: TContext; event: TEvent; send: (event: TEvent) => void }) => Effect.Effect<void, any, any>;
+      readonly src: (params: { context: TContext; event: TEvent; send: (event: TEvent) => void }) => Effect.Effect<void, unknown, R>;
     }>,
     context: TContext,
     event: TEvent,
@@ -1144,7 +1144,7 @@ function createActor<
   };
 
   const scheduleAfterTransition = (
-    after: StateNodeConfig<TStateValue, TContext, TEvent, any, any>["after"],
+    after: StateNodeConfig<TStateValue, TContext, TEvent, R, E>["after"],
   ) => {
     if (!after) return;
 
@@ -1218,7 +1218,7 @@ function createActor<
     };
 
     if ("delay" in after && "transition" in after) {
-      const transition = after.transition as TransitionConfig<TStateValue, TContext, TEvent, any, any>;
+      const transition = after.transition as TransitionConfig<TStateValue, TContext, TEvent, R, E>;
       const transitionId = transition.id;
       const persistent = (after as { persistent?: boolean }).persistent ?? false;
       const target = transition.target;
@@ -1247,7 +1247,7 @@ function createActor<
     }
 
     // Numeric shorthand: { 1000: { target: "done" } }
-    const entries = Object.entries(after as Record<number, TransitionConfig<TStateValue, TContext, TEvent, any, any>>);
+    const entries = Object.entries(after as Record<number, TransitionConfig<TStateValue, TContext, TEvent, R, E>>);
     for (const [delayMs, config] of entries) {
       scheduleDelayMs(Number(delayMs), delayMs, config.id, false);
     }
