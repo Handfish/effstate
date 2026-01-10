@@ -381,6 +381,15 @@ export interface AfterEvent<TStateValue extends string = string> {
 }
 
 /**
+ * Synthetic events used internally for lifecycle operations.
+ * These provide context to activities/invokes about why they were started.
+ */
+export type SyntheticEvent =
+  | { readonly _tag: "$init" }
+  | { readonly _tag: "$resume" }
+  | { readonly _tag: "$sync" };
+
+/**
  * Union of all internal events synthesized by the machine.
  * These are not part of the user's TEvent union but are processed internally.
  */
@@ -389,7 +398,8 @@ export type InternalEvent<TStateValue extends string = string> =
   | InvokeFailureEvent
   | InvokeDefectEvent
   | InvokeInterruptEvent
-  | AfterEvent<TStateValue>;
+  | AfterEvent<TStateValue>
+  | SyntheticEvent;
 
 /** @deprecated Use InvokeSuccessEvent instead */
 export type InvokeDoneEvent<TOutput = unknown> = InvokeSuccessEvent<TOutput>;

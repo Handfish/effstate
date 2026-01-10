@@ -295,6 +295,18 @@ function createActor<
 ): MachineActor<TStateValue, TContext, TEvent> {
   const runtime = options?.runtime;
   const childSnapshots = options?.childSnapshots;
+
+  // Helper to run an Effect with optional runtime - consolidates runtime branching casts
+  const runForkEffect = <A>(eff: Effect.Effect<A, never, R>): Fiber.RuntimeFiber<A, never> =>
+    runtime
+      ? Runtime.runFork(runtime)(eff)
+      : Effect.runFork(eff as Effect.Effect<A, never, never>);
+
+  const runPromiseExitEffect = <A>(eff: Effect.Effect<A, unknown, R>): Promise<Exit.Exit<A, unknown>> =>
+    runtime
+      ? Runtime.runPromiseExit(runtime)(eff)
+      : Effect.runPromiseExit(eff as Effect.Effect<A, unknown, never>);
+
   // Mutable state - use provided snapshot or initial
   let snapshot: MachineSnapshot<TStateValue, TContext> = options?.snapshot ?? machine.initialSnapshot;
   let stopped = false;
@@ -890,26 +902,23 @@ function createActor<
   const runActionsSync = (
     actions: ReadonlyArray<Action<TContext, TEvent, R, E>>,
     context: TContext,
-    event: TEvent,
+    event: ProcessableEvent,
   ): TContext => {
     let ctx = context;
+    // Cast once: actions are typed with TEvent but we accept ProcessableEvent (includes internal events)
+    const userEvent = event as TEvent;
     for (const action of actions) {
       switch (action._tag) {
         case "assign": {
-          const updates = action.fn({ context: ctx, event });
+          const updates = action.fn({ context: ctx, event: userEvent });
           ctx = { ...ctx, ...updates };
           break;
         }
         case "effect": {
           // Defer effect - run async with Exit-based error handling
-          const eff = action.fn({ context: ctx, event });
+          const eff = action.fn({ context: ctx, event: userEvent });
           deferredEffects.push(() => {
-            // Use runtime if available (from interpret), otherwise run directly (interpretSync)
-            const runEffect = runtime
-              ? Runtime.runPromiseExit(runtime)(eff as Effect.Effect<void, unknown, R>)
-              : Effect.runPromiseExit(eff as Effect.Effect<void>);
-
-            runEffect.then((exit) => {
+            runPromiseExitEffect(eff).then((exit) => {
               Exit.match(exit, {
                 onFailure: (cause) => {
                   emitError(new EffectActionError({
@@ -925,21 +934,21 @@ function createActor<
         }
         case "raise": {
           const raisedEvent = typeof action.event === "function"
-            ? action.event({ context: ctx, event })
+            ? action.event({ context: ctx, event: userEvent })
             : action.event;
           mailbox.enqueue(raisedEvent as TEvent);
           break;
         }
         case "cancel": {
           const id = typeof action.sendId === "function"
-            ? action.sendId({ context: ctx, event })
+            ? action.sendId({ context: ctx, event: userEvent })
             : action.sendId;
           cancelDelay(id);
           break;
         }
         case "emit": {
           const emitted = typeof action.event === "function"
-            ? action.event({ context: ctx, event })
+            ? action.event({ context: ctx, event: userEvent })
             : action.event;
           emitEvent(emitted);
           break;
@@ -947,13 +956,13 @@ function createActor<
         case "enqueueActions": {
           const queue: Array<Action<TContext, TEvent, R, E>> = [];
           const enqueue = createActionEnqueuer<TContext, TEvent, R, E>(queue);
-          action.collect({ context: ctx, event, enqueue });
+          action.collect({ context: ctx, event: userEvent, enqueue });
           ctx = runActionsSync(queue, ctx, event);
           break;
         }
         case "spawnChild": {
           const childId = typeof action.id === "function"
-            ? action.id({ context: ctx, event })
+            ? action.id({ context: ctx, event: userEvent })
             : action.id;
           // Only spawn if child doesn't already exist (idempotent)
           if (!childrenRef.has(childId)) {
@@ -979,7 +988,7 @@ function createActor<
         }
         case "stopChild": {
           const childId = typeof action.childId === "function"
-            ? action.childId({ context: ctx, event })
+            ? action.childId({ context: ctx, event: userEvent })
             : action.childId;
           const child = childrenRef.get(childId);
           if (child) {
@@ -990,26 +999,26 @@ function createActor<
         }
         case "sendTo": {
           const targetId = typeof action.target === "function"
-            ? action.target({ context: ctx, event })
+            ? action.target({ context: ctx, event: userEvent })
             : action.target;
           const targetEvent = typeof action.event === "function"
-            ? action.event({ context: ctx, event })
+            ? action.event({ context: ctx, event: userEvent })
             : action.event;
           sendToChild(targetId, targetEvent);
           break;
         }
         case "sendParent": {
           const parentEvent = typeof action.event === "function"
-            ? action.event({ context: ctx, event })
+            ? action.event({ context: ctx, event: userEvent })
             : action.event;
           sendToParent(parentEvent);
           break;
         }
         case "forwardTo": {
           const targetId = typeof action.target === "function"
-            ? action.target({ context: ctx, event })
+            ? action.target({ context: ctx, event: userEvent })
             : action.target;
-          sendToChild(targetId, event);
+          sendToChild(targetId, userEvent);
           break;
         }
       }
@@ -1037,8 +1046,10 @@ function createActor<
       readonly src: (params: { context: TContext; event: TEvent; send: (event: TEvent) => void }) => Effect.Effect<void, unknown, R>;
     }>,
     context: TContext,
-    event: TEvent,
+    event: ProcessableEvent,
   ) => {
+    // Cast once: activity callbacks are typed with TEvent but we accept ProcessableEvent
+    const userEvent = event as TEvent;
     for (const activity of activities) {
       const send = (e: TEvent) => {
         if (!stopped) mailbox.enqueue(e);
@@ -1046,7 +1057,7 @@ function createActor<
 
       // Fork the activity and store the fiber for interruption
       const activityId = activity.id;
-      const activityEffect = activity.src({ context, event, send }).pipe(
+      const activityEffect = activity.src({ context, event: userEvent, send }).pipe(
         // catchAllCause handles both typed errors and defects
         Effect.catchAllCause((cause) => {
           emitError(new ActivityError({
@@ -1058,10 +1069,7 @@ function createActor<
         }),
       );
 
-      // Use runtime if available, otherwise run directly
-      const fiber = runtime
-        ? Runtime.runFork(runtime)(activityEffect as Effect.Effect<void, never, R>)
-        : Effect.runFork(activityEffect as Effect.Effect<void>);
+      const fiber = runForkEffect(activityEffect as Effect.Effect<void, never, R>);
 
       activityCleanups.set(activity.id, () => {
         Effect.runFork(Fiber.interrupt(fiber));
@@ -1072,11 +1080,13 @@ function createActor<
   const startInvoke = (
     invoke: InvokeConfigInternal<TStateValue, TContext, TEvent, R>,
     context: TContext,
-    event: TEvent,
+    event: ProcessableEvent,
   ) => {
+    // Cast once: invoke callbacks are typed with TEvent but we accept ProcessableEvent
+    const userEvent = event as TEvent;
     const invokeId = invoke.id ?? `invoke-${Date.now()}`;
 
-    const invokeEffect = invoke.src({ context, event }).pipe(
+    const invokeEffect = invoke.src({ context, event: userEvent }).pipe(
       Effect.matchCauseEffect({
         onSuccess: (output) => {
           if (!stopped) {
@@ -1133,10 +1143,7 @@ function createActor<
       }),
     );
 
-    // Fork the invoke effect
-    const fiber = runtime
-      ? Runtime.runFork(runtime)(invokeEffect as Effect.Effect<void, never, R>)
-      : Effect.runFork(invokeEffect as Effect.Effect<void>);
+    const fiber = runForkEffect(invokeEffect as Effect.Effect<void, never, R>);
 
     invokeCleanups.set(invokeId, () => {
       Effect.runFork(Fiber.interrupt(fiber));
@@ -1173,9 +1180,7 @@ function createActor<
         ),
       );
 
-      const fiber = runtime
-        ? Runtime.runFork(runtime)(delayEffect as Effect.Effect<void, never, R>)
-        : Effect.runFork(delayEffect);
+      const fiber = runForkEffect(delayEffect as Effect.Effect<void, never, R>);
 
       cleanupMap.set(cleanupId, () => {
         Effect.runFork(Fiber.interrupt(fiber));
@@ -1207,10 +1212,7 @@ function createActor<
         ),
       );
 
-      // Cast needed for else branch: user is warned via console.warn if using Effect delays without runtime
-      const fiber = runtime
-        ? Runtime.runFork(runtime)(delayEffect as Effect.Effect<void, never, R>)
-        : Effect.runFork(delayEffect as Effect.Effect<void, never, never>);
+      const fiber = runForkEffect(delayEffect);
 
       cleanupMap.set(cleanupId, () => {
         Effect.runFork(Fiber.interrupt(fiber));
@@ -1310,7 +1312,7 @@ function createActor<
   const resumeActivities = () => {
     const currentState = machine.config.states[snapshot.value];
     if (currentState?.activities) {
-      startActivities(currentState.activities, snapshot.context, { _tag: "$resume" } as TEvent);
+      startActivities(currentState.activities, snapshot.context, { _tag: "$resume" });
     }
     if (currentState?.after) {
       scheduleAfterTransition(currentState.after);
@@ -1353,7 +1355,7 @@ function createActor<
     if (stateChanged) {
       const currentState = machine.config.states[snapshot.value];
       if (currentState?.activities) {
-        startActivities(currentState.activities, snapshot.context, { _tag: "$sync" } as TEvent);
+        startActivities(currentState.activities, snapshot.context, { _tag: "$sync" });
       }
       if (currentState?.after) {
         scheduleAfterTransition(currentState.after);
@@ -1398,7 +1400,7 @@ function createActor<
   if (restoringToNonInitialState && initialState?.entry) {
     const spawnActions = initialState.entry.filter((a) => a._tag === "spawnChild");
     if (spawnActions.length > 0) {
-      runActionsSync(spawnActions, snapshot.context, { _tag: "$init" } as TEvent);
+      runActionsSync(spawnActions, snapshot.context, { _tag: "$init" });
     }
   }
 
@@ -1415,19 +1417,19 @@ function createActor<
     if (actions.length > 0) {
       snapshot = {
         ...snapshot,
-        context: runActionsSync(actions, snapshot.context, { _tag: "$init" } as TEvent),
+        context: runActionsSync(actions, snapshot.context, { _tag: "$init" }),
       };
     }
   }
 
   // Start activities for current state (always needed, even when restoring)
   if (currentState?.activities) {
-    startActivities(currentState.activities, snapshot.context, { _tag: "$init" } as TEvent);
+    startActivities(currentState.activities, snapshot.context, { _tag: "$init" });
   }
 
   // Start invoke for current state (always needed, even when restoring)
   if (currentState?.invoke) {
-    startInvoke(asInvokeConfig(currentState.invoke), snapshot.context, { _tag: "$init" } as TEvent);
+    startInvoke(asInvokeConfig(currentState.invoke), snapshot.context, { _tag: "$init" });
   }
 
   // Handle delayed transitions for current state (always needed, even when restoring)
