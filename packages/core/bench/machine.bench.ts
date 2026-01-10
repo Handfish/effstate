@@ -17,13 +17,12 @@ import {
 // Benchmark Runtime Setup
 // ============================================================================
 
-// Pre-create a shared scope for benchmarks (actors are manually stopped)
+// Shared scope for benchmarks - actors are manually stopped so we reuse one scope
 const benchScope = Effect.runSync(Scope.make());
 
 /**
- * Benchmark-optimized actor creation.
- * Uses a pre-created scope to avoid per-iteration overhead.
- * Since we call actor.stop() manually, we don't need individual scopes.
+ * Benchmark actor creation using the standard interpret() API.
+ * This is what we recommend in docs/demos - honest benchmarking.
  */
 function benchActor<
   TId extends string,
@@ -37,9 +36,7 @@ function benchActor<
   machine: MachineDefinition<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded>,
 ): MachineActor<TStateValue, TContext, TEvent> {
   return Effect.runSync(
-    interpret(machine).pipe(
-      Effect.provideService(Scope.Scope, benchScope),
-    ),
+    interpret(machine).pipe(Effect.provideService(Scope.Scope, benchScope))
   );
 }
 

@@ -35,8 +35,8 @@
 | Metric | effstate | XState |
 |--------|----------|--------|
 | **Bundle size (gzip)** | **~3.9 kB** | 13.7 kB |
-| Event processing | **24x faster** | - |
-| Realistic app lifecycle | **4.5x faster** | - |
+| Event processing | **25x faster** | - |
+| Realistic app lifecycle | **5x faster** | - |
 
 [See full comparison →](https://handfish.github.io/effstate/getting-started/comparison/)
 
