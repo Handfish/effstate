@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Context, Data, Effect, Exit, Ref, Schema, Scope } from "effect";
-import { createMachine, interpret, interpretSync } from "../src/machine.js";
+import { createMachine, interpret } from "../src/machine.js";
+import { testActorSync } from "./test-utils.js";
 import { assign, effect, spawnChild, sendTo } from "../src/actions.js";
 import {
   createSnapshotSchema,
@@ -356,7 +357,7 @@ describe("Type Safety", () => {
     void _validProgram;
   });
 
-  it("interpretSync does not require service provision", () => {
+  it("testActorSync does not require service provision at type level", () => {
     // Machine that normally requires services
     const machineWithService = createMachine<
       "test",
@@ -374,9 +375,9 @@ describe("Type Safety", () => {
       },
     });
 
-    // interpretSync compiles without providing services
-    // (though the effect would fail at runtime if triggered)
-    const _actor = interpretSync(machineWithService);
+    // testActorSync compiles without providing services
+    // (though effect actions requiring services would fail at runtime if triggered)
+    const _actor = testActorSync(machineWithService);
     _actor.stop();
   });
 });
@@ -446,7 +447,7 @@ describe("Schema Context", () => {
       },
     });
 
-    const actor = interpretSync(machine);
+    const actor = testActorSync(machine);
     const snapshot = actor.getSnapshot();
 
     const encoded = encodeSnapshotSync(machine, snapshot);
@@ -514,7 +515,7 @@ describe("Schema Context", () => {
       },
     });
 
-    const actor = interpretSync(machine);
+    const actor = testActorSync(machine);
     actor.send(new Increment());
 
     const original = actor.getSnapshot();
@@ -542,7 +543,7 @@ describe("Schema Context", () => {
     // Schema context is now required - contextSchema should always be defined
     expect(machine.contextSchema).toBeDefined();
 
-    const actor = interpretSync(machine);
+    const actor = testActorSync(machine);
     expect(actor.getSnapshot().context.count).toBe(0);
     actor.stop();
   });

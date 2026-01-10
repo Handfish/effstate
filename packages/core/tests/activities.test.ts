@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Data, Effect, Ref, Schema } from "effect";
-import { createMachine, interpretSync } from "../src/machine.js";
+import { createMachine } from "../src/machine.js";
+import { testActorSync } from "./test-utils.js";
 import { assign } from "../src/actions.js";
 import { guard, and, or, not } from "../src/guards.js";
 
@@ -58,7 +59,7 @@ describe("activities", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           // Activity should not be started yet
           let started = yield* Ref.get(activityStarted);
@@ -110,7 +111,7 @@ describe("activities", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           // Start running
           actor.send(new Toggle());
@@ -172,7 +173,7 @@ describe("activities", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           actor.send(new Toggle());
           yield* Effect.sleep("50 millis");
@@ -212,7 +213,7 @@ describe("guards", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -245,7 +246,7 @@ describe("guards", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -278,7 +279,7 @@ describe("guards", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           // Value too low - should not transition
           actor.send(new SetValue({ value: 30 }));
@@ -327,7 +328,7 @@ describe("guard combinators", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -363,7 +364,7 @@ describe("guard combinators", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -399,7 +400,7 @@ describe("guard combinators", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -435,7 +436,7 @@ describe("guard combinators", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -468,7 +469,7 @@ describe("guard combinators", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -501,7 +502,7 @@ describe("guard combinators", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 

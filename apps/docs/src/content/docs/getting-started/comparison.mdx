@@ -28,10 +28,10 @@ Creating a new state machine definition.
 
 | Library | ops/sec | Mean (μs) |
 |---------|---------|-----------|
-| **effstate** | **14,613,480** | **0.068** |
-| XState | 292,807 | 3.415 |
+| **effstate** | **14,316,058** | **0.070** |
+| XState | 340,392 | 2.938 |
 
-effstate is **~50x faster** at machine creation.
+effstate is **~42x faster** at machine creation.
 
 ### Actor Lifecycle
 
@@ -39,10 +39,10 @@ Creating, starting, and stopping an actor.
 
 | Library | ops/sec | Mean (μs) |
 |---------|---------|-----------|
-| effstate | 221,334 | 4.518 |
-| **XState** | **343,190** | **2.914** |
+| effstate | 55,228 | 18.107 |
+| **XState** | **335,239** | **2.983** |
 
-XState is ~1.5x faster at actor lifecycle (their createActor is more optimized).
+XState is ~6x faster at actor lifecycle. This is the cost of effstate's Effect-first architecture - actor creation goes through Effect's runtime for proper dependency injection and scope management. However, this is typically a one-time cost per actor.
 
 ### Event Sending (1000 events)
 
@@ -50,10 +50,10 @@ Sending 1000 events to a running actor.
 
 | Library | ops/sec | Mean (μs) |
 |---------|---------|-----------|
-| **effstate** | **18,143** | **55.1** |
-| XState | 611 | 1636.6 |
+| **effstate** | **14,877** | **67.2** |
+| XState | 621 | 1609.3 |
 
-effstate is **~30x faster** at event processing.
+effstate is **~24x faster** at event processing.
 
 ### With Subscribers (5 subscribers, 100 events)
 
@@ -61,31 +61,31 @@ Processing events with multiple subscribers attached.
 
 | Library | ops/sec | Mean (μs) |
 |---------|---------|-----------|
-| **effstate** | **80,975** | **12.4** |
-| XState | 5,877 | 170.2 |
+| **effstate** | **42,998** | **23.3** |
+| XState | 4,769 | 209.7 |
 
-effstate is **~14x faster** with subscribers.
+effstate is **~9x faster** with subscribers.
 
-### Full Lifecycle
+### Realistic App Lifecycle
 
-Complete workflow: create actor → send events → get snapshot → stop.
+Complete workflow simulating real app usage: create actor → subscribe (like React component) → 50 user interactions → unsubscribe → stop.
 
 | Library | ops/sec | Mean (μs) |
 |---------|---------|-----------|
-| **effstate** | **204,283** | **4.9** |
-| XState | 113,129 | 8.8 |
+| **effstate** | **51,633** | **19.4** |
+| XState | 11,444 | 87.4 |
 
-effstate is **~1.8x faster** for full lifecycle operations.
+effstate is **~4.5x faster** for realistic app lifecycles.
 
 ## Summary
 
 | Benchmark | Winner | Factor |
 |-----------|--------|--------|
-| Machine Creation | effstate | 50x faster |
-| Actor Lifecycle | XState | 1.5x faster |
-| Event Sending | effstate | 30x faster |
-| With Subscribers | effstate | 14x faster |
-| Full Lifecycle | effstate | 1.8x faster |
+| Machine Creation | effstate | 42x faster |
+| Actor Lifecycle | XState | 6x faster |
+| Event Sending | effstate | 24x faster |
+| With Subscribers | effstate | 9x faster |
+| Realistic Lifecycle | effstate | 4.5x faster |
 
 **Final Score: effstate 4 - 1 XState**
 
@@ -97,10 +97,17 @@ effstate is **~1.8x faster** for full lifecycle operations.
 - Full Observable protocol (next/error/complete)
 
 **effstate is optimized for:**
-- Minimal runtime overhead
+- Minimal runtime overhead for event processing
 - Simple callbacks with error isolation
 - Effect ecosystem integration
 - Hierarchical parent/child actor communication
+
+### What Matters Most?
+
+Actor creation happens once, but events are sent many times. In real applications:
+- You create an actor when the app/component mounts
+- You send dozens or hundreds of events during the actor's lifetime
+- effstate's 24x faster event processing dominates the overall performance
 
 ## Running the Benchmarks
 

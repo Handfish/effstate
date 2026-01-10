@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Data, Effect, Fiber, Ref, Schema } from "effect";
-import { createMachine, interpretSync } from "../src/machine.js";
+import { createMachine } from "../src/machine.js";
+import { testActorSync } from "./test-utils.js";
 import { assign, effect } from "../src/actions.js";
 
 // ============================================================================
@@ -38,7 +39,7 @@ describe("onError (error handling)", () => {
       },
     });
 
-    const actor = interpretSync(machine);
+    const actor = testActorSync(machine);
 
     // First observer throws
     actor.subscribe(() => {
@@ -84,7 +85,7 @@ describe("onError (error handling)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           actor.onError((error) => {
             errors.push({ _tag: error._tag, message: error.message });
@@ -131,7 +132,7 @@ describe("onError (error handling)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           const unsub = actor.onError((error) => {
             errors.push(error._tag);
@@ -173,7 +174,7 @@ describe("waitFor (Effect-based state waiting)", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const actor = interpretSync(machine);
+        const actor = testActorSync(machine);
 
         // Condition already met (count >= 5)
         const result = yield* actor.waitFor((s) => s.context.count >= 5);
@@ -199,7 +200,7 @@ describe("waitFor (Effect-based state waiting)", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const actor = interpretSync(machine);
+        const actor = testActorSync(machine);
 
         // Start waiting in background
         const waitFiber = yield* Effect.fork(
@@ -240,7 +241,7 @@ describe("waitFor (Effect-based state waiting)", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const actor = interpretSync(machine);
+        const actor = testActorSync(machine);
 
         // Start waiting for count to reach 3
         const waitFiber = yield* Effect.fork(
@@ -278,7 +279,7 @@ describe("waitFor (Effect-based state waiting)", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const actor = interpretSync(machine);
+        const actor = testActorSync(machine);
 
         // Wait for a state that will never happen, with timeout
         const result = yield* actor
@@ -309,7 +310,7 @@ describe("waitFor (Effect-based state waiting)", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const actor = interpretSync(machine);
+        const actor = testActorSync(machine);
 
         // Start waiting
         const fiber = yield* Effect.fork(
@@ -362,7 +363,7 @@ describe("invoke (async operations)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           // Should start in loading
           expect(actor.getSnapshot().value).toBe("loading");
@@ -409,7 +410,7 @@ describe("invoke (async operations)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           expect(actor.getSnapshot().value).toBe("loading");
 
@@ -457,7 +458,7 @@ describe("invoke (async operations)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           expect(actor.getSnapshot().value).toBe("loading");
 
@@ -503,7 +504,7 @@ describe("invoke (async operations)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           yield* Effect.sleep("20 millis");
 
           const snapshot = actor.getSnapshot();
@@ -540,7 +541,7 @@ describe("invoke (async operations)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           yield* Effect.sleep("20 millis");
 
           const snapshot = actor.getSnapshot();
@@ -575,7 +576,7 @@ describe("invoke (async operations)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           yield* Effect.sleep("30 millis");
 
           // Guard blocks transition (3 > 5 is false)
@@ -611,7 +612,7 @@ describe("invoke (async operations)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           yield* Effect.sleep("20 millis");
 
           const snapshot = actor.getSnapshot();
@@ -650,7 +651,7 @@ describe("invoke (async operations)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           yield* Effect.sleep("20 millis");
 
           actor.stop();
@@ -706,7 +707,7 @@ describe("invoke (async operations)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("30 millis");
 
@@ -753,7 +754,7 @@ describe("invoke (async operations)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(networkMachine);
+          const actor = testActorSync(networkMachine);
           yield* Effect.sleep("20 millis");
 
           expect(actor.getSnapshot().value).toBe("retry");
@@ -789,7 +790,7 @@ describe("invoke (async operations)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(validationMachine);
+          const actor = testActorSync(validationMachine);
           yield* Effect.sleep("20 millis");
 
           expect(actor.getSnapshot().value).toBe("invalid");
@@ -829,7 +830,7 @@ describe("invoke (async operations)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           yield* Effect.sleep("20 millis");
 
           expect(actor.getSnapshot().value).toBe("error");
@@ -866,7 +867,7 @@ describe("invoke (async operations)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           yield* Effect.sleep("20 millis");
 
           expect(actor.getSnapshot().value).toBe("crashed");
@@ -906,7 +907,7 @@ describe("invoke (async operations)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           // Transition away, which should interrupt the invoke
           yield* Effect.sleep("20 millis");
@@ -948,7 +949,7 @@ describe("invoke (async operations)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           yield* Effect.sleep("20 millis");
 
           expect(actor.getSnapshot().value).toBe("done");
@@ -981,7 +982,7 @@ describe("invoke (async operations)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           yield* Effect.sleep("20 millis");
 
           expect(actor.getSnapshot().value).toBe("failed");

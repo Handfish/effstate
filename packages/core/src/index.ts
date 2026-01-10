@@ -52,7 +52,7 @@ export {
 } from "./types.js";
 
 // Machine creation
-export { createMachine, interpret, interpretSync, withRequirements, type MachineActor } from "./machine.js";
+export { createMachine, interpret, withRequirements, type MachineActor } from "./machine.js";
 
 // Actions
 export { assign, assignOnDefect, assignOnFailure, assignOnSuccess, cancel, effect, emit, enqueueActions, forwardTo, invoke, log, raise, sendParent, sendTo, spawnChild, stopChild } from "./actions.js";

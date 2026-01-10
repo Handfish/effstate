@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Data, Effect, Ref, Schema } from "effect";
-import { createMachine, interpretSync } from "../src/machine.js";
+import { createMachine } from "../src/machine.js";
+import { testActorSync } from "./test-utils.js";
 import { assign, effect, raise } from "../src/actions.js";
 
 // ============================================================================
@@ -56,7 +57,7 @@ describe("raise()", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -100,7 +101,7 @@ describe("raise()", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -143,7 +144,7 @@ describe("entry/exit actions", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -178,7 +179,7 @@ describe("entry/exit actions", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -211,7 +212,7 @@ describe("entry/exit actions", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -242,7 +243,7 @@ describe("entry/exit actions", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          interpretSync(machine);
+          testActorSync(machine);
           yield* Effect.sleep("10 millis");
 
           const log = yield* Ref.get(entryLog);
@@ -288,7 +289,7 @@ describe("self-transitions", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           yield* Effect.sleep("10 millis");
 
           // Clear the log after initial entry
@@ -334,7 +335,7 @@ describe("self-transitions", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           yield* Effect.sleep("10 millis");
 
           yield* Ref.set(actionLog, []); // Clear after initial entry

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Data, Effect, Ref, Schema } from "effect";
-import { createMachine, interpretSync } from "../src/machine.js";
+import { createMachine } from "../src/machine.js";
+import { testActorSync } from "./test-utils.js";
 import { assign, effect, cancel } from "../src/actions.js";
 
 // ============================================================================
@@ -43,7 +44,7 @@ describe("after (delayed transitions)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           // Should still be waiting
           let snapshot = actor.getSnapshot();
@@ -82,7 +83,7 @@ describe("after (delayed transitions)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           // Wait for delay
           yield* Effect.sleep("50 millis");
@@ -119,7 +120,7 @@ describe("after (delayed transitions)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           yield* Effect.sleep("50 millis");
 
@@ -165,7 +166,7 @@ describe("cancel (delayed events)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           // Cancel before timeout fires
           yield* Effect.sleep("30 millis");
@@ -212,7 +213,7 @@ describe("cancel (delayed events)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           yield* Effect.sleep("30 millis");
           actor.send(new SetValue({ value: 100 })); // Cancel "delay-100"
@@ -251,7 +252,7 @@ describe("cancel (delayed events)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -296,7 +297,7 @@ describe("cancel (delayed events)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           // Quickly transition to partial (before short timeout)
           yield* Effect.sleep("20 millis");
@@ -349,7 +350,7 @@ describe("cancel (delayed events)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           // Start in stopping, delay scheduled for 100ms
           expect(actor.getSnapshot().value).toBe("stopping");
@@ -406,7 +407,7 @@ describe("persistent delays", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           expect(actor.getSnapshot().value).toBe("a");
 
@@ -455,7 +456,7 @@ describe("persistent delays", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           yield* Effect.sleep("30 millis");
           actor.send(new Toggle()); // a -> b, cancels the delay
@@ -498,7 +499,7 @@ describe("persistent delays", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           yield* Effect.sleep("30 millis");
           actor.stop(); // Stop the actor
@@ -539,7 +540,7 @@ describe("Effect-based delays", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           expect(actor.getSnapshot().value).toBe("waiting");
 
@@ -575,7 +576,7 @@ describe("Effect-based delays", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           yield* Effect.sleep("30 millis");
           actor.send(new Toggle()); // a -> b
@@ -620,7 +621,7 @@ describe("Effect-based delays", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           yield* Effect.sleep("30 millis");
           actor.send(new Toggle()); // a -> b, interrupts the delay Effect
@@ -662,7 +663,7 @@ describe("Effect-based delays", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           yield* Effect.sleep("70 millis");
 
@@ -700,7 +701,7 @@ describe("Effect-based delays", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           yield* Effect.sleep("30 millis");
           actor.send(new Toggle()); // a -> b

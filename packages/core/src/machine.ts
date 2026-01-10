@@ -267,7 +267,7 @@ export interface MachineActor<
 // ============================================================================
 
 /**
- * Internal actor creation - used by both interpret and interpretSync
+ * Internal actor creation - used by interpret()
  */
 function createActor<
   TId extends string,
@@ -279,28 +279,23 @@ function createActor<
   TContextEncoded,
 >(
   machine: MachineDefinition<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded>,
-  options?: {
+  options: {
     parent?: MachineActor<string, MachineContext, MachineEvent>;
-    runtime?: Runtime.Runtime<R>;
+    runtime: Runtime.Runtime<R>;
     /** Initial snapshot to restore from (for persistence) */
     snapshot?: MachineSnapshot<TStateValue, TContext>;
     /** Child snapshots to restore (keyed by child ID) */
     childSnapshots?: ReadonlyMap<string, MachineSnapshot<string, MachineContext>>;
   },
 ): MachineActor<TStateValue, TContext, TEvent> {
-  const runtime = options?.runtime;
-  const childSnapshots = options?.childSnapshots;
+  const { runtime, childSnapshots } = options;
 
-  // Helper to run an Effect with optional runtime - consolidates runtime branching casts
+  // Helper to run an Effect with the captured runtime
   const runForkEffect = <A>(eff: Effect.Effect<A, never, R>): Fiber.RuntimeFiber<A, never> =>
-    runtime
-      ? Runtime.runFork(runtime)(eff)
-      : Effect.runFork(eff as Effect.Effect<A, never, never>);
+    Runtime.runFork(runtime)(eff);
 
   const runPromiseExitEffect = <A>(eff: Effect.Effect<A, unknown, R>): Promise<Exit.Exit<A, unknown>> =>
-    runtime
-      ? Runtime.runPromiseExit(runtime)(eff)
-      : Effect.runPromiseExit(eff as Effect.Effect<A, unknown, never>);
+    Runtime.runPromiseExit(runtime)(eff);
 
   // Mutable state - use provided snapshot or initial
   let snapshot: MachineSnapshot<TStateValue, TContext> = options?.snapshot ?? machine.initialSnapshot;
@@ -966,15 +961,15 @@ function createActor<
             const childMachine = action.src as unknown as MachineDefinition<string, string, MachineContext, MachineEvent, unknown, unknown, unknown>;
             // Check if we have a saved snapshot for this child
             const childSnapshot = childSnapshots?.get(childId);
-            // Build options conditionally to satisfy exactOptionalPropertyTypes
+            // Build options - runtime is always available, snapshot is conditional
             const childOptions: {
               parent: MachineActor<string, MachineContext, MachineEvent>;
-              runtime?: Runtime.Runtime<unknown>;
+              runtime: Runtime.Runtime<unknown>;
               snapshot?: MachineSnapshot<string, MachineContext>;
             } = {
               parent: actor as unknown as MachineActor<string, MachineContext, MachineEvent>,
+              runtime: runtime as Runtime.Runtime<unknown>,
             };
-            if (runtime) childOptions.runtime = runtime as Runtime.Runtime<unknown>;
             if (childSnapshot) childOptions.snapshot = childSnapshot;
             const childActor = createActor(childMachine, childOptions);
             childrenRef.set(childId, childActor);
@@ -1222,13 +1217,6 @@ function createActor<
 
       // Check if delay is an Effect or Duration
       if (Effect.isEffect(after.delay)) {
-        if (!runtime) {
-          console.warn(
-            "[effstate] Effect-based delays require interpret() with a runtime. " +
-            "Using interpretSync() with Effect delays that require services will fail. " +
-            "Consider using Duration-based delays or switch to interpret()."
-          );
-        }
         scheduleDelayEffect(
           after.delay as Effect.Effect<void, never, R>,
           "$effect",
@@ -1497,41 +1485,6 @@ export const interpret = <
 
     return actor;
   });
-
-/**
- * Synchronously interpret a machine without Effect context.
- *
- * This is the escape hatch for:
- * - React components that manage lifecycle themselves
- * - Simple use cases that don't need services
- * - Backwards compatibility
- *
- * Note: Effect actions that require services (R !== never) will fail at runtime.
- *
- * @example
- * ```ts
- * const actor = interpretSync(machine)
- * actor.send(new MyEvent())
- * // Don't forget to clean up!
- * actor.stop()
- * ```
- */
-export function interpretSync<
-  TId extends string,
-  TStateValue extends string,
-  TContext extends MachineContext,
-  TEvent extends MachineEvent,
-  R,
-  E,
-  TContextEncoded,
->(
-  machine: MachineDefinition<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded>,
-  options?: {
-    parent?: MachineActor<string, MachineContext, MachineEvent>;
-  },
-): MachineActor<TStateValue, TContext, TEvent> {
-  return createActor(machine, options);
-}
 
 // ============================================================================
 // Internal Helpers

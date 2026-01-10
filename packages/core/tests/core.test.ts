@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Data, Effect, Schema } from "effect";
-import { createMachine, interpretSync } from "../src/machine.js";
+import { createMachine } from "../src/machine.js";
+import { testActorSync } from "./test-utils.js";
 import { assign } from "../src/actions.js";
 
 // ============================================================================
@@ -80,7 +81,7 @@ describe("subscribe()", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           actor.subscribe((snapshot) => {
             snapshots.push({ value: snapshot.value, count: snapshot.context.count });
@@ -119,7 +120,7 @@ describe("subscribe()", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           actor.subscribe((snapshot) => {
             snapshots.push({ value: snapshot.value, count: snapshot.context.count });
@@ -157,7 +158,7 @@ describe("subscribe()", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           actor.subscribe(() => sub1Calls++);
           actor.subscribe(() => sub2Calls++);
@@ -191,7 +192,7 @@ describe("subscribe()", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           const unsub = actor.subscribe(() => calls.push(1));
 
@@ -235,7 +236,7 @@ describe("assign()", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -268,7 +269,7 @@ describe("assign()", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("10 millis");
 
@@ -301,7 +302,7 @@ describe("assign()", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new SetValue({ value: 123 }));
           yield* Effect.sleep("10 millis");
 
