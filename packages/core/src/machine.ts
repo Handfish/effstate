@@ -64,18 +64,15 @@ import {
  * Type parameters:
  * - TStateValue: The state literal union (e.g., "idle" | "loading" | "done")
  * - TEvent: The event union type
- * - TContextSchema: Use `typeof YourContextSchema`
+ * - TContextSchema: The Schema type for context (use `typeof YourSchema`)
  *
  * @example
  * ```ts
- * const machine = createMachine<
- *   "idle" | "loading" | "done",
- *   MyEvent,
- *   typeof MyContextSchema
- * >({
+ * const machine = createMachine({
  *   id: "myMachine",
  *   initial: "idle",
  *   context: MyContextSchema,
+ *   initialContext: { count: 0 },
  *   states: { idle: {}, loading: {}, done: {} },
  * });
  * ```
@@ -99,29 +96,26 @@ export function createMachine<
   TEvent,
   R,
   E,
-  import("effect").Schema.Schema.Encoded<TContextSchema>
+  import("effect").Schema.Schema.Encoded<TContextSchema>,
+  import("effect").Schema.Schema.Context<TContextSchema>
 > {
-  // Cast necessary: TypeScript can't unify TContextSchema (Schema<any, any, unknown>)
-  // with Schema<Type<T>, Encoded<T>, never> due to the third type parameter (Context/R).
-  // Fixing this would require exposing Schema's R parameter throughout the API.
-  type Def = MachineDefinition<
-    string, TStateValue, import("effect").Schema.Schema.Type<TContextSchema>,
-    TEvent, R, E, import("effect").Schema.Schema.Encoded<TContextSchema>
-  >;
+  // Type aliases for cleaner code
+  type TContext = import("effect").Schema.Schema.Type<TContextSchema>;
+  type TContextEncoded = import("effect").Schema.Schema.Encoded<TContextSchema>;
+  type TSchemaR = import("effect").Schema.Schema.Context<TContextSchema>;
+  type Def = MachineDefinition<string, TStateValue, TContext, TEvent, R, E, TContextEncoded, TSchemaR>;
 
-  const definition = {
+  return {
     _tag: "MachineDefinition" as const,
     id: config.id,
-    config: config as unknown as Def["config"],
+    config: config as Def["config"],
     initialSnapshot: {
       value: config.initial,
       context: config.initialContext,
       event: null,
     },
-    contextSchema: config.context as unknown as Def["contextSchema"],
+    contextSchema: config.context as Def["contextSchema"],
   };
-
-  return definition;
 }
 
 /**
@@ -155,11 +149,12 @@ export function withRequirements<R>() {
     _R,
     E,
     TContextEncoded,
+    TSchemaR,
   >(
-    machine: MachineDefinition<TId, TStateValue, TContext, TEvent, _R, E, TContextEncoded>,
-  ): MachineDefinition<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded> => {
+    machine: MachineDefinition<TId, TStateValue, TContext, TEvent, _R, E, TContextEncoded, TSchemaR>,
+  ): MachineDefinition<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded, TSchemaR> => {
     // Type-only operation - the machine is returned unchanged at runtime
-    return machine as unknown as MachineDefinition<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded>;
+    return machine as unknown as MachineDefinition<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded, TSchemaR>;
   };
 }
 

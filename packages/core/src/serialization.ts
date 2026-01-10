@@ -30,21 +30,18 @@ export const encodeSnapshot = <
   TStateValue extends string,
   TContext extends MachineContext,
   TContextEncoded,
+  TSchemaR,
 >(
-  machine: MachineDefinition<string, TStateValue, TContext, MachineEvent, unknown, unknown, TContextEncoded>,
+  machine: MachineDefinition<string, TStateValue, TContext, MachineEvent, unknown, unknown, TContextEncoded, TSchemaR>,
   snapshot: MachineSnapshot<TStateValue, TContext>,
-): Effect.Effect<EncodedSnapshot<TStateValue, TContextEncoded>, ParseResult.ParseError> => {
-  if (!machine.contextSchema) {
-    return Effect.die(new Error("Machine does not have a context schema for serialization"));
-  }
-  return Effect.map(
+): Effect.Effect<EncodedSnapshot<TStateValue, TContextEncoded>, ParseResult.ParseError, TSchemaR> =>
+  Effect.map(
     Schema.encode(machine.contextSchema)(snapshot.context),
     (context) => ({
       value: snapshot.value,
       context,
     }),
   );
-};
 
 /**
  * Encode a snapshot to a JSON-safe format (sync, throws on error).
@@ -56,15 +53,10 @@ export const encodeSnapshotSync = <
 >(
   machine: MachineDefinition<string, TStateValue, TContext, MachineEvent, unknown, unknown, TContextEncoded>,
   snapshot: MachineSnapshot<TStateValue, TContext>,
-): EncodedSnapshot<TStateValue, TContextEncoded> => {
-  if (!machine.contextSchema) {
-    throw new Error("Machine does not have a context schema for serialization");
-  }
-  return {
-    value: snapshot.value,
-    context: Schema.encodeSync(machine.contextSchema)(snapshot.context),
-  };
-};
+): EncodedSnapshot<TStateValue, TContextEncoded> => ({
+  value: snapshot.value,
+  context: Schema.encodeSync(machine.contextSchema)(snapshot.context),
+});
 
 /**
  * Decode a snapshot from a JSON-safe format.
@@ -80,14 +72,12 @@ export const decodeSnapshot = <
   TStateValue extends string,
   TContext extends MachineContext,
   TContextEncoded,
+  TSchemaR,
 >(
-  machine: MachineDefinition<string, TStateValue, TContext, MachineEvent, unknown, unknown, TContextEncoded>,
+  machine: MachineDefinition<string, TStateValue, TContext, MachineEvent, unknown, unknown, TContextEncoded, TSchemaR>,
   encoded: EncodedSnapshot<TStateValue, TContextEncoded>,
-): Effect.Effect<MachineSnapshot<TStateValue, TContext>, ParseResult.ParseError> => {
-  if (!machine.contextSchema) {
-    return Effect.die(new Error("Machine does not have a context schema for deserialization"));
-  }
-  return Effect.map(
+): Effect.Effect<MachineSnapshot<TStateValue, TContext>, ParseResult.ParseError, TSchemaR> =>
+  Effect.map(
     Schema.decode(machine.contextSchema)(encoded.context),
     (context) => ({
       value: encoded.value,
@@ -95,7 +85,6 @@ export const decodeSnapshot = <
       event: null,
     }),
   );
-};
 
 /**
  * Decode a snapshot from a JSON-safe format (sync, throws on error).
@@ -107,16 +96,11 @@ export const decodeSnapshotSync = <
 >(
   machine: MachineDefinition<string, TStateValue, TContext, MachineEvent, unknown, unknown, TContextEncoded>,
   encoded: EncodedSnapshot<TStateValue, TContextEncoded>,
-): MachineSnapshot<TStateValue, TContext> => {
-  if (!machine.contextSchema) {
-    throw new Error("Machine does not have a context schema for deserialization");
-  }
-  return {
-    value: encoded.value,
-    context: Schema.decodeSync(machine.contextSchema)(encoded.context),
-    event: null,
-  };
-};
+): MachineSnapshot<TStateValue, TContext> => ({
+  value: encoded.value,
+  context: Schema.decodeSync(machine.contextSchema)(encoded.context),
+  event: null,
+});
 
 // ============================================================================
 // Snapshot Schema Builder (for advanced use)
@@ -124,24 +108,18 @@ export const decodeSnapshotSync = <
 
 /**
  * Get the context schema from a machine definition.
- * Throws if the machine does not have a context schema.
  */
 export const getContextSchema = <
   TContext extends MachineContext,
   TContextEncoded,
+  TSchemaR,
 >(
-  machine: MachineDefinition<string, string, TContext, MachineEvent, unknown, unknown, TContextEncoded>,
-): Schema.Schema<TContext, TContextEncoded> => {
-  if (!machine.contextSchema) {
-    throw new Error("Machine does not have a context schema");
-  }
-  return machine.contextSchema;
-};
+  machine: MachineDefinition<string, string, TContext, MachineEvent, unknown, unknown, TContextEncoded, TSchemaR>,
+): Schema.Schema<TContext, TContextEncoded, TSchemaR> => machine.contextSchema;
 
 /**
  * Create a Schema for the encoded snapshot format.
  * Useful for validation when loading from external sources.
- * Throws if the machine does not have a context schema.
  *
  * @example
  * ```ts
@@ -159,9 +137,6 @@ export const createSnapshotSchema = <
   MachineSnapshot<TStateValue, TContext>,
   EncodedSnapshot<TStateValue, TContextEncoded>
 > => {
-  if (!machine.contextSchema) {
-    throw new Error("Machine does not have a context schema");
-  }
   const contextSchema = machine.contextSchema;
   const encodedContextSchema = Schema.encodedSchema(contextSchema);
 

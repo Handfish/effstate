@@ -28,7 +28,7 @@
 - **Invocations**: Async operations with automatic result handling
 - **Parent-child machines**: Spawn child machines and communicate via events
 - **Cross-tab sync**: Built-in support for synchronizing state across browser tabs
-- **Schema validation**: Optional Effect Schema integration for context validation
+- **Schema-first**: Required Effect Schema for context - enables serialization, cross-tab sync, and validation
 
 ## Why effstate over XState?
 
@@ -80,7 +80,7 @@ class Retry extends Data.TaggedClass("RETRY")<{}> {}
 type ConnectionEvent = Connect | Disconnect | Retry;
 
 // =============================================================================
-// 2. Define context schema (optional but recommended)
+// 2. Define context schema (required for all machines)
 // =============================================================================
 
 const ConnectionContextSchema = Schema.Struct({
