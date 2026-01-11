@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Data, Effect, Ref, Schema } from "effect";
-import { createMachine, interpretSync } from "../src/machine.js";
+import { createMachine } from "../src/machine.js";
+import { testActorSync } from "./test-utils.js";
 import { assign, effect, raise, enqueueActions, spawnChild, stopChild } from "../src/actions.js";
 
 // ============================================================================
@@ -97,7 +98,7 @@ describe("enqueueActions (dynamic action queuing)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -142,7 +143,7 @@ describe("enqueueActions (dynamic action queuing)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -180,7 +181,7 @@ describe("enqueueActions (dynamic action queuing)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -225,7 +226,7 @@ describe("enqueueActions (dynamic action queuing)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("30 millis");
 
@@ -265,7 +266,7 @@ describe("enqueueActions (dynamic action queuing)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -302,7 +303,7 @@ describe("enqueueActions (dynamic action queuing)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new SetValue({ value: 25 }));
           yield* Effect.sleep("20 millis");
 
@@ -347,7 +348,7 @@ describe("spawnChild / stopChild (actor hierarchy)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -390,7 +391,7 @@ describe("spawnChild / stopChild (actor hierarchy)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -433,7 +434,7 @@ describe("spawnChild / stopChild (actor hierarchy)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -483,7 +484,7 @@ describe("spawnChild / stopChild (actor hierarchy)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -526,7 +527,7 @@ describe("spawnChild / stopChild (actor hierarchy)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 

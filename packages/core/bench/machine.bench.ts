@@ -1,8 +1,10 @@
 import { Bench, type Task } from "tinybench";
-import { Data, Schema } from "effect";
+import { Data, Effect, Schema, Scope } from "effect";
 
 // Our Effect-first state machine
-import { createMachine, interpretSync, assign } from "../src/index.js";
+import { createMachine, interpret, assign } from "../src/index.js";
+import type { MachineActor } from "../src/machine.js";
+import type { MachineContext, MachineDefinition, MachineEvent } from "../src/types.js";
 
 // XState
 import {
@@ -10,6 +12,33 @@ import {
   createActor,
   assign as xstateAssign,
 } from "xstate";
+
+// ============================================================================
+// Benchmark Runtime Setup
+// ============================================================================
+
+// Shared scope for benchmarks - actors are manually stopped so we reuse one scope
+const benchScope = Effect.runSync(Scope.make());
+
+/**
+ * Benchmark actor creation using the standard interpret() API.
+ * This is what we recommend in docs/demos - honest benchmarking.
+ */
+function benchActor<
+  TId extends string,
+  TStateValue extends string,
+  TContext extends MachineContext,
+  TEvent extends MachineEvent,
+  R,
+  E,
+  TContextEncoded,
+>(
+  machine: MachineDefinition<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded>,
+): MachineActor<TStateValue, TContext, TEvent> {
+  return Effect.runSync(
+    interpret(machine).pipe(Effect.provideService(Scope.Scope, benchScope))
+  );
+}
 
 // ============================================================================
 // Define equivalent machines in both libraries
@@ -158,7 +187,7 @@ function verifyImplementations() {
 
   // Test 1: Context updates work
   {
-    const effectActor = interpretSync(effectMachine);
+    const effectActor = benchActor(effectMachine);
     effectActor.send(incrementEvent);
     effectActor.send(incrementEvent);
     effectActor.send(decrementEvent);
@@ -181,7 +210,7 @@ function verifyImplementations() {
     let effectCalls = 0;
     let xstateCalls = 0;
 
-    const effectActor = interpretSync(effectMachine);
+    const effectActor = benchActor(effectMachine);
     effectActor.subscribe(() => effectCalls++);
     effectActor.send(incrementEvent);
     effectActor.send(incrementEvent);
@@ -200,7 +229,7 @@ function verifyImplementations() {
 
   // Test 3: State transitions work
   {
-    const effectActor = interpretSync(effectMachine);
+    const effectActor = benchActor(effectMachine);
     const effectState1 = effectActor.getSnapshot().value;
     effectActor.send(incrementEvent);
     const effectState2 = effectActor.getSnapshot().value;
@@ -295,7 +324,7 @@ async function main() {
   const lifecycleBench = new Bench({ time: 200, warmupTime: 50 });
 
   lifecycleBench.add("Effect: interpret + stop", () => {
-    const actor = interpretSync(effectMachine);
+    const actor = benchActor(effectMachine);
     actor.stop();
   });
 
@@ -329,7 +358,7 @@ async function main() {
   const eventBench = new Bench({ time: 200, warmupTime: 50 });
 
   eventBench.add("Effect: send 1000 events", () => {
-    const actor = interpretSync(effectMachine);
+    const actor = benchActor(effectMachine);
     for (let i = 0; i < 500; i++) {
       actor.send(incrementEvent);
       actor.send(decrementEvent);
@@ -371,7 +400,7 @@ async function main() {
   const subscriberBench = new Bench({ time: 200, warmupTime: 50 });
 
   subscriberBench.add("Effect: with 5 subscribers", () => {
-    const actor = interpretSync(effectMachine);
+    const actor = benchActor(effectMachine);
     const unsubs: Array<() => void> = [];
     for (let i = 0; i < 5; i++) {
       unsubs.push(actor.subscribe(() => {}));
@@ -416,28 +445,55 @@ async function main() {
   );
 
   // -------------------------------------------------------------------------
-  // Benchmark Group 5: Full Realistic Lifecycle
+  // Benchmark Group 5: Realistic App Lifecycle
   // -------------------------------------------------------------------------
-  console.log("\n\n🔄 FULL LIFECYCLE (create → events → snapshot → stop)\n");
+  console.log("\n\n🔄 REALISTIC APP LIFECYCLE\n");
+  console.log("  Simulates: create → subscribe → 50 user interactions → unsubscribe → stop\n");
 
   const fullBench = new Bench({ time: 200, warmupTime: 50 });
 
-  fullBench.add("Effect: full lifecycle", () => {
-    const actor = interpretSync(effectMachine);
-    actor.send(incrementEvent);
-    actor.send(incrementEvent);
-    actor.send(decrementEvent);
-    actor.getSnapshot();
+  fullBench.add("Effect: realistic lifecycle", () => {
+    // Create actor (like app init)
+    const actor = benchActor(effectMachine);
+
+    // Subscribe (like React component mounting)
+    let lastSnapshot = actor.getSnapshot();
+    const unsub = actor.subscribe((s) => { lastSnapshot = s; });
+
+    // User interactions over time (50 events)
+    for (let i = 0; i < 25; i++) {
+      actor.send(incrementEvent);
+      actor.send(decrementEvent);
+    }
+
+    // Check state (like re-render)
+    void lastSnapshot.context.count;
+
+    // Cleanup (like component unmounting)
+    unsub();
     actor.stop();
   });
 
-  fullBench.add("XState: full lifecycle", () => {
+  fullBench.add("XState: realistic lifecycle", () => {
+    // Create actor (like app init)
     const actor = createActor(xstateMachine);
     actor.start();
-    actor.send({ type: "INCREMENT" });
-    actor.send({ type: "INCREMENT" });
-    actor.send({ type: "DECREMENT" });
-    actor.getSnapshot();
+
+    // Subscribe (like React component mounting)
+    let lastSnapshot = actor.getSnapshot();
+    const sub = actor.subscribe((s) => { lastSnapshot = s; });
+
+    // User interactions over time (50 events)
+    for (let i = 0; i < 25; i++) {
+      actor.send({ type: "INCREMENT" });
+      actor.send({ type: "DECREMENT" });
+    }
+
+    // Check state (like re-render)
+    void lastSnapshot.context.count;
+
+    // Cleanup (like component unmounting)
+    sub.unsubscribe();
     actor.stop();
   });
 
@@ -452,9 +508,9 @@ async function main() {
   );
 
   printComparison(
-    "full lifecycle",
-    fullBench.getTask("Effect: full lifecycle"),
-    fullBench.getTask("XState: full lifecycle"),
+    "realistic lifecycle",
+    fullBench.getTask("Effect: realistic lifecycle"),
+    fullBench.getTask("XState: realistic lifecycle"),
   );
 
   // -------------------------------------------------------------------------
@@ -486,9 +542,9 @@ async function main() {
       xstate: subscriberBench.getTask("XState: with 5 subscribers"),
     },
     {
-      label: "full lifecycle",
-      effect: fullBench.getTask("Effect: full lifecycle"),
-      xstate: fullBench.getTask("XState: full lifecycle"),
+      label: "realistic lifecycle",
+      effect: fullBench.getTask("Effect: realistic lifecycle"),
+      xstate: fullBench.getTask("XState: realistic lifecycle"),
     },
   ];
 

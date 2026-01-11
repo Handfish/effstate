@@ -28,15 +28,15 @@
 - **Invocations**: Async operations with automatic result handling
 - **Parent-child machines**: Spawn child machines and communicate via events
 - **Cross-tab sync**: Built-in support for synchronizing state across browser tabs
-- **Schema validation**: Optional Effect Schema integration for context validation
+- **Schema-first**: Required Effect Schema for context - enables serialization, cross-tab sync, and validation
 
 ## Why effstate over XState?
 
 | Metric | effstate | XState |
 |--------|----------|--------|
 | **Bundle size (gzip)** | **~3.9 kB** | 13.7 kB |
-| Event processing | **30x faster** | - |
-| With subscribers | **14x faster** | - |
+| Event processing | **25x faster** | - |
+| Realistic app lifecycle | **5x faster** | - |
 
 [See full comparison →](https://handfish.github.io/effstate/getting-started/comparison/)
 
@@ -80,7 +80,7 @@ class Retry extends Data.TaggedClass("RETRY")<{}> {}
 type ConnectionEvent = Connect | Disconnect | Retry;
 
 // =============================================================================
-// 2. Define context schema (optional but recommended)
+// 2. Define context schema (required for all machines)
 // =============================================================================
 
 const ConnectionContextSchema = Schema.Struct({

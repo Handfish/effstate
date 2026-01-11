@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Data, Effect, Schema } from "effect";
-import { createMachine, interpretSync } from "../src/machine.js";
+import { createMachine } from "../src/machine.js";
+import { testActorSync } from "./test-utils.js";
 import { assign, effect, emit, spawnChild, sendTo, sendParent, forwardTo } from "../src/actions.js";
 
 // ============================================================================
@@ -115,7 +116,7 @@ describe("emit (external listeners)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           // Register listener
           actor.on("notification", (event) => {
@@ -165,7 +166,7 @@ describe("emit (external listeners)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           actor.on("notification", (event) => received1.push(event as TestEmittedEvent));
           actor.on("notification", (event) => received2.push(event as TestEmittedEvent));
@@ -221,7 +222,7 @@ describe("emit (external listeners)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           const unsubscribe = actor.on("notification", (event) => received.push(event as TestEmittedEvent));
 
@@ -269,7 +270,7 @@ describe("emit (external listeners)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           actor.on("countChanged", (event) => received.push(event as TestEmittedEvent));
 
@@ -310,7 +311,7 @@ describe("emit (external listeners)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           // No listeners registered
           actor.send(new Toggle());
@@ -359,7 +360,7 @@ describe("sendTo (send events to child actors)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -417,7 +418,7 @@ describe("sendTo (send events to child actors)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -466,7 +467,7 @@ describe("sendTo (send events to child actors)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -503,7 +504,7 @@ describe("sendTo (send events to child actors)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -578,7 +579,7 @@ describe("sendParent (send events to parent actor)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           // Spawn child
           actor.send(new Toggle());
@@ -656,7 +657,7 @@ describe("sendParent (send events to parent actor)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
@@ -695,7 +696,7 @@ describe("sendParent (send events to parent actor)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 
@@ -759,7 +760,7 @@ describe("forwardTo (forward current event to another actor)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
@@ -827,7 +828,7 @@ describe("forwardTo (forward current event to another actor)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
 
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
@@ -865,7 +866,7 @@ describe("forwardTo (forward current event to another actor)", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const actor = interpretSync(machine);
+          const actor = testActorSync(machine);
           actor.send(new Toggle());
           yield* Effect.sleep("20 millis");
 

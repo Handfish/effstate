@@ -381,6 +381,15 @@ export interface AfterEvent<TStateValue extends string = string> {
 }
 
 /**
+ * Synthetic events used internally for lifecycle operations.
+ * These provide context to activities/invokes about why they were started.
+ */
+export type SyntheticEvent =
+  | { readonly _tag: "$init" }
+  | { readonly _tag: "$resume" }
+  | { readonly _tag: "$sync" };
+
+/**
  * Union of all internal events synthesized by the machine.
  * These are not part of the user's TEvent union but are processed internally.
  */
@@ -389,7 +398,8 @@ export type InternalEvent<TStateValue extends string = string> =
   | InvokeFailureEvent
   | InvokeDefectEvent
   | InvokeInterruptEvent
-  | AfterEvent<TStateValue>;
+  | AfterEvent<TStateValue>
+  | SyntheticEvent;
 
 /** @deprecated Use InvokeSuccessEvent instead */
 export type InvokeDoneEvent<TOutput = unknown> = InvokeSuccessEvent<TOutput>;
@@ -828,9 +838,11 @@ export interface StateNodeConfig<
  * ```
  */
 /**
- * Schema-based machine config (with serialization support)
+ * Machine config with Schema-based context (required for serialization).
+ *
+ * TSchemaR captures the Schema's requirements channel, which is merged into the machine's R.
  */
-export interface MachineConfigSchema<
+export interface MachineConfig<
   TId extends string,
   TStateValue extends string,
   TContext extends MachineContext,
@@ -838,58 +850,15 @@ export interface MachineConfigSchema<
   R = never,
   E = never,
   TContextEncoded = unknown,
+  TSchemaR = never,
 > {
   readonly id: TId;
   readonly initial: TStateValue;
   /** Schema for context validation and serialization */
-  readonly context: Schema.Schema<TContext, TContextEncoded>;
+  readonly context: Schema.Schema<TContext, TContextEncoded, TSchemaR>;
   /** Initial context value */
   readonly initialContext: TContext;
   readonly states: Record<TStateValue, StateNodeConfig<TStateValue, TContext, TEvent, R, E>>;
-}
-
-/**
- * Plain machine config (backwards compatible, no serialization)
- */
-export interface MachineConfigPlain<
-  TId extends string,
-  TStateValue extends string,
-  TContext extends MachineContext,
-  TEvent extends MachineEvent,
-  R = never,
-  E = never,
-> {
-  readonly id: TId;
-  readonly initial: TStateValue;
-  /** Plain context object */
-  readonly context: TContext;
-  readonly states: Record<TStateValue, StateNodeConfig<TStateValue, TContext, TEvent, R, E>>;
-}
-
-/**
- * Union of machine config types
- */
-export type MachineConfig<
-  TId extends string,
-  TStateValue extends string,
-  TContext extends MachineContext,
-  TEvent extends MachineEvent,
-  R = never,
-  E = never,
-  TContextEncoded = unknown,
-> = MachineConfigSchema<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded>
-  | MachineConfigPlain<TId, TStateValue, TContext, TEvent, R, E>;
-
-/**
- * Type guard to check if a value is a Schema
- */
-export function isSchema(value: unknown): value is Schema.Schema<unknown, unknown> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "_tag" in value &&
-    (value as { _tag: unknown })._tag === "Schema"
-  );
 }
 
 // ============================================================================
@@ -904,14 +873,14 @@ export interface MachineDefinition<
   R = never,
   E = never,
   TContextEncoded = unknown,
+  TSchemaR = never,
 > {
   readonly _tag: "MachineDefinition";
   readonly id: TId;
-  readonly config: MachineConfigSchema<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded>
-    | MachineConfigPlain<TId, TStateValue, TContext, TEvent, R, E>;
+  readonly config: MachineConfig<TId, TStateValue, TContext, TEvent, R, E, TContextEncoded, TSchemaR>;
   readonly initialSnapshot: MachineSnapshot<TStateValue, TContext>;
-  /** Schema for context serialization (only present for Schema-based configs) */
-  readonly contextSchema?: Schema.Schema<TContext, TContextEncoded>;
+  /** Schema for context serialization */
+  readonly contextSchema: Schema.Schema<TContext, TContextEncoded, TSchemaR>;
 }
 
 // ============================================================================
@@ -936,15 +905,16 @@ export interface AnyMachineDefinition<R = unknown, E = unknown> {
     readonly id: string;
     readonly initial: string;
     readonly states: Record<string, StateNodeConfig<string, MachineContext, MachineEvent, R, E>>;
-    readonly context?: Schema.Schema.Any | MachineContext;
-    readonly initialContext?: MachineContext;
+    readonly context: Schema.Schema.Any;
+    readonly initialContext: MachineContext;
   };
   readonly initialSnapshot: MachineSnapshot<string, MachineContext>;
-  readonly contextSchema?: Schema.Schema.Any;
+  readonly contextSchema: Schema.Schema.Any;
 }
 
 /**
  * Extract the R channel from a MachineDefinition type.
+ * Includes both the machine's R and the Schema's R (TSchemaR).
  */
 export type MachineDefinitionR<T> = T extends MachineDefinition<
   string,
@@ -953,9 +923,10 @@ export type MachineDefinitionR<T> = T extends MachineDefinition<
   MachineEvent,
   infer R,
   unknown,
-  unknown
+  unknown,
+  infer TSchemaR
 >
-  ? R
+  ? R | TSchemaR
   : T extends AnyMachineDefinition<infer R, unknown>
     ? R
     : never;
