@@ -206,6 +206,124 @@ importers:
         specifier: ^5.3.4
         version: 5.4.21(@types/node@22.19.3)
 
+  apps/demo-dexie:
+    dependencies:
+      '@effect-atom/atom-react':
+        specifier: ^0.3.4
+        version: 0.3.4(@effect/experimental@0.56.0(@effect/platform@0.93.8(effect@3.19.14))(effect@3.19.14))(@effect/platform@0.93.8(effect@3.19.14))(@effect/rpc@0.71.2(@effect/platform@0.93.8(effect@3.19.14))(effect@3.19.14))(effect@3.19.14)(react@18.3.1)(scheduler@0.23.2)
+      '@effect/opentelemetry':
+        specifier: ^0.35.0
+        version: 0.35.8(@opentelemetry/api@1.9.0)(@opentelemetry/resources@1.30.1(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-metrics@1.25.1(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.30.1(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-web@1.30.1(@opentelemetry/api@1.9.0))(@opentelemetry/semantic-conventions@1.28.0)(effect@3.19.14)
+      '@effect/platform':
+        specifier: ^0.93.8
+        version: 0.93.8(effect@3.19.14)
+      '@effstate/react':
+        specifier: workspace:*
+        version: link:../../packages/react
+      '@opentelemetry/exporter-trace-otlp-http':
+        specifier: ^0.52.1
+        version: 0.52.1(@opentelemetry/api@1.9.0)
+      '@opentelemetry/sdk-trace-web':
+        specifier: ^1.25.1
+        version: 1.30.1(@opentelemetry/api@1.9.0)
+      '@radix-ui/react-slot':
+        specifier: ^1.1.0
+        version: 1.2.4(@types/react@18.3.27)(react@18.3.1)
+      class-variance-authority:
+        specifier: ^0.7.0
+        version: 0.7.1
+      clsx:
+        specifier: ^2.1.1
+        version: 2.1.1
+      dexie:
+        specifier: ^4.0.11
+        version: 4.2.1
+      dexie-react-hooks:
+        specifier: ^1.1.7
+        version: 1.1.7(@types/react@18.3.27)(dexie@4.2.1)(react@18.3.1)
+      effect:
+        specifier: ^3.19.12
+        version: 3.19.14
+      effstate:
+        specifier: workspace:*
+        version: link:../../packages/core
+      lucide-react:
+        specifier: ^0.456.0
+        version: 0.456.0(react@18.3.1)
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      react-dom:
+        specifier: ^18.3.1
+        version: 18.3.1(react@18.3.1)
+      tailwind-merge:
+        specifier: ^2.5.4
+        version: 2.6.0
+      tailwindcss-animate:
+        specifier: ^1.0.7
+        version: 1.0.7(tailwindcss@3.4.19(tsx@4.21.0)(yaml@2.8.2))
+    devDependencies:
+      '@effect/vitest':
+        specifier: ^0.27.0
+        version: 0.27.0(effect@3.19.14)(vitest@4.0.16(@opentelemetry/api@1.9.0)(@types/node@22.19.3)(jiti@1.21.7)(jsdom@27.4.0)(tsx@4.21.0)(yaml@2.8.2))
+      '@testing-library/jest-dom':
+        specifier: ^6.9.1
+        version: 6.9.1
+      '@testing-library/react':
+        specifier: ^16.3.1
+        version: 16.3.1(@testing-library/dom@10.4.1)(@types/react-dom@18.3.7(@types/react@18.3.27))(@types/react@18.3.27)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      '@types/node':
+        specifier: ^22.9.0
+        version: 22.19.3
+      '@types/react':
+        specifier: ^18.3.3
+        version: 18.3.27
+      '@types/react-dom':
+        specifier: ^18.3.0
+        version: 18.3.7(@types/react@18.3.27)
+      '@typescript-eslint/eslint-plugin':
+        specifier: ^7.15.0
+        version: 7.18.0(@typescript-eslint/parser@7.18.0(eslint@8.57.1)(typescript@5.9.3))(eslint@8.57.1)(typescript@5.9.3)
+      '@typescript-eslint/parser':
+        specifier: ^7.15.0
+        version: 7.18.0(eslint@8.57.1)(typescript@5.9.3)
+      '@vitejs/plugin-react-swc':
+        specifier: ^3.5.0
+        version: 3.11.0(@swc/helpers@0.5.18)(vite@5.4.21(@types/node@22.19.3))
+      '@vitest/coverage-v8':
+        specifier: ^4.0.16
+        version: 4.0.16(vitest@4.0.16(@opentelemetry/api@1.9.0)(@types/node@22.19.3)(jiti@1.21.7)(jsdom@27.4.0)(tsx@4.21.0)(yaml@2.8.2))
+      autoprefixer:
+        specifier: ^10.4.20
+        version: 10.4.23(postcss@8.5.6)
+      eslint:
+        specifier: ^8.57.0
+        version: 8.57.1
+      eslint-plugin-react-hooks:
+        specifier: ^4.6.2
+        version: 4.6.2(eslint@8.57.1)
+      eslint-plugin-react-refresh:
+        specifier: ^0.4.7
+        version: 0.4.26(eslint@8.57.1)
+      jsdom:
+        specifier: ^27.3.0
+        version: 27.4.0
+      postcss:
+        specifier: ^8.4.49
+        version: 8.5.6
+      tailwindcss:
+        specifier: ^3.4.14
+        version: 3.4.19(tsx@4.21.0)(yaml@2.8.2)
+      typescript:
+        specifier: ^5.2.2
+        version: 5.9.3
+      vite:
+        specifier: ^5.3.4
+        version: 5.4.21(@types/node@22.19.3)
+      vitest:
+        specifier: ^4.0.16
+        version: 4.0.16(@opentelemetry/api@1.9.0)(@types/node@22.19.3)(jiti@1.21.7)(jsdom@27.4.0)(tsx@4.21.0)(yaml@2.8.2)
+
   apps/docs:
     dependencies:
       '@astrojs/react':
@@ -2496,6 +2614,16 @@ packages:
 
   devlop@1.1.0:
     resolution: {integrity: sha512-RWmIqhcFf1lRYBvNmr7qTNuyCt/7/ns2jbpp1+PalgE/rDQcBT0fioSMUpJ93irlUhC5hrg4cYqe6U+0ImW0rA==}
+
+  dexie-react-hooks@1.1.7:
+    resolution: {integrity: sha512-Lwv5W0Hk+uOW3kGnsU9GZoR1er1B7WQ5DSdonoNG+focTNeJbHW6vi6nBoX534VKI3/uwHebYzSw1fwY6a7mTw==}
+    peerDependencies:
+      '@types/react': '>=16'
+      dexie: ^3.2 || ^4.0.1-alpha
+      react: '>=16'
+
+  dexie@4.2.1:
+    resolution: {integrity: sha512-Ckej0NS6jxQ4Po3OrSQBFddayRhTCic2DoCAG5zacOfOVB9P2Q5Xc5uL/nVa7ZVs+HdMnvUPzLFCB/JwpB6Csg==}
 
   dfa@1.2.0:
     resolution: {integrity: sha512-ED3jP8saaweFTjeGX8HQPjeC1YYyZs98jGNZx6IiBvxW7JG5v492kamAQB3m2wop07CvU/RQmzcKr6bgcC5D/Q==}
@@ -6757,6 +6885,14 @@ snapshots:
   devlop@1.1.0:
     dependencies:
       dequal: 2.0.3
+
+  dexie-react-hooks@1.1.7(@types/react@18.3.27)(dexie@4.2.1)(react@18.3.1):
+    dependencies:
+      '@types/react': 18.3.27
+      dexie: 4.2.1
+      react: 18.3.1
+
+  dexie@4.2.1: {}
 
   dfa@1.2.0: {}
 
