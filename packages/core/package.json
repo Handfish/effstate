@@ -1,6 +1,6 @@
 {
   "name": "effstate",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Effect-first state machine library",
   "type": "module",
   "main": "./dist/index.cjs",
