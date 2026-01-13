@@ -42,8 +42,7 @@ interface DoorStore {
 
   // Actions
   click: () => void;
-  powerOn: () => void;
-  powerOff: () => void;
+  setPower: (powered: boolean) => void;
   tick: (delta: number) => void;
   setWeather: (weather: Weather) => void;
 
@@ -96,19 +95,21 @@ export const useDoorStore = create<DoorStore>((set, get) => ({
     get()._syncToDb();
   },
 
-  powerOn: () => {
-    const { state } = get();
-    set({ isPowered: true });
-    if (state === "pausedOpening") set({ state: "opening" });
-    if (state === "pausedClosing") set({ state: "closing" });
-    get()._syncToDb();
-  },
+  setPower: (powered: boolean) => {
+    const { state, isPowered } = get();
+    if (powered === isPowered) return;
 
-  powerOff: () => {
-    const { state } = get();
-    set({ isPowered: false });
-    if (state === "opening") set({ state: "pausedOpening" });
-    if (state === "closing") set({ state: "pausedClosing" });
+    set({ isPowered: powered });
+
+    if (powered) {
+      // Resume from paused states
+      if (state === "pausedOpening") set({ state: "opening" });
+      if (state === "pausedClosing") set({ state: "closing" });
+    } else {
+      // Pause if moving
+      if (state === "opening") set({ state: "pausedOpening" });
+      if (state === "closing") set({ state: "pausedClosing" });
+    }
     get()._syncToDb();
   },
 

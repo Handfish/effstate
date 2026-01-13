@@ -3,7 +3,7 @@ import { useDoorWithPersistence, getDoorStateLabel, getDoorButtonLabel } from "@
 import { getIsLeader } from "@/lib/db";
 
 export function GarageDoorPersisted() {
-  const { state, position, isPowered, weather, click, powerOn, powerOff, _isInitialized } =
+  const { state, position, isPowered, weather, click, _isInitialized } =
     useDoorWithPersistence();
 
   const isLeader = getIsLeader();
@@ -21,7 +21,7 @@ export function GarageDoorPersisted() {
 
   return (
     <div className={cn("flex flex-col items-center gap-4 p-6 rounded-lg transition-colors", bgColor)}>
-      <h2 className="text-xl font-bold">Garage Door (Zustand + Dexie)</h2>
+      <h2 className="text-xl font-bold">Garage Door</h2>
 
       {/* Leader indicator */}
       <div className={cn(
@@ -31,18 +31,12 @@ export function GarageDoorPersisted() {
         {isLeader ? "LEADER (runs animation)" : "FOLLOWER (syncs only)"}
       </div>
 
-      {/* Power Toggle */}
-      <div className="flex items-center gap-2">
-        <span className="text-sm text-gray-400">Power:</span>
-        <button
-          onClick={isPowered ? powerOff : powerOn}
-          className={cn(
-            "px-3 py-1 rounded text-sm font-medium transition-colors",
-            isPowered ? "bg-green-600 text-white" : "bg-red-600 text-white"
-          )}
-        >
-          {isPowered ? "ON" : "OFF"}
-        </button>
+      {/* Power Status - now from hamster */}
+      <div className={cn(
+        "px-3 py-1 rounded text-sm font-medium",
+        isPowered ? "bg-green-600 text-white" : "bg-red-600 text-white"
+      )}>
+        Power: {isPowered ? "ON (from hamster)" : "OFF"}
       </div>
 
       {/* Weather */}
@@ -100,6 +94,10 @@ export function GarageDoorPersisted() {
       >
         {getDoorButtonLabel(state)}
       </button>
+
+      {!isPowered && (
+        <p className="text-xs text-gray-500">Wake the hamster to power the door!</p>
+      )}
     </div>
   );
 }

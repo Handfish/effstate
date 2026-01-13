@@ -1,8 +1,7 @@
 /**
  * Dexie Database + Leader Election
  *
- * This is where Zustand gets complicated.
- * Compare to v3's simple adapter pattern.
+ * Using the same simple focus-based leader election as demo-dexie-v3.
  */
 
 import Dexie from "dexie";
@@ -16,7 +15,7 @@ export interface DoorRecord {
   state: string;
   position: number;
   isPowered: boolean;
-  weather: string; // JSON serialized
+  weather: string;
   updatedAt: number;
 }
 
@@ -28,23 +27,15 @@ export interface HamsterRecord {
   updatedAt: number;
 }
 
-export interface LeaderRecord {
-  id: string;
-  tabId: string;
-  heartbeat: number;
-}
-
 class AppDatabase extends Dexie {
   doors!: Dexie.Table<DoorRecord, string>;
   hamsters!: Dexie.Table<HamsterRecord, string>;
-  leaders!: Dexie.Table<LeaderRecord, string>;
 
   constructor() {
     super("zustand-demo");
     this.version(1).stores({
       doors: "id",
       hamsters: "id",
-      leaders: "id",
     });
   }
 }
@@ -52,106 +43,62 @@ class AppDatabase extends Dexie {
 export const db = new AppDatabase();
 
 // ============================================================================
-// Leader Election
+// Leader Election (same as demo-dexie-v3 - simple, focus-based)
 // ============================================================================
 
-const TAB_ID = crypto.randomUUID();
-const HEARTBEAT_INTERVAL = 1000;
-const LEADER_TIMEOUT = 3000;
+const LEADER_KEY = "zustand-demo:leader";
+const windowId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-let isLeader = false;
-let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
-const leaderListeners: Set<(isLeader: boolean) => void> = new Set();
+function claimLeadership() {
+  localStorage.setItem(LEADER_KEY, windowId);
+  notifyListeners();
+}
+
+export function isLeader() {
+  return localStorage.getItem(LEADER_KEY) === windowId;
+}
+
+// Alias for component usage
+export const getIsLeader = isLeader;
 
 export function getTabId() {
-  return TAB_ID;
+  return windowId;
 }
 
-export function getIsLeader() {
-  return isLeader;
+// Leadership change listeners
+const leaderListeners = new Set<(isLeader: boolean) => void>();
+
+function notifyListeners() {
+  const leader = isLeader();
+  leaderListeners.forEach((cb) => cb(leader));
 }
 
-export function subscribeToLeadership(callback: (isLeader: boolean) => void) {
+export function subscribeToLeadership(callback: (isLeader: boolean) => void): () => void {
   leaderListeners.add(callback);
-  callback(isLeader); // Initial value
-  return () => leaderListeners.delete(callback);
+  callback(isLeader()); // Immediate
+  return () => {
+    leaderListeners.delete(callback);
+  };
 }
 
-function notifyLeadershipChange(newIsLeader: boolean) {
-  if (isLeader !== newIsLeader) {
-    isLeader = newIsLeader;
-    leaderListeners.forEach((cb) => cb(isLeader));
-    console.log(`[${TAB_ID.slice(0, 8)}] Leadership: ${isLeader ? "LEADER" : "FOLLOWER"}`);
-  }
-}
-
-async function tryBecomeLeader(): Promise<boolean> {
-  const now = Date.now();
-
-  try {
-    const current = await db.leaders.get("main");
-
-    if (!current) {
-      // No leader, claim it
-      await db.leaders.put({
-        id: "main",
-        tabId: TAB_ID,
-        heartbeat: now,
-      });
-      return true;
-    }
-
-    if (current.tabId === TAB_ID) {
-      // We're already leader, update heartbeat
-      await db.leaders.update("main", { heartbeat: now });
-      return true;
-    }
-
-    if (now - current.heartbeat > LEADER_TIMEOUT) {
-      // Leader timed out, take over
-      await db.leaders.put({
-        id: "main",
-        tabId: TAB_ID,
-        heartbeat: now,
-      });
-      console.log(`[${TAB_ID.slice(0, 8)}] Taking over from timed-out leader`);
-      return true;
-    }
-
-    return false;
-  } catch (e) {
-    console.error("Leader election error:", e);
-    return false;
-  }
-}
-
-async function heartbeatLoop() {
-  const nowIsLeader = await tryBecomeLeader();
-  notifyLeadershipChange(nowIsLeader);
-}
-
+// Initialize
 export function startLeaderElection() {
-  if (heartbeatInterval) return;
+  if (typeof window === "undefined") return;
 
-  // Initial attempt
-  heartbeatLoop();
+  claimLeadership();
 
-  // Ongoing heartbeat
-  heartbeatInterval = setInterval(heartbeatLoop, HEARTBEAT_INTERVAL);
+  window.addEventListener("focus", claimLeadership);
 
-  // Cleanup on tab close
-  window.addEventListener("beforeunload", () => {
-    if (isLeader) {
-      // Try to release leadership synchronously
-      // Note: This may not always work due to browser restrictions
-      db.leaders.delete("main").catch(() => {});
+  // Listen for other tabs claiming leadership
+  window.addEventListener("storage", (e) => {
+    if (e.key === LEADER_KEY) {
+      notifyListeners();
     }
   });
-}
 
-export function stopLeaderElection() {
-  if (heartbeatInterval) {
-    clearInterval(heartbeatInterval);
-    heartbeatInterval = null;
-  }
+  window.addEventListener("beforeunload", () => {
+    if (isLeader()) {
+      localStorage.removeItem(LEADER_KEY);
+    }
+  });
 }
