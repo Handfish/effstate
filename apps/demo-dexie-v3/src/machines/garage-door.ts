@@ -1,0 +1,203 @@
+/**
+ * Garage Door Machine - v3 API
+ *
+ * Compare to v2: ~250 lines -> ~100 lines
+ */
+
+import { Data, Duration, Schedule, Schema, Stream } from "effect";
+import { defineMachine, type MachineActor, type MachineSnapshot } from "effstate/v3";
+
+// ============================================================================
+// State (Discriminated Union)
+// ============================================================================
+
+export type DoorState =
+  | { readonly _tag: "Closed" }
+  | { readonly _tag: "Opening"; readonly startedAt: Date }
+  | { readonly _tag: "PausedOpening"; readonly pausedAt: Date }
+  | { readonly _tag: "Open"; readonly openedAt: Date }
+  | { readonly _tag: "Closing"; readonly startedAt: Date }
+  | { readonly _tag: "PausedClosing"; readonly pausedAt: Date };
+
+export const DoorState = {
+  Closed: (): DoorState => ({ _tag: "Closed" }),
+  Opening: (startedAt: Date): DoorState => ({ _tag: "Opening", startedAt }),
+  PausedOpening: (pausedAt: Date): DoorState => ({ _tag: "PausedOpening", pausedAt }),
+  Open: (openedAt: Date): DoorState => ({ _tag: "Open", openedAt }),
+  Closing: (startedAt: Date): DoorState => ({ _tag: "Closing", startedAt }),
+  PausedClosing: (pausedAt: Date): DoorState => ({ _tag: "PausedClosing", pausedAt }),
+};
+
+// ============================================================================
+// Context
+// ============================================================================
+
+export interface DoorContext {
+  readonly position: number;
+  readonly isPowered: boolean;
+  readonly weather:
+    | { status: "idle" }
+    | { status: "loading" }
+    | { status: "loaded"; temp: number; desc: string; icon: string }
+    | { status: "error"; message: string };
+  readonly [key: string]: unknown; // Index signature for MachineContext
+}
+
+const DoorContextSchema = Schema.Struct({
+  position: Schema.Number,
+  isPowered: Schema.Boolean,
+  weather: Schema.Union(
+    Schema.Struct({ status: Schema.Literal("idle") }),
+    Schema.Struct({ status: Schema.Literal("loading") }),
+    Schema.Struct({
+      status: Schema.Literal("loaded"),
+      temp: Schema.Number,
+      desc: Schema.String,
+      icon: Schema.String,
+    }),
+    Schema.Struct({ status: Schema.Literal("error"), message: Schema.String })
+  ),
+});
+
+// ============================================================================
+// Events
+// ============================================================================
+
+export class Click extends Data.TaggedClass("Click")<{}> {}
+export class DoorTick extends Data.TaggedClass("DoorTick")<{ readonly delta: number }> {}
+export class PowerOn extends Data.TaggedClass("PowerOn")<{}> {}
+export class PowerOff extends Data.TaggedClass("PowerOff")<{}> {}
+export class WeatherLoaded extends Data.TaggedClass("WeatherLoaded")<{
+  readonly temp: number;
+  readonly desc: string;
+  readonly icon: string;
+}> {}
+export class WeatherError extends Data.TaggedClass("WeatherError")<{ readonly message: string }> {}
+
+export type DoorEvent = Click | DoorTick | PowerOn | PowerOff | WeatherLoaded | WeatherError;
+
+// ============================================================================
+// Machine Definition
+// ============================================================================
+
+const tickStream = (delta: number) =>
+  Stream.fromSchedule(Schedule.spaced(Duration.millis(100))).pipe(
+    Stream.map(() => new DoorTick({ delta }))
+  );
+
+export const garageDoorMachine = defineMachine<
+  DoorState,
+  DoorContext,
+  DoorEvent,
+  typeof DoorContextSchema
+>({
+  id: "garageDoor",
+  context: DoorContextSchema,
+  initialContext: { position: 0, isPowered: false, weather: { status: "idle" } },
+  initialState: DoorState.Closed(),
+
+  // Global handlers for power events
+  global: {
+    PowerOn: (_ctx, _event, { update }) => update({ isPowered: true }),
+    PowerOff: (_ctx, _event, { update }) => update({ isPowered: false }),
+  },
+
+  states: {
+    Closed: {
+      on: {
+        Click: (ctx, _event, { goto }) =>
+          ctx.isPowered ? goto(DoorState.Opening(new Date())) : null,
+      },
+    },
+
+    Opening: {
+      run: tickStream(1),
+      on: {
+        Click: (_ctx, _event, { goto }) => goto(DoorState.PausedOpening(new Date())),
+        DoorTick: (ctx, event, { goto, update }) => {
+          const newPos = Math.min(100, ctx.position + event.delta);
+          return newPos >= 100
+            ? goto(DoorState.Open(new Date()), { position: 100, weather: { status: "loading" } })
+            : update({ position: newPos });
+        },
+        PowerOff: (_ctx, _event, { goto }) => goto(DoorState.PausedOpening(new Date())),
+      },
+    },
+
+    PausedOpening: {
+      on: {
+        Click: (ctx, _event, { goto }) =>
+          ctx.isPowered ? goto(DoorState.Closing(new Date())) : null,
+        PowerOn: (_ctx, _event, { goto }) => goto(DoorState.Opening(new Date())),
+      },
+    },
+
+    Open: {
+      on: {
+        Click: (ctx, _event, { goto }) =>
+          ctx.isPowered
+            ? goto(DoorState.Closing(new Date()), { weather: { status: "idle" } })
+            : null,
+        WeatherLoaded: (_ctx, event, { update }) =>
+          update({ weather: { status: "loaded", temp: event.temp, desc: event.desc, icon: event.icon } }),
+        WeatherError: (_ctx, event, { update }) =>
+          update({ weather: { status: "error", message: event.message } }),
+      },
+    },
+
+    Closing: {
+      run: tickStream(-1),
+      on: {
+        Click: (_ctx, _event, { goto }) => goto(DoorState.PausedClosing(new Date())),
+        DoorTick: (ctx, event, { goto, update }) => {
+          const newPos = Math.max(0, ctx.position + event.delta);
+          return newPos <= 0
+            ? goto(DoorState.Closed(), { position: 0 })
+            : update({ position: newPos });
+        },
+        PowerOff: (_ctx, _event, { goto }) => goto(DoorState.PausedClosing(new Date())),
+      },
+    },
+
+    PausedClosing: {
+      on: {
+        Click: (ctx, _event, { goto }) =>
+          ctx.isPowered ? goto(DoorState.Opening(new Date())) : null,
+        PowerOn: (_ctx, _event, { goto }) => goto(DoorState.Closing(new Date())),
+      },
+    },
+  },
+});
+
+// ============================================================================
+// Types
+// ============================================================================
+
+export type GarageDoorActor = MachineActor<DoorState, DoorContext, DoorEvent>;
+export type GarageDoorSnapshot = MachineSnapshot<DoorState, DoorContext>;
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+export function getDoorStateLabel(state: DoorState): string {
+  switch (state._tag) {
+    case "Closed": return "Closed";
+    case "Opening": return "Opening...";
+    case "PausedOpening": return "Paused (Opening)";
+    case "Open": return "Open";
+    case "Closing": return "Closing...";
+    case "PausedClosing": return "Paused (Closing)";
+  }
+}
+
+export function getDoorButtonLabel(state: DoorState): string {
+  switch (state._tag) {
+    case "Closed": return "Open";
+    case "Opening": return "Pause";
+    case "PausedOpening": return "Close";
+    case "Open": return "Close";
+    case "Closing": return "Pause";
+    case "PausedClosing": return "Open";
+  }
+}

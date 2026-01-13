@@ -6,6 +6,12 @@
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "v2": ["./dist/v2/index.d.ts"],
+      "v3": ["./dist/v3/index.d.ts"]
+    }
+  },
   "exports": {
     ".": {
       "import": {
@@ -15,6 +21,26 @@
       "require": {
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
+      }
+    },
+    "./v2": {
+      "import": {
+        "types": "./dist/v2/index.d.ts",
+        "default": "./dist/v2/index.js"
+      },
+      "require": {
+        "types": "./dist/v2/index.d.cts",
+        "default": "./dist/v2/index.cjs"
+      }
+    },
+    "./v3": {
+      "import": {
+        "types": "./dist/v3/index.d.ts",
+        "default": "./dist/v3/index.js"
+      },
+      "require": {
+        "types": "./dist/v3/index.d.cts",
+        "default": "./dist/v3/index.cjs"
       }
     }
   },

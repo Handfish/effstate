@@ -1,12 +1,12 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/index.ts"],
+  entry: ["src/index.ts", "src/v2/index.ts", "src/v3/index.ts"],
   format: ["cjs", "esm"],
   dts: true,
   splitting: false,
   sourcemap: true,
   clean: true,
   treeshake: true,
-  external: ["react", "effect", "@effect-atom/atom-react", "effstate"],
+  external: ["react", "effect", "@effect-atom/atom-react", "effstate", "effstate/v2", "effstate/v3"],
 });
