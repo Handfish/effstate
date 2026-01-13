@@ -99,6 +99,13 @@ function interpret<
 
         // Exit old state
         if (oldStateTag !== newStateTag) {
+          const oldStateConfig = config.states[oldStateTag as S["_tag"]];
+
+          // Run exit effect
+          if (oldStateConfig?.exit) {
+            Effect.runFork(oldStateConfig.exit(snapshot.state as any, snapshot.context));
+          }
+
           // Cancel any running stream
           if (runFiber) {
             Effect.runFork(Fiber.interrupt(runFiber));
@@ -115,9 +122,16 @@ function interpret<
         };
         notify();
 
-        // Enter new state (start run stream if defined)
+        // Enter new state
         if (oldStateTag !== newStateTag) {
           const stateConfig = config.states[newStateTag as S["_tag"]];
+
+          // Run entry effect
+          if (stateConfig?.entry) {
+            Effect.runFork(stateConfig.entry(snapshot.state as any, snapshot.context));
+          }
+
+          // Start run stream if defined
           if (stateConfig?.run) {
             const stream = typeof stateConfig.run === "function"
               ? stateConfig.run(snapshot)
@@ -164,8 +178,15 @@ function interpret<
       // No handler = implicit stay (do nothing)
     };
 
-    // Start initial state's run stream
+    // Initialize initial state
     const initialStateConfig = config.states[snapshot.state._tag as S["_tag"]];
+
+    // Run entry effect for initial state
+    if (initialStateConfig?.entry) {
+      Effect.runFork(initialStateConfig.entry(snapshot.state as any, snapshot.context));
+    }
+
+    // Start run stream for initial state
     if (initialStateConfig?.run) {
       const stream = typeof initialStateConfig.run === "function"
         ? initialStateConfig.run(snapshot)
@@ -196,8 +217,15 @@ function interpret<
         const oldStateTag = snapshot.state._tag;
         const newStateTag = newSnapshot.state._tag;
 
-        // If state changed, handle run stream transition
+        // If state changed, handle exit
         if (oldStateTag !== newStateTag) {
+          const oldStateConfig = config.states[oldStateTag as S["_tag"]];
+
+          // Run exit effect
+          if (oldStateConfig?.exit) {
+            Effect.runFork(oldStateConfig.exit(snapshot.state as any, snapshot.context));
+          }
+
           // Cancel old state's run stream
           if (runFiber) {
             Effect.runFork(Fiber.interrupt(runFiber));
@@ -209,9 +237,16 @@ function interpret<
         snapshot = newSnapshot;
         notify();
 
-        // If state changed, start new state's run stream
+        // If state changed, handle entry
         if (oldStateTag !== newStateTag) {
           const stateConfig = config.states[newStateTag as S["_tag"]];
+
+          // Run entry effect
+          if (stateConfig?.entry) {
+            Effect.runFork(stateConfig.entry(snapshot.state as any, snapshot.context));
+          }
+
+          // Start run stream
           if (stateConfig?.run) {
             const stream = typeof stateConfig.run === "function"
               ? stateConfig.run(snapshot)

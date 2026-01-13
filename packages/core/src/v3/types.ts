@@ -73,6 +73,33 @@ export type ExhaustiveEventHandlers<S extends MachineState, C extends MachineCon
   [K in E["_tag"]]: EventHandler<S, C, EventByTag<E, K>>;
 };
 
+/**
+ * Helper to enforce exhaustive event handling.
+ * Use this when you want compile-time errors for missing handlers.
+ *
+ * @example
+ * ```ts
+ * states: {
+ *   Closed: {
+ *     on: strict<DoorState, DoorContext, DoorEvent>({
+ *       Click: () => ({ goto: DoorState.Opening() }),
+ *       DoorTick: () => null,  // must handle all events
+ *       PowerOn: () => null,
+ *       PowerOff: () => null,
+ *       // ... compiler error if any event missing
+ *     }),
+ *   },
+ * }
+ * ```
+ */
+export function strict<
+  S extends MachineState,
+  C extends MachineContext,
+  E extends MachineEvent,
+>(handlers: ExhaustiveEventHandlers<S, C, E>): EventHandlers<S, C, E> {
+  return handlers;
+}
+
 // ============================================================================
 // State Configuration (simplified - no R type for browser use)
 // ============================================================================
@@ -90,11 +117,9 @@ export interface StateConfig<
   exit?: (state: StateByTag<S, TStateTag>, ctx: C) => Effect.Effect<void>;
 
   /** Continuous stream while in this state (e.g., animation ticks, async fetches)
-   *  Can be a static stream or a function that receives snapshot for conditional behavior */
+   *  Can be a static stream or a function that receives snapshot for conditional behavior.
+   *  For one-shot effects, use a function that returns Stream.fromEffect(...) conditionally. */
   run?: Stream.Stream<E> | ((snapshot: MachineSnapshot<S, C>) => Stream.Stream<E>);
-
-  /** One-shot effect that returns a transition */
-  invoke?: Effect.Effect<Transition<S, C>>;
 
   /** Event handlers - object map, unhandled = stay */
   on: EventHandlers<S, C, E>;
