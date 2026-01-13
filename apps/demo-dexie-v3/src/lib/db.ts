@@ -1,10 +1,5 @@
 import Dexie, { type EntityTable } from "dexie";
-import type {
-  HamsterState,
-  HamsterContext,
-  DoorState,
-  DoorContext,
-} from "@/machines";
+import type { HamsterState, HamsterContext, DoorState, DoorContext } from "@/machines";
 
 // ============================================================================
 // Serializable State (for Dexie storage)
@@ -107,29 +102,5 @@ export function deserializeDoorContext(serialized: SerializedDoor): DoorContext 
     weather: serialized.weather,
   };
 }
-
-// ============================================================================
-// Initial State
-// ============================================================================
-
-export const createInitialState = (): Omit<AppState, "id" | "updatedAt"> => ({
-  hamster: {
-    stateTag: "Idle",
-    wheelRotation: 0,
-    electricityLevel: 0,
-  },
-  leftDoor: {
-    stateTag: "Closed",
-    position: 0,
-    isPowered: false,
-    weather: { status: "idle" },
-  },
-  rightDoor: {
-    stateTag: "Closed",
-    position: 0,
-    isPowered: false,
-    weather: { status: "idle" },
-  },
-});
 
 export const STATE_ID = "app-state";

@@ -45,12 +45,6 @@ import {
 export { getHamsterStateLabel, getHamsterButtonLabel, getDoorStateLabel, getDoorButtonLabel };
 
 // ============================================================================
-// Adapter (module level)
-// ============================================================================
-
-const dexieAdapter = createDexieAdapter();
-
-// ============================================================================
 // Types
 // ============================================================================
 
@@ -72,6 +66,12 @@ export type AppStateResult = {
   toggleHamster: () => void;
   clickDoor: (door: "left" | "right") => void;
 };
+
+// ============================================================================
+// Adapter (module level)
+// ============================================================================
+
+const dexieAdapter = createDexieAdapter();
 
 // ============================================================================
 // Initial Load Hook (call this first, before actors exist)

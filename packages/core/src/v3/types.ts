@@ -16,7 +16,7 @@ import type { Effect, Schema, Stream } from "effect";
 
 export type MachineState = { readonly _tag: string };
 export type MachineEvent = { readonly _tag: string };
-export type MachineContext = Record<string, unknown>;
+export type MachineContext = object;
 
 export type StateTag<S extends MachineState> = S["_tag"];
 export type StateByTag<S extends MachineState, T extends S["_tag"]> = Extract<S, { _tag: T }>;
@@ -119,7 +119,7 @@ export function strict<
 // State Configuration (simplified - no R type for browser use)
 // ============================================================================
 
-export interface StateConfig<
+interface StateConfigBase<
   S extends MachineState,
   C extends MachineContext,
   E extends MachineEvent,
@@ -135,10 +135,41 @@ export interface StateConfig<
    *  Can be a static stream or a function that receives snapshot for conditional behavior.
    *  For one-shot effects, use a function that returns Stream.fromEffect(...) conditionally. */
   run?: Stream.Stream<E> | ((snapshot: MachineSnapshot<S, C>) => Stream.Stream<E>);
-
-  /** Event handlers - object map, unhandled = stay */
-  on: EventHandlers<S, C, E>;
 }
+
+/**
+ * State configuration with optional strict mode.
+ * - strict: false (default) - unhandled events stay in current state
+ * - strict: true - ALL events must be explicitly handled (compile error if missing)
+ *
+ * @example
+ * ```ts
+ * states: {
+ *   // Lenient: unhandled events stay
+ *   Idle: {
+ *     on: { Toggle: () => ({ goto: State.Running() }) }
+ *   },
+ *   // Strict: must handle ALL events
+ *   Running: {
+ *     strict: true,
+ *     on: {
+ *       Toggle: () => ({ goto: State.Idle() }),
+ *       Tick: (ctx) => ({ update: { count: ctx.count + 1 } }),
+ *       // Compiler error if any event missing!
+ *     }
+ *   },
+ * }
+ * ```
+ */
+export type StateConfig<
+  S extends MachineState,
+  C extends MachineContext,
+  E extends MachineEvent,
+  TStateTag extends S["_tag"],
+> = StateConfigBase<S, C, E, TStateTag> & (
+  | { strict?: false; on: EventHandlers<S, C, E> }
+  | { strict: true; on: ExhaustiveEventHandlers<S, C, E> }
+);
 
 // ============================================================================
 // Machine Configuration

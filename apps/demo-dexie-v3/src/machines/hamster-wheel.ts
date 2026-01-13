@@ -29,7 +29,6 @@ export const HamsterState = {
 export interface HamsterContext {
   readonly wheelRotation: number;
   readonly electricityLevel: number;
-  readonly [key: string]: unknown; // Index signature for MachineContext
 }
 
 const HamsterContextSchema = Schema.Struct({

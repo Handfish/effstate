@@ -50,7 +50,6 @@ export interface DoorContext {
   readonly position: number;
   readonly isPowered: boolean;
   readonly weather: WeatherStatus;
-  readonly [key: string]: unknown; // Index signature for MachineContext
 }
 
 const DoorContextSchema = Schema.Struct({
@@ -90,7 +89,6 @@ export type DoorEvent = Click | DoorTick | PowerOn | PowerOff | WeatherLoaded | 
 // Machine Definition
 // ============================================================================
 
-// ~60fps with smaller increments for smooth animation
 const tickStream = (delta: number) =>
   Stream.fromSchedule(Schedule.spaced(Duration.millis(16))).pipe(
     Stream.map(() => new DoorTick({ delta: delta * 0.16 })),
@@ -117,7 +115,6 @@ export const garageDoorMachine = defineMachine<DoorState, DoorContext, DoorEvent
   initialContext: { position: 0, isPowered: false, weather: Weather.idle() },
   initialState: DoorState.Closed(),
 
-  // Global handlers for power events
   global: {
     PowerOn: () => ({ update: { isPowered: true } }),
     PowerOff: () => ({ update: { isPowered: false } }),
@@ -204,34 +201,22 @@ export type GarageDoorSnapshot = MachineSnapshot<DoorState, DoorContext>;
 
 export function getDoorStateLabel(state: DoorState): string {
   switch (state._tag) {
-    case "Closed":
-      return "Closed";
-    case "Opening":
-      return "Opening...";
-    case "PausedOpening":
-      return "Paused (Opening)";
-    case "Open":
-      return "Open";
-    case "Closing":
-      return "Closing...";
-    case "PausedClosing":
-      return "Paused (Closing)";
+    case "Closed": return "Closed";
+    case "Opening": return "Opening...";
+    case "PausedOpening": return "Paused (Opening)";
+    case "Open": return "Open";
+    case "Closing": return "Closing...";
+    case "PausedClosing": return "Paused (Closing)";
   }
 }
 
 export function getDoorButtonLabel(state: DoorState): string {
   switch (state._tag) {
-    case "Closed":
-      return "Open";
-    case "Opening":
-      return "Pause";
-    case "PausedOpening":
-      return "Close";
-    case "Open":
-      return "Close";
-    case "Closing":
-      return "Pause";
-    case "PausedClosing":
-      return "Open";
+    case "Closed": return "Open";
+    case "Opening": return "Pause";
+    case "PausedOpening": return "Close";
+    case "Open": return "Close";
+    case "Closing": return "Pause";
+    case "PausedClosing": return "Open";
   }
 }

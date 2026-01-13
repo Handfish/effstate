@@ -12,7 +12,7 @@ import { useEffect, useRef } from "react";
 import { db, STATE_ID, type AppState } from "./db";
 
 // ============================================================================
-// Leader Election (simple, stable)
+// Leader Election (focus-based)
 // ============================================================================
 
 const LEADER_KEY = "effstate-v3:leader";
@@ -26,7 +26,6 @@ function isLeader() {
   return localStorage.getItem(LEADER_KEY) === windowId;
 }
 
-// Initialize leader election
 if (typeof window !== "undefined") {
   claimLeadership();
   window.addEventListener("focus", claimLeadership);
@@ -46,8 +45,6 @@ export interface DexieAdapter extends PersistenceAdapter<SerializedAppState> {
 }
 
 export function createDexieAdapter(): DexieAdapter {
-  const subscribers = new Set<(state: SerializedAppState) => void>();
-
   return {
     async load() {
       const saved = await db.appState.get(STATE_ID);
@@ -67,14 +64,16 @@ export function createDexieAdapter(): DexieAdapter {
       });
     },
 
-    subscribe(callback: (state: SerializedAppState) => void) {
-      subscribers.add(callback);
-      return () => subscribers.delete(callback);
-    },
+    // Cross-tab sync handled by useDexieLiveQuery, not this subscribe
+    subscribe: () => () => {},
 
     isLeader,
   };
 }
+
+// ============================================================================
+// React Hook for Cross-Tab Sync
+// ============================================================================
 
 /**
  * Hook that connects Dexie's liveQuery to the adapter's subscribers.
