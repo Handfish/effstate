@@ -172,8 +172,33 @@ function interpret<
         subscribers.clear();
       },
       _syncSnapshot: (newSnapshot) => {
+        const oldStateTag = snapshot.state._tag;
+        const newStateTag = newSnapshot.state._tag;
+
+        // If state changed, handle run stream transition
+        if (oldStateTag !== newStateTag) {
+          // Cancel old state's run stream
+          if (runFiber) {
+            Effect.runFork(Fiber.interrupt(runFiber));
+            runFiber = null;
+          }
+        }
+
+        // Update snapshot
         snapshot = newSnapshot;
         notify();
+
+        // If state changed, start new state's run stream
+        if (oldStateTag !== newStateTag) {
+          const stateConfig = config.states[newStateTag as S["_tag"]];
+          if (stateConfig?.run) {
+            runFiber = Effect.runFork(
+              Stream.runForEach(stateConfig.run, (event) =>
+                Effect.sync(() => processEvent(event))
+              )
+            );
+          }
+        }
       },
     };
 
