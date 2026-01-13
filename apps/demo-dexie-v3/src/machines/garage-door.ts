@@ -140,14 +140,14 @@ export const garageDoorMachine = defineMachine<DoorState, DoorContext, DoorEvent
             ? { goto: DoorState.Open(new Date()), update: { position: 100, weather: Weather.loading() } }
             : { update: { position: newPos } };
         },
-        PowerOff: () => ({ goto: DoorState.PausedOpening(new Date()) }),
+        PowerOff: () => ({ goto: DoorState.PausedOpening(new Date()), update: { isPowered: false } }),
       },
     },
 
     PausedOpening: {
       on: {
         Click: (ctx) => (ctx.isPowered ? { goto: DoorState.Closing(new Date()) } : null),
-        PowerOn: () => ({ goto: DoorState.Opening(new Date()) }),
+        PowerOn: () => ({ goto: DoorState.Opening(new Date()), update: { isPowered: true } }),
       },
     },
 
@@ -178,14 +178,14 @@ export const garageDoorMachine = defineMachine<DoorState, DoorContext, DoorEvent
             ? { goto: DoorState.Closed(), update: { position: 0 } }
             : { update: { position: newPos } };
         },
-        PowerOff: () => ({ goto: DoorState.PausedClosing(new Date()) }),
+        PowerOff: () => ({ goto: DoorState.PausedClosing(new Date()), update: { isPowered: false } }),
       },
     },
 
     PausedClosing: {
       on: {
         Click: (ctx) => (ctx.isPowered ? { goto: DoorState.Opening(new Date()) } : null),
-        PowerOn: () => ({ goto: DoorState.Closing(new Date()) }),
+        PowerOn: () => ({ goto: DoorState.Closing(new Date()), update: { isPowered: true } }),
       },
     },
   },

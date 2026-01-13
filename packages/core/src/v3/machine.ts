@@ -179,20 +179,20 @@ function interpret<
     const processEvent = (event: E) => {
       const stateTag = snapshot.state._tag as S["_tag"];
 
-      // Try global handlers first
-      if (config.global) {
-        const result = callHandler(config.global, snapshot.context, event);
-        if (result !== null) {
-          applyTransition(result);
-          return;
-        }
+      // Try state handlers first (more specific takes precedence)
+      const stateConfig = config.states[stateTag];
+      const stateResult = callHandler(stateConfig.on, snapshot.context, event);
+      if (stateResult !== null) {
+        applyTransition(stateResult);
+        return;
       }
 
-      // Try state handler
-      const stateConfig = config.states[stateTag];
-      const result = callHandler(stateConfig.on, snapshot.context, event);
-      if (result !== null) {
-        applyTransition(result);
+      // Fall back to global handlers
+      if (config.global) {
+        const globalResult = callHandler(config.global, snapshot.context, event);
+        if (globalResult !== null) {
+          applyTransition(globalResult);
+        }
       }
       // No handler = implicit stay (do nothing)
     };
