@@ -4,8 +4,9 @@
  * Compare to v2: ~250 lines -> ~100 lines
  */
 
-import { Data, Duration, Schedule, Schema, Stream } from "effect";
+import { Data, Duration, Effect, Schedule, Schema, Stream } from "effect";
 import { defineMachine, type MachineActor, type MachineSnapshot } from "effstate/v3";
+import { fetchWeather } from "@/lib/weather-service";
 
 // ============================================================================
 // State (Discriminated Union)
@@ -55,7 +56,7 @@ const DoorContextSchema = Schema.Struct({
       desc: Schema.String,
       icon: Schema.String,
     }),
-    Schema.Struct({ status: Schema.Literal("error"), message: Schema.String })
+    Schema.Struct({ status: Schema.Literal("error"), message: Schema.String }),
   ),
 });
 
@@ -80,10 +81,26 @@ export type DoorEvent = Click | DoorTick | PowerOn | PowerOff | WeatherLoaded | 
 // Machine Definition
 // ============================================================================
 
+// ~60fps with smaller increments for smooth animation
 const tickStream = (delta: number) =>
-  Stream.fromSchedule(Schedule.spaced(Duration.millis(100))).pipe(
-    Stream.map(() => new DoorTick({ delta }))
+  Stream.fromSchedule(Schedule.spaced(Duration.millis(16))).pipe(
+    Stream.map(() => new DoorTick({ delta: delta * 0.16 })),
   );
+
+const weatherFetchStream: Stream.Stream<DoorEvent> = Stream.fromEffect(
+  Effect.tryPromise({
+    try: () => fetchWeather(),
+    catch: (e) => e as Error,
+  }).pipe(
+    Effect.map(
+      (w) =>
+        new WeatherLoaded({ temp: w.temperature, desc: w.description, icon: w.icon }) as DoorEvent,
+    ),
+    Effect.catchAll((e: Error) =>
+      Effect.succeed(new WeatherError({ message: e.message }) as DoorEvent),
+    ),
+  ),
+);
 
 export const garageDoorMachine = defineMachine<
   DoorState,
@@ -133,13 +150,17 @@ export const garageDoorMachine = defineMachine<
     },
 
     Open: {
+      run: (snap) =>
+        snap.context.weather.status === "loading" ? weatherFetchStream : Stream.empty,
       on: {
         Click: (ctx, _event, { goto }) =>
           ctx.isPowered
             ? goto(DoorState.Closing(new Date()), { weather: { status: "idle" } })
             : null,
         WeatherLoaded: (_ctx, event, { update }) =>
-          update({ weather: { status: "loaded", temp: event.temp, desc: event.desc, icon: event.icon } }),
+          update({
+            weather: { status: "loaded", temp: event.temp, desc: event.desc, icon: event.icon },
+          }),
         WeatherError: (_ctx, event, { update }) =>
           update({ weather: { status: "error", message: event.message } }),
       },
@@ -182,22 +203,34 @@ export type GarageDoorSnapshot = MachineSnapshot<DoorState, DoorContext>;
 
 export function getDoorStateLabel(state: DoorState): string {
   switch (state._tag) {
-    case "Closed": return "Closed";
-    case "Opening": return "Opening...";
-    case "PausedOpening": return "Paused (Opening)";
-    case "Open": return "Open";
-    case "Closing": return "Closing...";
-    case "PausedClosing": return "Paused (Closing)";
+    case "Closed":
+      return "Closed";
+    case "Opening":
+      return "Opening...";
+    case "PausedOpening":
+      return "Paused (Opening)";
+    case "Open":
+      return "Open";
+    case "Closing":
+      return "Closing...";
+    case "PausedClosing":
+      return "Paused (Closing)";
   }
 }
 
 export function getDoorButtonLabel(state: DoorState): string {
   switch (state._tag) {
-    case "Closed": return "Open";
-    case "Opening": return "Pause";
-    case "PausedOpening": return "Close";
-    case "Open": return "Close";
-    case "Closing": return "Pause";
-    case "PausedClosing": return "Open";
+    case "Closed":
+      return "Open";
+    case "Opening":
+      return "Pause";
+    case "PausedOpening":
+      return "Close";
+    case "Open":
+      return "Close";
+    case "Closing":
+      return "Pause";
+    case "PausedClosing":
+      return "Open";
   }
 }

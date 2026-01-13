@@ -2,9 +2,12 @@
  * App State Hook - v3 API with Dexie Persistence
  *
  * Uses the clean PersistenceAdapter pattern.
+ * Split into two hooks to avoid transition on initial load:
+ * - useInitialSnapshots: loads from Dexie
+ * - useAppState: creates actors (only called after load)
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useActor, useActorWatch, usePersistence } from "@effstate/react/v3";
 import type { MachineSnapshot } from "effstate/v3";
 import {
@@ -14,8 +17,6 @@ import {
   Click,
   PowerOn,
   PowerOff,
-  WeatherLoaded,
-  WeatherError,
   getHamsterStateLabel,
   getHamsterButtonLabel,
   getDoorStateLabel,
@@ -24,7 +25,6 @@ import {
   type HamsterContext,
   type DoorState,
   type DoorContext,
-  type DoorEvent,
 } from "@/machines";
 import {
   serializeHamster,
@@ -40,7 +40,6 @@ import {
   isLeader,
   type SerializedAppState,
 } from "@/lib/dexie-adapter";
-import { fetchWeather } from "@/lib/weather-service";
 
 // Re-export UI helpers
 export { getHamsterStateLabel, getHamsterButtonLabel, getDoorStateLabel, getDoorButtonLabel };
@@ -52,17 +51,34 @@ export { getHamsterStateLabel, getHamsterButtonLabel, getDoorStateLabel, getDoor
 const dexieAdapter = createDexieAdapter();
 
 // ============================================================================
-// Initial State Hook (loads once)
+// Types
 // ============================================================================
 
-type InitialSnapshots = {
+export type InitialSnapshots = {
   hamster: MachineSnapshot<HamsterState, HamsterContext>;
   leftDoor: MachineSnapshot<DoorState, DoorContext>;
   rightDoor: MachineSnapshot<DoorState, DoorContext>;
-} | null;
+};
 
-function useInitialLoad(): { loaded: boolean; snapshots: InitialSnapshots } {
-  const [result, setResult] = useState<{ loaded: boolean; snapshots: InitialSnapshots }>({
+export type AppState = {
+  hamster: { state: HamsterState; context: HamsterContext };
+  leftDoor: { state: DoorState; context: DoorContext };
+  rightDoor: { state: DoorState; context: DoorContext };
+};
+
+export type AppStateResult = {
+  state: AppState;
+  isLeader: boolean;
+  toggleHamster: () => void;
+  clickDoor: (door: "left" | "right") => void;
+};
+
+// ============================================================================
+// Initial Load Hook (call this first, before actors exist)
+// ============================================================================
+
+export function useInitialSnapshots(): { loaded: boolean; snapshots: InitialSnapshots | null } {
+  const [result, setResult] = useState<{ loaded: boolean; snapshots: InitialSnapshots | null }>({
     loaded: false,
     snapshots: null,
   });
@@ -97,54 +113,22 @@ function useInitialLoad(): { loaded: boolean; snapshots: InitialSnapshots } {
 }
 
 // ============================================================================
-// Return type
+// Main Hook (only call after loaded, with initial snapshots)
 // ============================================================================
 
-export type AppStateResult = {
-  state: {
-    hamster: { state: HamsterState; context: HamsterContext };
-    leftDoor: { state: DoorState; context: DoorContext };
-    rightDoor: { state: DoorState; context: DoorContext };
-  } | null;
-  isLoading: boolean;
-  isLeader: boolean;
-  toggleHamster: () => void;
-  clickDoor: (door: "left" | "right") => void;
-};
-
-// ============================================================================
-// Main Hook
-// ============================================================================
-
-export function useAppState(): AppStateResult {
-  const { loaded, snapshots } = useInitialLoad();
-
-  // Create actors with initial snapshots (or defaults)
-  const hamster = useActor(hamsterWheelMachine, snapshots?.hamster ? {
-    initialSnapshot: snapshots.hamster,
+export function useAppState(initialSnapshots: InitialSnapshots | null): AppStateResult {
+  // Create actors with initial snapshots (or machine defaults if no saved state)
+  const hamster = useActor(hamsterWheelMachine, initialSnapshots?.hamster ? {
+    initialSnapshot: initialSnapshots.hamster,
   } : undefined);
 
-  const leftDoor = useActor(garageDoorMachine, snapshots?.leftDoor ? {
-    initialSnapshot: snapshots.leftDoor,
+  const leftDoor = useActor(garageDoorMachine, initialSnapshots?.leftDoor ? {
+    initialSnapshot: initialSnapshots.leftDoor,
   } : undefined);
 
-  const rightDoor = useActor(garageDoorMachine, snapshots?.rightDoor ? {
-    initialSnapshot: snapshots.rightDoor,
+  const rightDoor = useActor(garageDoorMachine, initialSnapshots?.rightDoor ? {
+    initialSnapshot: initialSnapshots.rightDoor,
   } : undefined);
-
-  // Track if we've synced initial state
-  const didSyncRef = useRef(false);
-
-  // After load, sync actors if we loaded saved state but actors were created with defaults
-  useEffect(() => {
-    if (!loaded || didSyncRef.current || !snapshots) return;
-    didSyncRef.current = true;
-
-    // Sync loaded state to actors
-    hamster.actor._syncSnapshot(snapshots.hamster);
-    leftDoor.actor._syncSnapshot(snapshots.leftDoor);
-    rightDoor.actor._syncSnapshot(snapshots.rightDoor);
-  }, [loaded, snapshots, hamster.actor, leftDoor.actor, rightDoor.actor]);
 
   // Serialize current state
   const serialize = useCallback((): SerializedAppState => ({
@@ -153,7 +137,7 @@ export function useAppState(): AppStateResult {
     rightDoor: serializeDoor(rightDoor.state, rightDoor.context),
   }), [hamster.state, hamster.context, leftDoor.state, leftDoor.context, rightDoor.state, rightDoor.context]);
 
-  // Apply external state
+  // Apply external state (for cross-tab sync)
   const applyExternal = useCallback((state: SerializedAppState) => {
     hamster.actor._syncSnapshot({
       state: deserializeHamsterState(state.hamster),
@@ -179,9 +163,9 @@ export function useAppState(): AppStateResult {
     return () => unsubs.forEach((u) => u());
   }, [hamster.actor, leftDoor.actor, rightDoor.actor]);
 
-  // Wire up persistence (only after loaded to avoid overwriting with defaults)
+  // Wire up persistence
   usePersistence({
-    adapter: loaded ? dexieAdapter : { save: () => {}, subscribe: () => () => {}, isLeader: () => false },
+    adapter: dexieAdapter,
     serialize,
     applyExternal,
     subscribeToActors,
@@ -201,17 +185,12 @@ export function useAppState(): AppStateResult {
     }
   );
 
-  // Weather: fetch when doors open
-  useWeatherOnOpen(leftDoor);
-  useWeatherOnOpen(rightDoor);
-
   return {
-    state: loaded ? {
+    state: {
       hamster: { state: hamster.state, context: hamster.context },
       leftDoor: { state: leftDoor.state, context: leftDoor.context },
       rightDoor: { state: rightDoor.state, context: rightDoor.context },
-    } : null,
-    isLoading: !loaded,
+    },
     isLeader: isLeader(),
     toggleHamster: useCallback(() => hamster.send(new Toggle()), [hamster]),
     clickDoor: useCallback(
@@ -219,25 +198,4 @@ export function useAppState(): AppStateResult {
       [leftDoor, rightDoor]
     ),
   };
-}
-
-// ============================================================================
-// Weather Hook
-// ============================================================================
-
-function useWeatherOnOpen(door: {
-  actor: ReturnType<typeof useActor<DoorState, DoorContext, DoorEvent, any>>["actor"];
-  send: (event: DoorEvent) => void;
-}) {
-  useActorWatch(
-    door.actor,
-    (snap) => snap.state._tag === "Open" && snap.context.weather.status === "loading",
-    (shouldFetch: boolean) => {
-      if (shouldFetch) {
-        fetchWeather()
-          .then((w) => door.send(new WeatherLoaded({ temp: w.temperature, desc: w.description, icon: w.icon })))
-          .catch((e: Error) => door.send(new WeatherError({ message: e.message })));
-      }
-    }
-  );
 }

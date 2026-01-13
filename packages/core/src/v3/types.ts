@@ -94,8 +94,9 @@ export interface StateConfig<
   /** Exit effect when leaving this state */
   exit?: (state: StateByTag<S, TStateTag>, ctx: C) => Effect.Effect<void>;
 
-  /** Continuous stream while in this state (e.g., animation ticks) */
-  run?: Stream.Stream<E>;
+  /** Continuous stream while in this state (e.g., animation ticks, async fetches)
+   *  Can be a static stream or a function that receives snapshot for conditional behavior */
+  run?: Stream.Stream<E> | ((snapshot: MachineSnapshot<S, C>) => Stream.Stream<E>);
 
   /** One-shot effect that returns a transition */
   invoke?: Effect.Effect<Transition<S, C>>;

@@ -110,8 +110,11 @@ function interpret<
         if (oldStateTag !== newStateTag) {
           const stateConfig = config.states[newStateTag as S["_tag"]];
           if (stateConfig?.run) {
+            const stream = typeof stateConfig.run === "function"
+              ? stateConfig.run(snapshot)
+              : stateConfig.run;
             runFiber = Effect.runFork(
-              Stream.runForEach(stateConfig.run, (event) =>
+              Stream.runForEach(stream, (event) =>
                 Effect.sync(() => processEvent(event))
               )
             );
@@ -149,8 +152,11 @@ function interpret<
     // Start initial state's run stream
     const initialStateConfig = config.states[snapshot.state._tag as S["_tag"]];
     if (initialStateConfig?.run) {
+      const stream = typeof initialStateConfig.run === "function"
+        ? initialStateConfig.run(snapshot)
+        : initialStateConfig.run;
       runFiber = Effect.runFork(
-        Stream.runForEach(initialStateConfig.run, (event) =>
+        Stream.runForEach(stream, (event) =>
           Effect.sync(() => processEvent(event))
         )
       );
@@ -192,8 +198,11 @@ function interpret<
         if (oldStateTag !== newStateTag) {
           const stateConfig = config.states[newStateTag as S["_tag"]];
           if (stateConfig?.run) {
+            const stream = typeof stateConfig.run === "function"
+              ? stateConfig.run(snapshot)
+              : stateConfig.run;
             runFiber = Effect.runFork(
-              Stream.runForEach(stateConfig.run, (event) =>
+              Stream.runForEach(stream, (event) =>
                 Effect.sync(() => processEvent(event))
               )
             );

@@ -1,18 +1,25 @@
 import { HamsterWheelContent } from "@/components/HamsterWheel";
 import { GarageDoor } from "@/components/GarageDoor";
-import { useAppState } from "@/hooks/useAppState";
+import { useInitialSnapshots, useAppState, type InitialSnapshots } from "@/hooks/useAppState";
 import { cn } from "@/lib/utils";
 
 function App() {
-  const { state, isLoading, toggleHamster, clickDoor } = useAppState();
+  const { loaded, snapshots } = useInitialSnapshots();
 
-  if (isLoading || !state) {
+  if (!loaded) {
     return (
-      <div className="flex items-center justify-center p-8 min-h-screen">
+      <div className="flex items-center justify-center p-8 min-h-screen bg-gray-800">
         <div className="text-muted-foreground">Initializing...</div>
       </div>
     );
   }
+
+  // Only mount AppContent after load - actors created with correct initial state
+  return <AppContent initialSnapshots={snapshots} />;
+}
+
+function AppContent({ initialSnapshots }: { initialSnapshots: InitialSnapshots | null }) {
+  const { state, toggleHamster, clickDoor } = useAppState(initialSnapshots);
 
   const hasElectricity = state.hamster.context.electricityLevel > 0;
 
