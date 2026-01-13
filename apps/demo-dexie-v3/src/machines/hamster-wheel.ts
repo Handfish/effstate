@@ -59,12 +59,7 @@ const stopDelayStream = Stream.fromEffect(Effect.sleep(Duration.seconds(2))).pip
   Stream.map(() => new StopComplete())
 );
 
-export const hamsterWheelMachine = defineMachine<
-  HamsterState,
-  HamsterContext,
-  HamsterEvent,
-  typeof HamsterContextSchema
->({
+export const hamsterWheelMachine = defineMachine<HamsterState, HamsterContext, HamsterEvent>({
   id: "hamsterWheel",
   context: HamsterContextSchema,
   initialContext: { wheelRotation: 0, electricityLevel: 0 },
@@ -73,28 +68,23 @@ export const hamsterWheelMachine = defineMachine<
   states: {
     Idle: {
       on: {
-        Toggle: (_ctx, _event, { goto }) =>
-          goto(HamsterState.Running(new Date()), { electricityLevel: 100 }),
+        Toggle: () => ({ goto: HamsterState.Running(new Date()), update: { electricityLevel: 100 } }),
       },
     },
 
     Running: {
       run: tickStream,
       on: {
-        Toggle: (_ctx, _event, { goto }) =>
-          goto(HamsterState.Stopping(new Date())),
-        HamsterTick: (ctx, event, { update }) =>
-          update({ wheelRotation: (ctx.wheelRotation + event.delta) % 360 }),
+        Toggle: () => ({ goto: HamsterState.Stopping(new Date()) }),
+        HamsterTick: (ctx, event) => ({ update: { wheelRotation: (ctx.wheelRotation + event.delta) % 360 } }),
       },
     },
 
     Stopping: {
       run: stopDelayStream,
       on: {
-        Toggle: (_ctx, _event, { goto }) =>
-          goto(HamsterState.Running(new Date()), { electricityLevel: 100 }),
-        StopComplete: (_ctx, _event, { goto }) =>
-          goto(HamsterState.Idle(), { electricityLevel: 0 }),
+        Toggle: () => ({ goto: HamsterState.Running(new Date()), update: { electricityLevel: 100 } }),
+        StopComplete: () => ({ goto: HamsterState.Idle(), update: { electricityLevel: 0 } }),
       },
     },
   },

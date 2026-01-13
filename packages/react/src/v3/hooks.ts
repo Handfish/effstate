@@ -6,7 +6,6 @@
 
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { Effect } from "effect";
-import type { Schema } from "effect";
 import type {
   MachineState,
   MachineContext,
@@ -46,9 +45,8 @@ export function useActor<
   S extends MachineState,
   C extends MachineContext,
   E extends MachineEvent,
-  TContextSchema extends Schema.Schema.Any,
 >(
-  definition: MachineDefinition<S, C, E, TContextSchema>,
+  definition: MachineDefinition<S, C, E>,
   options?: {
     initialSnapshot?: MachineSnapshot<S, C>;
   }

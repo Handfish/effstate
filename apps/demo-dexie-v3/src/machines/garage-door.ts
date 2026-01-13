@@ -33,14 +33,23 @@ export const DoorState = {
 // Context
 // ============================================================================
 
+export type WeatherStatus =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "loaded"; temp: number; desc: string; icon: string }
+  | { status: "error"; message: string };
+
+export const Weather = {
+  idle: (): WeatherStatus => ({ status: "idle" }),
+  loading: (): WeatherStatus => ({ status: "loading" }),
+  loaded: (temp: number, desc: string, icon: string): WeatherStatus => ({ status: "loaded", temp, desc, icon }),
+  error: (message: string): WeatherStatus => ({ status: "error", message }),
+};
+
 export interface DoorContext {
   readonly position: number;
   readonly isPowered: boolean;
-  readonly weather:
-    | { status: "idle" }
-    | { status: "loading" }
-    | { status: "loaded"; temp: number; desc: string; icon: string }
-    | { status: "error"; message: string };
+  readonly weather: WeatherStatus;
   readonly [key: string]: unknown; // Index signature for MachineContext
 }
 
@@ -102,50 +111,43 @@ const weatherFetchStream: Stream.Stream<DoorEvent> = Stream.fromEffect(
   ),
 );
 
-export const garageDoorMachine = defineMachine<
-  DoorState,
-  DoorContext,
-  DoorEvent,
-  typeof DoorContextSchema
->({
+export const garageDoorMachine = defineMachine<DoorState, DoorContext, DoorEvent>({
   id: "garageDoor",
   context: DoorContextSchema,
-  initialContext: { position: 0, isPowered: false, weather: { status: "idle" } },
+  initialContext: { position: 0, isPowered: false, weather: Weather.idle() },
   initialState: DoorState.Closed(),
 
   // Global handlers for power events
   global: {
-    PowerOn: (_ctx, _event, { update }) => update({ isPowered: true }),
-    PowerOff: (_ctx, _event, { update }) => update({ isPowered: false }),
+    PowerOn: () => ({ update: { isPowered: true } }),
+    PowerOff: () => ({ update: { isPowered: false } }),
   },
 
   states: {
     Closed: {
       on: {
-        Click: (ctx, _event, { goto }) =>
-          ctx.isPowered ? goto(DoorState.Opening(new Date())) : null,
+        Click: (ctx) => (ctx.isPowered ? { goto: DoorState.Opening(new Date()) } : null),
       },
     },
 
     Opening: {
       run: tickStream(1),
       on: {
-        Click: (_ctx, _event, { goto }) => goto(DoorState.PausedOpening(new Date())),
-        DoorTick: (ctx, event, { goto, update }) => {
+        Click: () => ({ goto: DoorState.PausedOpening(new Date()) }),
+        DoorTick: (ctx, event) => {
           const newPos = Math.min(100, ctx.position + event.delta);
           return newPos >= 100
-            ? goto(DoorState.Open(new Date()), { position: 100, weather: { status: "loading" } })
-            : update({ position: newPos });
+            ? { goto: DoorState.Open(new Date()), update: { position: 100, weather: Weather.loading() } }
+            : { update: { position: newPos } };
         },
-        PowerOff: (_ctx, _event, { goto }) => goto(DoorState.PausedOpening(new Date())),
+        PowerOff: () => ({ goto: DoorState.PausedOpening(new Date()) }),
       },
     },
 
     PausedOpening: {
       on: {
-        Click: (ctx, _event, { goto }) =>
-          ctx.isPowered ? goto(DoorState.Closing(new Date())) : null,
-        PowerOn: (_ctx, _event, { goto }) => goto(DoorState.Opening(new Date())),
+        Click: (ctx) => (ctx.isPowered ? { goto: DoorState.Closing(new Date()) } : null),
+        PowerOn: () => ({ goto: DoorState.Opening(new Date()) }),
       },
     },
 
@@ -153,38 +155,37 @@ export const garageDoorMachine = defineMachine<
       run: (snap) =>
         snap.context.weather.status === "loading" ? weatherFetchStream : Stream.empty,
       on: {
-        Click: (ctx, _event, { goto }) =>
+        Click: (ctx) =>
           ctx.isPowered
-            ? goto(DoorState.Closing(new Date()), { weather: { status: "idle" } })
+            ? { goto: DoorState.Closing(new Date()), update: { weather: Weather.idle() } }
             : null,
-        WeatherLoaded: (_ctx, event, { update }) =>
-          update({
-            weather: { status: "loaded", temp: event.temp, desc: event.desc, icon: event.icon },
-          }),
-        WeatherError: (_ctx, event, { update }) =>
-          update({ weather: { status: "error", message: event.message } }),
+        WeatherLoaded: (_ctx, event) => ({
+          update: { weather: Weather.loaded(event.temp, event.desc, event.icon) },
+        }),
+        WeatherError: (_ctx, event) => ({
+          update: { weather: Weather.error(event.message) },
+        }),
       },
     },
 
     Closing: {
       run: tickStream(-1),
       on: {
-        Click: (_ctx, _event, { goto }) => goto(DoorState.PausedClosing(new Date())),
-        DoorTick: (ctx, event, { goto, update }) => {
+        Click: () => ({ goto: DoorState.PausedClosing(new Date()) }),
+        DoorTick: (ctx, event) => {
           const newPos = Math.max(0, ctx.position + event.delta);
           return newPos <= 0
-            ? goto(DoorState.Closed(), { position: 0 })
-            : update({ position: newPos });
+            ? { goto: DoorState.Closed(), update: { position: 0 } }
+            : { update: { position: newPos } };
         },
-        PowerOff: (_ctx, _event, { goto }) => goto(DoorState.PausedClosing(new Date())),
+        PowerOff: () => ({ goto: DoorState.PausedClosing(new Date()) }),
       },
     },
 
     PausedClosing: {
       on: {
-        Click: (ctx, _event, { goto }) =>
-          ctx.isPowered ? goto(DoorState.Opening(new Date())) : null,
-        PowerOn: (_ctx, _event, { goto }) => goto(DoorState.Closing(new Date())),
+        Click: (ctx) => (ctx.isPowered ? { goto: DoorState.Opening(new Date()) } : null),
+        PowerOn: () => ({ goto: DoorState.Closing(new Date()) }),
       },
     },
   },

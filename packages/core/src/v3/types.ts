@@ -23,44 +23,39 @@ export type StateByTag<S extends MachineState, T extends S["_tag"]> = Extract<S,
 export type EventByTag<E extends MachineEvent, T extends E["_tag"]> = Extract<E, { _tag: T }>;
 
 // ============================================================================
-// Transition Results (simplified - no complex builder chains)
-// ============================================================================
-
-export type Transition<S extends MachineState, C extends MachineContext> =
-  | { readonly type: "goto"; readonly state: S; readonly updates?: Partial<C> }
-  | { readonly type: "update"; readonly updates: Partial<C> }
-  | { readonly type: "stay" }
-  | null; // null = stay shorthand
-
-// ============================================================================
-// Transition Builders (simplified)
-// ============================================================================
-
-export interface TransitionBuilders<S extends MachineState, C extends MachineContext> {
-  goto: (state: S, updates?: Partial<C>) => Transition<S, C>;
-  update: (updates: Partial<C>) => Transition<S, C>;
-  stay: Transition<S, C>;
-}
-
-export function createBuilders<S extends MachineState, C extends MachineContext>(): TransitionBuilders<S, C> {
-  return {
-    goto: (state, updates) => ({ type: "goto", state, updates }),
-    update: (updates) => ({ type: "update", updates }),
-    stay: { type: "stay" },
-  };
-}
-
-// ============================================================================
-// Event Handlers (the key simplification!)
+// Transition Results (clean return-object pattern)
 // ============================================================================
 
 /**
- * Handler for a single event type
+ * Transition result - return what you want to happen:
+ * - { goto: NewState }           → transition to new state
+ * - { goto: NewState, update: {} } → transition + update context
+ * - { update: {} }               → stay in current state, update context
+ * - null                         → stay in current state (no changes)
+ */
+export type Transition<S extends MachineState, C extends MachineContext> =
+  | { readonly goto: S; readonly update?: Partial<C> }
+  | { readonly update: Partial<C> }
+  | null;
+
+// ============================================================================
+// Event Handlers
+// ============================================================================
+
+/**
+ * Handler for a single event type.
+ * Return what you want to happen - no builder functions needed.
+ *
+ * @example
+ * ```ts
+ * Click: () => ({ goto: DoorState.Opening(new Date()) })
+ * DoorTick: (ctx, event) => ({ update: { position: ctx.position + event.delta } })
+ * PowerOff: () => null  // stay, do nothing
+ * ```
  */
 export type EventHandler<S extends MachineState, C extends MachineContext, E extends MachineEvent> = (
   ctx: C,
   event: E,
-  builders: TransitionBuilders<S, C>
 ) => Transition<S, C>;
 
 /**
@@ -113,10 +108,9 @@ export interface MachineConfig<
   S extends MachineState,
   C extends MachineContext,
   E extends MachineEvent,
-  TContextSchema extends Schema.Schema.Any,
 > {
   readonly id: string;
-  readonly context: TContextSchema;
+  readonly context?: Schema.Schema.Any;
   readonly initialContext: C;
   readonly initialState: S;
 
@@ -154,11 +148,10 @@ export interface MachineDefinition<
   S extends MachineState,
   C extends MachineContext,
   E extends MachineEvent,
-  TContextSchema extends Schema.Schema.Any,
 > {
   readonly id: string;
-  readonly config: MachineConfig<S, C, E, TContextSchema>;
-  readonly contextSchema: TContextSchema;
+  readonly config: MachineConfig<S, C, E>;
+  readonly contextSchema?: Schema.Schema.Any;
   readonly interpret: (options?: {
     snapshot?: MachineSnapshot<S, C>;
   }) => Effect.Effect<MachineActor<S, C, E>>;

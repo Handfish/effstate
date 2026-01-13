@@ -3,7 +3,6 @@
  */
 
 import { Effect, Fiber, Stream } from "effect";
-import type { Schema } from "effect";
 import type {
   MachineState,
   MachineContext,
@@ -13,9 +12,28 @@ import type {
   MachineSnapshot,
   MachineActor,
   Transition,
-  TransitionBuilders,
+  EventHandlers,
 } from "./types";
-import { createBuilders } from "./types";
+
+/**
+ * Call an event handler with proper typing.
+ * The cast is safe because we look up the handler by event._tag,
+ * so the event type matches what the handler expects.
+ */
+function callHandler<
+  S extends MachineState,
+  C extends MachineContext,
+  E extends MachineEvent,
+>(
+  handlers: EventHandlers<S, C, E>,
+  ctx: C,
+  event: E
+): Transition<S, C> | null {
+  const handler = handlers[event._tag as E["_tag"]];
+  if (!handler) return null;
+  // Safe cast: event._tag was used to look up handler, so types align
+  return (handler as (ctx: C, event: E) => Transition<S, C>)(ctx, event);
+}
 
 /**
  * Define a state machine with the v3 API
@@ -24,8 +42,7 @@ export function defineMachine<
   S extends MachineState,
   C extends MachineContext,
   E extends MachineEvent,
-  TContextSchema extends Schema.Schema.Any,
->(config: MachineConfig<S, C, E, TContextSchema>): MachineDefinition<S, C, E, TContextSchema> {
+>(config: MachineConfig<S, C, E>): MachineDefinition<S, C, E> {
   return {
     id: config.id,
     config,
@@ -41,9 +58,8 @@ function interpret<
   S extends MachineState,
   C extends MachineContext,
   E extends MachineEvent,
-  TContextSchema extends Schema.Schema.Any,
 >(
-  config: MachineConfig<S, C, E, TContextSchema>,
+  config: MachineConfig<S, C, E>,
   options?: { snapshot?: MachineSnapshot<S, C> }
 ): Effect.Effect<MachineActor<S, C, E>> {
   return Effect.gen(function* () {
@@ -59,9 +75,6 @@ function interpret<
     // Active stream fiber
     let runFiber: Fiber.RuntimeFiber<void, never> | null = null;
 
-    // Builders for transitions
-    const builders: TransitionBuilders<S, C> = createBuilders();
-
     // Notify subscribers
     const notify = () => {
       for (const sub of subscribers) {
@@ -69,24 +82,20 @@ function interpret<
       }
     };
 
+    // Helper to check if transition has goto
+    const hasGoto = (t: Transition<S, C>): t is { readonly goto: S; readonly update?: Partial<C> } =>
+      t !== null && "goto" in t;
+
     // Apply a transition
-    const applyTransition = (transition: Transition<S, C> | null) => {
-      if (transition === null || transition.type === "stay") {
+    const applyTransition = (transition: Transition<S, C>) => {
+      if (transition === null) {
         return;
       }
 
-      if (transition.type === "update") {
-        snapshot = {
-          ...snapshot,
-          context: { ...snapshot.context, ...transition.updates },
-        };
-        notify();
-        return;
-      }
-
-      if (transition.type === "goto") {
+      // State transition
+      if (hasGoto(transition)) {
         const oldStateTag = snapshot.state._tag;
-        const newStateTag = transition.state._tag;
+        const newStateTag = transition.goto._tag;
 
         // Exit old state
         if (oldStateTag !== newStateTag) {
@@ -99,9 +108,9 @@ function interpret<
 
         // Update state
         snapshot = {
-          state: transition.state,
-          context: transition.updates
-            ? { ...snapshot.context, ...transition.updates }
+          state: transition.goto,
+          context: transition.update
+            ? { ...snapshot.context, ...transition.update }
             : snapshot.context,
         };
         notify();
@@ -120,6 +129,16 @@ function interpret<
             );
           }
         }
+        return;
+      }
+
+      // Update only (stay in current state)
+      if ("update" in transition) {
+        snapshot = {
+          ...snapshot,
+          context: { ...snapshot.context, ...transition.update },
+        };
+        notify();
       }
     };
 
@@ -129,21 +148,17 @@ function interpret<
 
       // Try global handlers first
       if (config.global) {
-        const globalHandler = config.global[event._tag as E["_tag"]];
-        if (globalHandler) {
-          const result = globalHandler(snapshot.context, event as any, builders);
-          if (result !== null) {
-            applyTransition(result);
-            return;
-          }
+        const result = callHandler(config.global, snapshot.context, event);
+        if (result !== null) {
+          applyTransition(result);
+          return;
         }
       }
 
       // Try state handler
       const stateConfig = config.states[stateTag];
-      const handler = stateConfig?.on[event._tag as E["_tag"]];
-      if (handler) {
-        const result = handler(snapshot.context, event as any, builders);
+      const result = callHandler(stateConfig.on, snapshot.context, event);
+      if (result !== null) {
         applyTransition(result);
       }
       // No handler = implicit stay (do nothing)
