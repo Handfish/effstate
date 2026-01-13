@@ -81,7 +81,7 @@ export function createDexieAdapter(): DexieAdapter {
  * This must be called in a React component to use useLiveQuery.
  */
 export function useDexieLiveQuery(
-  adapter: PersistenceAdapter<SerializedAppState>,
+  _adapter: PersistenceAdapter<SerializedAppState>,
   onExternalChange: (state: SerializedAppState) => void
 ) {
   const savedState = useLiveQuery(() => db.appState.get(STATE_ID), []);

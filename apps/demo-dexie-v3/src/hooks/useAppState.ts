@@ -40,27 +40,10 @@ import {
   isLeader,
   type SerializedAppState,
 } from "@/lib/dexie-adapter";
+import { fetchWeather } from "@/lib/weather-service";
 
 // Re-export UI helpers
 export { getHamsterStateLabel, getHamsterButtonLabel, getDoorStateLabel, getDoorButtonLabel };
-
-// ============================================================================
-// Weather Fetching
-// ============================================================================
-
-async function fetchWeather() {
-  const res = await fetch(
-    "https://api.open-meteo.com/v1/forecast?latitude=37.7749&longitude=-122.4194&current=temperature_2m,weather_code&temperature_unit=fahrenheit"
-  );
-  if (!res.ok) throw new Error("Failed to fetch");
-  const data = await res.json();
-  const code = data.current.weather_code;
-  const info = code === 0 ? { desc: "Clear", icon: "☀️" }
-    : code <= 3 ? { desc: "Cloudy", icon: "⛅" }
-    : code <= 69 ? { desc: "Rain", icon: "🌧️" }
-    : { desc: "Unknown", icon: "❓" };
-  return { temp: Math.round(data.current.temperature_2m), ...info };
-}
 
 // ============================================================================
 // Adapter (module level)
@@ -252,7 +235,7 @@ function useWeatherOnOpen(door: {
     (shouldFetch: boolean) => {
       if (shouldFetch) {
         fetchWeather()
-          .then((w) => door.send(new WeatherLoaded(w)))
+          .then((w) => door.send(new WeatherLoaded({ temp: w.temperature, desc: w.description, icon: w.icon })))
           .catch((e: Error) => door.send(new WeatherError({ message: e.message })));
       }
     }
