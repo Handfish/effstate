@@ -83,8 +83,17 @@ function interpret<
     };
 
     // Helper to check if transition has goto
-    const hasGoto = (t: Transition<S, C>): t is { readonly goto: S; readonly update?: Partial<C> } =>
-      t !== null && "goto" in t;
+    const hasGoto = (t: NonNullable<Transition<S, C>>): t is { readonly goto: S; readonly update?: Partial<C>; readonly actions?: readonly (() => void)[] } =>
+      "goto" in t;
+
+    // Run transition actions
+    const runActions = (transition: NonNullable<Transition<S, C>>) => {
+      if ("actions" in transition && transition.actions) {
+        for (const action of transition.actions) {
+          action();
+        }
+      }
+    };
 
     // Apply a transition
     const applyTransition = (transition: Transition<S, C>) => {
@@ -122,6 +131,9 @@ function interpret<
         };
         notify();
 
+        // Run transition actions
+        runActions(transition);
+
         // Enter new state
         if (oldStateTag !== newStateTag) {
           const stateConfig = config.states[newStateTag as S["_tag"]];
@@ -153,6 +165,13 @@ function interpret<
           context: { ...snapshot.context, ...transition.update },
         };
         notify();
+        runActions(transition);
+        return;
+      }
+
+      // Actions only (stay in current state, no update)
+      if ("actions" in transition) {
+        runActions(transition);
       }
     };
 

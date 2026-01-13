@@ -27,15 +27,25 @@ export type EventByTag<E extends MachineEvent, T extends E["_tag"]> = Extract<E,
 // ============================================================================
 
 /**
+ * Fire-and-forget action executed during a transition.
+ * Has closure access to ctx and event from the handler.
+ */
+export type TransitionAction = () => void;
+
+/**
  * Transition result - return what you want to happen:
- * - { goto: NewState }           → transition to new state
- * - { goto: NewState, update: {} } → transition + update context
- * - { update: {} }               → stay in current state, update context
- * - null                         → stay in current state (no changes)
+ * - { goto: NewState }              → transition to new state
+ * - { goto: NewState, update: {} }  → transition + update context
+ * - { update: {} }                  → stay in current state, update context
+ * - { actions: [...] }              → stay, run actions only
+ * - null                            → stay in current state (no changes)
+ *
+ * All variants can include `actions: [() => void]` for fire-and-forget effects.
  */
 export type Transition<S extends MachineState, C extends MachineContext> =
-  | { readonly goto: S; readonly update?: Partial<C> }
-  | { readonly update: Partial<C> }
+  | { readonly goto: S; readonly update?: Partial<C>; readonly actions?: readonly TransitionAction[] }
+  | { readonly update: Partial<C>; readonly actions?: readonly TransitionAction[] }
+  | { readonly actions: readonly TransitionAction[] }
   | null;
 
 // ============================================================================
@@ -51,6 +61,11 @@ export type Transition<S extends MachineState, C extends MachineContext> =
  * Click: () => ({ goto: DoorState.Opening(new Date()) })
  * DoorTick: (ctx, event) => ({ update: { position: ctx.position + event.delta } })
  * PowerOff: () => null  // stay, do nothing
+ * Log: (ctx) => ({ actions: [() => console.log(ctx.count)] })  // actions only
+ * Submit: (ctx) => ({
+ *   goto: State.Submitted(),
+ *   actions: [() => analytics.track('submitted', ctx)]
+ * })
  * ```
  */
 export type EventHandler<S extends MachineState, C extends MachineContext, E extends MachineEvent> = (
