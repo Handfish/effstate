@@ -143,25 +143,67 @@ function extractDoor(map: ReturnType<LoroDoc["getMap"]>): {
 }
 
 // ============================================================================
-// Dexie Database (single table like working demo)
+// Dexie Database
 // ============================================================================
 
+/**
+ * Main app state - the "committed" state that cross-tab sync uses.
+ * This is what the current working sync relies on - DON'T CHANGE THIS FLOW.
+ */
 export interface AppState {
   id: string;
   snapshot: Uint8Array;
   updatedAt: Date;
+  // Server sync fields (optional - for future use)
+  serverVersion?: Uint8Array; // Last known server version vector
+  syncedAt?: Date; // When we last synced with server
+}
+
+/**
+ * Pending changes - for offline-first server sync (FUTURE USE).
+ * Local changes are queued here before being pushed to server.
+ * Cross-tab sync does NOT use this table - it's purely for server sync.
+ */
+export interface PendingChange {
+  id: string; // Auto-generated UUID
+  snapshot: Uint8Array; // Loro snapshot of the change
+  createdAt: Date;
+  // For deduplication and ordering
+  sequence: number;
+}
+
+/**
+ * Sync metadata - tracks sync state with server (FUTURE USE).
+ */
+export interface SyncMeta {
+  id: string;
+  clientId: string; // Unique client identifier
+  lastPushAt?: Date;
+  lastPullAt?: Date;
+  serverUrl?: string;
 }
 
 const db = new Dexie("effstate-v3-loro") as Dexie & {
   appState: EntityTable<AppState, "id">;
+  pendingChanges: EntityTable<PendingChange, "id">;
+  syncMeta: EntityTable<SyncMeta, "id">;
 };
 
+// Version 1: Original simple schema (still works)
 db.version(1).stores({
   appState: "id, updatedAt",
 });
 
+// Version 2: Add server sync tables (additive - doesn't break existing)
+db.version(2).stores({
+  appState: "id, updatedAt, syncedAt",
+  pendingChanges: "id, createdAt, sequence",
+  syncMeta: "id",
+});
+
 export { db };
 export const STATE_ID = "app-state";
+export const SYNC_META_ID = "sync-meta";
 
 // ============================================================================
 // Leader Election (same as working demo)
