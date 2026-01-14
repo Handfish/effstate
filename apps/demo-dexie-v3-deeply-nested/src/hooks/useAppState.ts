@@ -1,87 +1,48 @@
 /**
- * App State Hook - v3 API with Dexie Persistence
+ * App State Hook - Thin Coordinator
  *
- * Uses the clean PersistenceAdapter pattern.
- * Split into two hooks to avoid transition on initial load:
- * - useInitialSnapshots: loads from Dexie
- * - useAppState: creates actors (only called after load)
+ * Composes domain hooks and wires up:
+ * - Persistence (atomic save/load across domains)
+ * - Cross-domain effects (hamster powers doors)
+ *
+ * Each domain hook is testable in isolation.
  */
 
-import { useCallback, useEffect, useState } from "react";
-import { useActor, useActorWatch, usePersistence } from "@effstate/react/v3";
-import type { MachineSnapshot } from "effstate/v3";
+import { useEffect, useState } from "react";
+import { useActorWatch } from "@effstate/react/v3";
+import { useHamster, type HamsterSnapshot } from "./domains/useHamster";
+import { useDoors, type DoorSnapshot } from "./domains/useDoors";
 import {
-  hamsterWheelMachine,
-  garageDoorMachine,
-  Toggle,
-  Click,
-  PowerOn,
-  PowerOff,
-  getHamsterStateLabel,
-  getHamsterButtonLabel,
-  getDoorStateLabel,
-  getDoorButtonLabel,
-  type HamsterState,
-  type HamsterContext,
-  type DoorState,
-  type DoorContext,
-} from "@/machines";
+  usePersistenceCoordinator,
+  dexieAdapter,
+  isLeader,
+} from "./persistence/usePersistenceCoordinator";
 import {
-  serializeHamster,
-  serializeDoor,
   deserializeHamsterState,
   deserializeHamsterContext,
   deserializeDoorState,
   deserializeDoorContext,
 } from "@/lib/db";
-import {
-  createDexieAdapter,
-  useDexieLiveQuery,
-  isLeader,
-  type SerializedAppState,
-} from "@/lib/dexie-adapter";
-
-// Re-export UI helpers
-export { getHamsterStateLabel, getHamsterButtonLabel, getDoorStateLabel, getDoorButtonLabel };
 
 // ============================================================================
 // Types
 // ============================================================================
 
 export type InitialSnapshots = {
-  hamster: MachineSnapshot<HamsterState, HamsterContext>;
-  leftDoor: MachineSnapshot<DoorState, DoorContext>;
-  rightDoor: MachineSnapshot<DoorState, DoorContext>;
-};
-
-export type AppState = {
-  hamster: { state: HamsterState; context: HamsterContext };
-  leftDoor: { state: DoorState; context: DoorContext };
-  rightDoor: { state: DoorState; context: DoorContext };
-};
-
-export type AppStateResult = {
-  state: AppState;
-  isLeader: boolean;
-  toggleHamster: () => void;
-  clickDoor: (door: "left" | "right") => void;
+  hamster: HamsterSnapshot;
+  leftDoor: DoorSnapshot;
+  rightDoor: DoorSnapshot;
 };
 
 // ============================================================================
-// Adapter (module level)
+// Initial Load Hook
 // ============================================================================
 
-const dexieAdapter = createDexieAdapter();
-
-// ============================================================================
-// Initial Load Hook (call this first, before actors exist)
-// ============================================================================
-
-export function useInitialSnapshots(): { loaded: boolean; snapshots: InitialSnapshots | null } {
-  const [result, setResult] = useState<{ loaded: boolean; snapshots: InitialSnapshots | null }>({
-    loaded: false,
-    snapshots: null,
-  });
+export function useInitialSnapshots() {
+  const [result, setResult] = useState<{
+    loaded: boolean;
+    snapshots: InitialSnapshots | null;
+  }>({ loaded: false, snapshots: null });
 
   useEffect(() => {
     dexieAdapter.load().then((saved) => {
@@ -113,89 +74,45 @@ export function useInitialSnapshots(): { loaded: boolean; snapshots: InitialSnap
 }
 
 // ============================================================================
-// Main Hook (only call after loaded, with initial snapshots)
+// Main Coordinator Hook
 // ============================================================================
 
-export function useAppState(initialSnapshots: InitialSnapshots | null): AppStateResult {
-  // Create actors with initial snapshots (or machine defaults if no saved state)
-  const hamster = useActor(hamsterWheelMachine, initialSnapshots?.hamster ? {
-    initialSnapshot: initialSnapshots.hamster,
-  } : undefined);
+export function useAppState(snapshots: InitialSnapshots | null) {
+  // Domain hooks (each testable in isolation)
+  const hamster = useHamster(snapshots?.hamster ?? null);
+  const doors = useDoors(snapshots?.leftDoor ?? null, snapshots?.rightDoor ?? null);
 
-  const leftDoor = useActor(garageDoorMachine, initialSnapshots?.leftDoor ? {
-    initialSnapshot: initialSnapshots.leftDoor,
-  } : undefined);
+  // Persistence (atomic across all domains)
+  const { isLeader: isLeaderNow } = usePersistenceCoordinator({ hamster, doors });
 
-  const rightDoor = useActor(garageDoorMachine, initialSnapshots?.rightDoor ? {
-    initialSnapshot: initialSnapshots.rightDoor,
-  } : undefined);
-
-  // Serialize current state
-  const serialize = useCallback((): SerializedAppState => ({
-    hamster: serializeHamster(hamster.state, hamster.context),
-    leftDoor: serializeDoor(leftDoor.state, leftDoor.context),
-    rightDoor: serializeDoor(rightDoor.state, rightDoor.context),
-  }), [hamster.state, hamster.context, leftDoor.state, leftDoor.context, rightDoor.state, rightDoor.context]);
-
-  // Apply external state (for cross-tab sync)
-  const applyExternal = useCallback((state: SerializedAppState) => {
-    hamster.actor._syncSnapshot({
-      state: deserializeHamsterState(state.hamster),
-      context: deserializeHamsterContext(state.hamster),
-    });
-    leftDoor.actor._syncSnapshot({
-      state: deserializeDoorState(state.leftDoor),
-      context: deserializeDoorContext(state.leftDoor),
-    });
-    rightDoor.actor._syncSnapshot({
-      state: deserializeDoorState(state.rightDoor),
-      context: deserializeDoorContext(state.rightDoor),
-    });
-  }, [hamster.actor, leftDoor.actor, rightDoor.actor]);
-
-  // Subscribe to actor changes
-  const subscribeToActors = useCallback((callback: () => void) => {
-    const unsubs = [
-      hamster.actor.subscribe(callback),
-      leftDoor.actor.subscribe(callback),
-      rightDoor.actor.subscribe(callback),
-    ];
-    return () => unsubs.forEach((u) => u());
-  }, [hamster.actor, leftDoor.actor, rightDoor.actor]);
-
-  // Wire up persistence
-  usePersistence({
-    adapter: dexieAdapter,
-    serialize,
-    applyExternal,
-    subscribeToActors,
-  });
-
-  // Connect Dexie liveQuery for cross-tab sync
-  useDexieLiveQuery(dexieAdapter, applyExternal);
-
-  // Power sync: hamster → doors
+  // Cross-domain effect: hamster powers doors
   useActorWatch(
     hamster.actor,
     (snap) => snap.context.electricityLevel > 0,
-    (isPowered) => {
-      const event = isPowered ? new PowerOn() : new PowerOff();
-      leftDoor.send(event);
-      rightDoor.send(event);
-    }
+    doors.setPower
   );
 
   return {
+    // Expose domain hooks directly
+    hamster,
+    doors,
+    // Convenience accessors for backwards compat
     state: {
       hamster: { state: hamster.state, context: hamster.context },
-      leftDoor: { state: leftDoor.state, context: leftDoor.context },
-      rightDoor: { state: rightDoor.state, context: rightDoor.context },
+      leftDoor: { state: doors.left.state, context: doors.left.context },
+      rightDoor: { state: doors.right.state, context: doors.right.context },
     },
-    isLeader: isLeader(),
-    toggleHamster: useCallback(() => hamster.send(new Toggle()), [hamster]),
-    clickDoor: useCallback(
-      (door: "left" | "right") => (door === "left" ? leftDoor : rightDoor).send(new Click()),
-      [leftDoor, rightDoor]
-    ),
+    isLeader: isLeaderNow,
+    toggleHamster: hamster.toggle,
+    clickDoor: doors.click,
   };
 }
+
+// Re-export for convenience
+export { isLeader };
+export {
+  getHamsterStateLabel,
+  getHamsterButtonLabel,
+  getDoorStateLabel,
+  getDoorButtonLabel,
+} from "@/machines";
