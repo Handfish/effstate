@@ -2,19 +2,12 @@
  * Persistence Coordinator
  *
  * Coordinates atomic persistence across all domain hooks.
- * Handles cross-tab sync via Dexie liveQuery.
+ * Uses Effect.Schema codecs for encode/decode.
  */
 
 import { useCallback } from "react";
 import { usePersistence } from "@effstate/react/v3";
-import {
-  serializeHamster,
-  serializeDoor,
-  deserializeHamsterState,
-  deserializeHamsterContext,
-  deserializeDoorState,
-  deserializeDoorContext,
-} from "@/lib/db";
+import { HamsterCodec, DoorCodec } from "@/lib/db";
 import {
   createDexieAdapter,
   useDexieLiveQuery,
@@ -35,31 +28,26 @@ export interface PersistenceOptions {
 }
 
 export function usePersistenceCoordinator({ hamster, doors }: PersistenceOptions) {
-  // Serialize all domains atomically
+  // Serialize all domains atomically using Schema codecs
   const serialize = useCallback(
     (): SerializedAppState => ({
-      hamster: serializeHamster(hamster.state, hamster.context),
-      leftDoor: serializeDoor(doors.left.state, doors.left.context),
-      rightDoor: serializeDoor(doors.right.state, doors.right.context),
+      hamster: HamsterCodec.encode(hamster.state, hamster.context),
+      leftDoor: DoorCodec.encode(doors.left.state, doors.left.context),
+      rightDoor: DoorCodec.encode(doors.right.state, doors.right.context),
     }),
     [hamster.state, hamster.context, doors.left.state, doors.left.context, doors.right.state, doors.right.context]
   );
 
-  // Apply external state from other tabs
+  // Apply external state using Schema codecs
   const applyExternal = useCallback(
     (state: SerializedAppState) => {
-      hamster.actor._syncSnapshot({
-        state: deserializeHamsterState(state.hamster),
-        context: deserializeHamsterContext(state.hamster),
-      });
-      doors.left.actor._syncSnapshot({
-        state: deserializeDoorState(state.leftDoor),
-        context: deserializeDoorContext(state.leftDoor),
-      });
-      doors.right.actor._syncSnapshot({
-        state: deserializeDoorState(state.rightDoor),
-        context: deserializeDoorContext(state.rightDoor),
-      });
+      const h = HamsterCodec.decode(state.hamster);
+      const l = DoorCodec.decode(state.leftDoor);
+      const r = DoorCodec.decode(state.rightDoor);
+
+      hamster.actor._syncSnapshot({ state: h.state, context: h.context });
+      doors.left.actor._syncSnapshot({ state: l.state, context: l.context });
+      doors.right.actor._syncSnapshot({ state: r.state, context: r.context });
     },
     [hamster.actor, doors.left.actor, doors.right.actor]
   );

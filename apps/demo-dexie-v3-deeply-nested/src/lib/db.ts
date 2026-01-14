@@ -1,26 +1,118 @@
+/**
+ * Database + Serialization using Effect.Schema
+ *
+ * Schema.encode: runtime → storage (serialize)
+ * Schema.decode: storage → runtime (deserialize)
+ *
+ * Dates are transformed to fresh Date() on decode since
+ * we don't persist timing info (animations restart).
+ */
+
 import Dexie, { type EntityTable } from "dexie";
+import { Schema } from "effect";
 import type { HamsterState, HamsterContext, DoorState, DoorContext } from "@/machines";
 
 // ============================================================================
-// Serializable State (for Dexie storage)
+// Hamster Schema
 // ============================================================================
 
-export interface SerializedHamster {
-  stateTag: HamsterState["_tag"];
-  wheelRotation: number;
-  electricityLevel: number;
-}
+// Storage format (what goes in Dexie)
+const SerializedHamsterSchema = Schema.Struct({
+  stateTag: Schema.Literal("Idle", "Running", "Stopping"),
+  wheelRotation: Schema.Number,
+  electricityLevel: Schema.Number,
+});
 
-export interface SerializedDoor {
-  stateTag: DoorState["_tag"];
-  position: number;
-  isPowered: boolean;
-  weather:
-    | { status: "idle" }
-    | { status: "loading" }
-    | { status: "loaded"; temp: number; desc: string; icon: string }
-    | { status: "error"; message: string };
-}
+export type SerializedHamster = typeof SerializedHamsterSchema.Type;
+
+// Transform: storage ↔ runtime
+const HamsterStateSchema = Schema.transform(
+  SerializedHamsterSchema,
+  Schema.Unknown as Schema.Schema<{ state: HamsterState; context: HamsterContext }>,
+  {
+    decode: (s) => ({
+      state: s.stateTag === "Idle" ? { _tag: "Idle" as const }
+           : s.stateTag === "Running" ? { _tag: "Running" as const, startedAt: new Date() }
+           : { _tag: "Stopping" as const, stoppingAt: new Date() },
+      context: { wheelRotation: s.wheelRotation, electricityLevel: s.electricityLevel },
+    }),
+    encode: (r) => ({
+      stateTag: r.state._tag,
+      wheelRotation: r.context.wheelRotation,
+      electricityLevel: r.context.electricityLevel,
+    }),
+  }
+);
+
+export const HamsterCodec = {
+  encode: (state: HamsterState, context: HamsterContext): SerializedHamster =>
+    Schema.encodeSync(HamsterStateSchema)({ state, context }),
+  decode: (s: SerializedHamster): { state: HamsterState; context: HamsterContext } =>
+    Schema.decodeSync(HamsterStateSchema)(s),
+};
+
+// ============================================================================
+// Door Schema
+// ============================================================================
+
+const WeatherSchema = Schema.Union(
+  Schema.Struct({ status: Schema.Literal("idle") }),
+  Schema.Struct({ status: Schema.Literal("loading") }),
+  Schema.Struct({
+    status: Schema.Literal("loaded"),
+    temp: Schema.Number,
+    desc: Schema.String,
+    icon: Schema.String,
+  }),
+  Schema.Struct({ status: Schema.Literal("error"), message: Schema.String })
+);
+
+const SerializedDoorSchema = Schema.Struct({
+  stateTag: Schema.Literal("Closed", "Opening", "PausedOpening", "Open", "Closing", "PausedClosing"),
+  position: Schema.Number,
+  isPowered: Schema.Boolean,
+  weather: WeatherSchema,
+});
+
+export type SerializedDoor = typeof SerializedDoorSchema.Type;
+
+const DoorStateSchema = Schema.transform(
+  SerializedDoorSchema,
+  Schema.Unknown as Schema.Schema<{ state: DoorState; context: DoorContext }>,
+  {
+    decode: (s) => {
+      const now = new Date();
+      const state: DoorState =
+        s.stateTag === "Closed" ? { _tag: "Closed" }
+        : s.stateTag === "Opening" ? { _tag: "Opening", startedAt: now }
+        : s.stateTag === "PausedOpening" ? { _tag: "PausedOpening", pausedAt: now }
+        : s.stateTag === "Open" ? { _tag: "Open", openedAt: now }
+        : s.stateTag === "Closing" ? { _tag: "Closing", startedAt: now }
+        : { _tag: "PausedClosing", pausedAt: now };
+      return {
+        state,
+        context: { position: s.position, isPowered: s.isPowered, weather: s.weather },
+      };
+    },
+    encode: (r) => ({
+      stateTag: r.state._tag,
+      position: r.context.position,
+      isPowered: r.context.isPowered,
+      weather: r.context.weather,
+    }),
+  }
+);
+
+export const DoorCodec = {
+  encode: (state: DoorState, context: DoorContext): SerializedDoor =>
+    Schema.encodeSync(DoorStateSchema)({ state, context }),
+  decode: (s: SerializedDoor): { state: DoorState; context: DoorContext } =>
+    Schema.decodeSync(DoorStateSchema)(s),
+};
+
+// ============================================================================
+// Dexie Database
+// ============================================================================
 
 export interface AppState {
   id: string;
@@ -29,10 +121,6 @@ export interface AppState {
   rightDoor: SerializedDoor;
   updatedAt: Date;
 }
-
-// ============================================================================
-// Dexie Database
-// ============================================================================
 
 const db = new Dexie("effstate-v3-demo") as Dexie & {
   appState: EntityTable<AppState, "id">;
@@ -43,64 +131,5 @@ db.version(1).stores({
 });
 
 export { db };
-
-// ============================================================================
-// Serialization Helpers
-// ============================================================================
-
-export function serializeHamster(state: HamsterState, context: HamsterContext): SerializedHamster {
-  return {
-    stateTag: state._tag,
-    wheelRotation: context.wheelRotation,
-    electricityLevel: context.electricityLevel,
-  };
-}
-
-export function serializeDoor(state: DoorState, context: DoorContext): SerializedDoor {
-  return {
-    stateTag: state._tag,
-    position: context.position,
-    isPowered: context.isPowered,
-    weather: context.weather,
-  };
-}
-
-export function deserializeHamsterState(serialized: SerializedHamster): HamsterState {
-  const now = new Date();
-  switch (serialized.stateTag) {
-    case "Idle": return { _tag: "Idle" };
-    case "Running": return { _tag: "Running", startedAt: now };
-    case "Stopping": return { _tag: "Stopping", stoppingAt: now };
-    default: return { _tag: "Idle" };
-  }
-}
-
-export function deserializeHamsterContext(serialized: SerializedHamster): HamsterContext {
-  return {
-    wheelRotation: serialized.wheelRotation,
-    electricityLevel: serialized.electricityLevel,
-  };
-}
-
-export function deserializeDoorState(serialized: SerializedDoor): DoorState {
-  const now = new Date();
-  switch (serialized.stateTag) {
-    case "Closed": return { _tag: "Closed" };
-    case "Opening": return { _tag: "Opening", startedAt: now };
-    case "PausedOpening": return { _tag: "PausedOpening", pausedAt: now };
-    case "Open": return { _tag: "Open", openedAt: now };
-    case "Closing": return { _tag: "Closing", startedAt: now };
-    case "PausedClosing": return { _tag: "PausedClosing", pausedAt: now };
-    default: return { _tag: "Closed" };
-  }
-}
-
-export function deserializeDoorContext(serialized: SerializedDoor): DoorContext {
-  return {
-    position: serialized.position,
-    isPowered: serialized.isPowered,
-    weather: serialized.weather,
-  };
-}
-
 export const STATE_ID = "app-state";
+

@@ -2,10 +2,8 @@
  * App State Hook - Thin Coordinator
  *
  * Composes domain hooks and wires up:
- * - Persistence (atomic save/load across domains)
+ * - Persistence (atomic save/load via Schema codecs)
  * - Cross-domain effects (hamster powers doors)
- *
- * Each domain hook is testable in isolation.
  */
 
 import { useEffect, useState } from "react";
@@ -17,12 +15,7 @@ import {
   dexieAdapter,
   isLeader,
 } from "./persistence/usePersistenceCoordinator";
-import {
-  deserializeHamsterState,
-  deserializeHamsterContext,
-  deserializeDoorState,
-  deserializeDoorContext,
-} from "@/lib/db";
+import { HamsterCodec, DoorCodec } from "@/lib/db";
 
 // ============================================================================
 // Types
@@ -47,22 +40,14 @@ export function useInitialSnapshots() {
   useEffect(() => {
     dexieAdapter.load().then((saved) => {
       if (saved) {
+        // Decode using Schema codecs
+        const hamster = HamsterCodec.decode(saved.hamster);
+        const leftDoor = DoorCodec.decode(saved.leftDoor);
+        const rightDoor = DoorCodec.decode(saved.rightDoor);
+
         setResult({
           loaded: true,
-          snapshots: {
-            hamster: {
-              state: deserializeHamsterState(saved.hamster),
-              context: deserializeHamsterContext(saved.hamster),
-            },
-            leftDoor: {
-              state: deserializeDoorState(saved.leftDoor),
-              context: deserializeDoorContext(saved.leftDoor),
-            },
-            rightDoor: {
-              state: deserializeDoorState(saved.rightDoor),
-              context: deserializeDoorContext(saved.rightDoor),
-            },
-          },
+          snapshots: { hamster, leftDoor, rightDoor },
         });
       } else {
         setResult({ loaded: true, snapshots: null });
