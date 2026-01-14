@@ -1,31 +1,15 @@
 /**
- * App - Demonstrating modular hooks + React Context for deep component communication
+ * App - React Context EventBus for deep component communication
  *
- * Key improvements over the original single-hook approach:
- *
- * 1. MODULAR HOOKS: Instead of one giant useAppState hook, we have:
- *    - useHamster: manages hamster state machine
- *    - useDoor: manages a single door (reusable for left/right)
- *    - usePersistenceCoordinator: ties them together for Dexie
- *
- * 2. REACT CONTEXT (EventBus): Components 5 levels deep can:
- *    - Dispatch events UP to the top level
- *    - Receive state changes DOWN from the top level
- *    - No prop drilling through intermediate levels!
+ * Shows how Level 5 components can dispatch events to Level 1
+ * using the same machine event classes (Toggle, Click, etc.)
  */
 
 import { HamsterWheelContent } from "@/components/HamsterWheel";
 import { GarageDoor } from "@/components/GarageDoor";
 import { Level1_Dashboard } from "@/components/DeepNesting";
-import { EventBusProvider } from "@/context/EventBus";
-import {
-  useInitialSnapshots,
-  useHamster,
-  useDoor,
-  usePersistenceCoordinator,
-  isLeader,
-  type InitialSnapshots,
-} from "@/hooks";
+import { EventBusProvider, useEventSubscription, type AppEvent } from "@/context/EventBus";
+import { useInitialSnapshots, useAppState, type InitialSnapshots } from "@/hooks/useAppState";
 import { cn } from "@/lib/utils";
 
 function App() {
@@ -39,7 +23,6 @@ function App() {
     );
   }
 
-  // Wrap with EventBusProvider for deep component communication
   return (
     <EventBusProvider>
       <AppContent initialSnapshots={snapshots} />
@@ -48,24 +31,35 @@ function App() {
 }
 
 function AppContent({ initialSnapshots }: { initialSnapshots: InitialSnapshots | null }) {
-  // Use MODULAR HOOKS instead of one giant useAppState
-  const hamster = useHamster(initialSnapshots?.hamster ?? null);
-  const leftDoor = useDoor(initialSnapshots?.leftDoor ?? null);
-  const rightDoor = useDoor(initialSnapshots?.rightDoor ?? null);
+  const { state, isLeader, toggleHamster, clickDoor } = useAppState(initialSnapshots);
 
-  // Coordinate persistence between all hooks
-  usePersistenceCoordinator({ hamster, leftDoor, rightDoor });
+  // Handle events from deep components via EventBus
+  useEventSubscription((appEvent: AppEvent) => {
+    switch (appEvent.target) {
+      case "hamster":
+        if (appEvent.event._tag === "Toggle") toggleHamster();
+        break;
+      case "leftDoor":
+        if (appEvent.event._tag === "Click") clickDoor("left");
+        break;
+      case "rightDoor":
+        if (appEvent.event._tag === "Click") clickDoor("right");
+        break;
+    }
+  });
+
+  const hasElectricity = state.hamster.context.electricityLevel > 0;
 
   return (
     <div
       className={cn(
         "min-h-screen w-full transition-all duration-1000 relative overflow-x-hidden",
-        hamster.isPowered ? "bg-gray-600" : "bg-gray-800"
+        hasElectricity ? "bg-gray-600" : "bg-gray-800"
       )}
     >
       {/* Leader indicator */}
       <div className="absolute top-2 right-2 text-xs text-gray-500">
-        {isLeader() ? "Leader" : "Follower"}
+        {isLeader ? "Leader" : "Follower"}
       </div>
 
       {/* Main content */}
@@ -73,64 +67,59 @@ function AppContent({ initialSnapshots }: { initialSnapshots: InitialSnapshots |
         <div
           className={cn(
             "rounded-lg transition-colors duration-500 w-full max-w-sm lg:w-auto",
-            hamster.isPowered ? "bg-gray-500/50" : "bg-gray-700/50"
+            hasElectricity ? "bg-gray-500/50" : "bg-gray-700/50"
           )}
         >
           <GarageDoor
-            doorState={leftDoor.state}
-            doorContext={leftDoor.context}
-            hasPower={hamster.isPowered}
+            doorState={state.leftDoor.state}
+            doorContext={state.leftDoor.context}
+            hasPower={hasElectricity}
             title="Left Garage"
             mobileTitle="Top Garage"
-            onClick={leftDoor.click}
-            onWakeHamster={hamster.toggle}
+            onClick={() => clickDoor("left")}
+            onWakeHamster={toggleHamster}
           />
         </div>
 
         <HamsterWheelContent
-          hamsterState={hamster.state}
-          hamsterContext={hamster.context}
-          onToggle={hamster.toggle}
+          hamsterState={state.hamster.state}
+          hamsterContext={state.hamster.context}
+          onToggle={toggleHamster}
         />
 
         <div
           className={cn(
             "rounded-lg transition-colors duration-500 w-full max-w-sm lg:w-auto",
-            hamster.isPowered ? "bg-gray-500/50" : "bg-gray-700/50"
+            hasElectricity ? "bg-gray-500/50" : "bg-gray-700/50"
           )}
         >
           <GarageDoor
-            doorState={rightDoor.state}
-            doorContext={rightDoor.context}
-            hasPower={hamster.isPowered}
+            doorState={state.rightDoor.state}
+            doorContext={state.rightDoor.context}
+            hasPower={hasElectricity}
             title="Right Garage"
             mobileTitle="Bottom Garage"
-            onClick={rightDoor.click}
-            onWakeHamster={hamster.toggle}
+            onClick={() => clickDoor("right")}
+            onWakeHamster={toggleHamster}
           />
         </div>
       </div>
 
-      {/* Deep Nesting Demo - Shows 5-level deep context communication */}
+      {/* Deep Nesting Demo */}
       <div className="px-4 pb-8 max-w-2xl mx-auto">
         <h2 className="text-lg font-semibold text-gray-300 mb-3">
           Deep Nesting Demo (5 Levels)
         </h2>
         <p className="text-sm text-gray-400 mb-4">
-          The controls below are 5 levels deep. They use React Context (EventBus)
-          to send events UP without prop drilling.
+          Level 5 dispatches machine events (Toggle, Click) via Context - no prop drilling.
         </p>
-        <Level1_Dashboard
-          hamsterIsPowered={hamster.isPowered}
-          onToggleHamster={hamster.toggle}
-          onClickDoor={(door) => (door === "left" ? leftDoor : rightDoor).click()}
-        />
+        <Level1_Dashboard hamsterIsPowered={hasElectricity} />
       </div>
 
       {/* Footer */}
       <div className="text-center pb-4">
         <p className="text-gray-400 text-xs md:text-sm px-4">
-          EffState v3 + React Context + Modular Hooks. Events flow both UP and DOWN.
+          EffState v3 + React Context. Events use same Data.TaggedClass as machines.
         </p>
       </div>
     </div>
