@@ -61,7 +61,7 @@ export function useAppState(snapshots: InitialSnapshots | null) {
   const doors = useDoors(snapshots?.leftDoor ?? null, snapshots?.rightDoor ?? null);
 
   // Persistence (matches working demo pattern)
-  const { isLeader: isLeaderNow } = useLoroSync({ hamster, doors });
+  const { isLeader: isLeaderNow, applyExternal, getState } = useLoroSync({ hamster, doors });
 
   // Cross-domain effect: hamster powers doors
   useActorWatch(
@@ -81,6 +81,8 @@ export function useAppState(snapshots: InitialSnapshots | null) {
     isLeader: isLeaderNow,
     toggleHamster: hamster.toggle,
     clickDoor: doors.click,
+    applyExternal,
+    getState,
   };
 }
 

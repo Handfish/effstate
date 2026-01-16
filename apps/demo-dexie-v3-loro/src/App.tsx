@@ -10,6 +10,7 @@ import { GarageDoor } from "@/components/GarageDoor";
 import { Level1_Dashboard } from "@/components/DeepNesting";
 import { EventBusProvider, useEventSubscription, type AppEvent } from "@/context/EventBus";
 import { useInitialSnapshots, useAppState, type InitialSnapshots } from "@/hooks/useAppState";
+import { useServerSync } from "@/hooks/useServerSync";
 import { cn } from "@/lib/utils";
 
 function App() {
@@ -31,7 +32,11 @@ function App() {
 }
 
 function AppContent({ initialSnapshots }: { initialSnapshots: InitialSnapshots | null }) {
-  const { state, isLeader, toggleHamster, clickDoor } = useAppState(initialSnapshots);
+  const { state, isLeader, toggleHamster, clickDoor, applyExternal, getState } = useAppState(initialSnapshots);
+  const serverSync = useServerSync({
+    onStateReceived: applyExternal,
+    getLocalState: getState,
+  });
 
   // Handle events from deep components via EventBus
   useEventSubscription((appEvent: AppEvent) => {
@@ -49,6 +54,7 @@ function AppContent({ initialSnapshots }: { initialSnapshots: InitialSnapshots |
   });
 
   const hasElectricity = state.hamster.context.electricityLevel > 0;
+  const { syncState, isActive, claimLeadership, startSync, stopSync } = serverSync;
 
   return (
     <div
@@ -57,9 +63,56 @@ function AppContent({ initialSnapshots }: { initialSnapshots: InitialSnapshots |
         hasElectricity ? "bg-gray-600" : "bg-gray-800"
       )}
     >
-      {/* Leader indicator */}
-      <div className="absolute top-2 right-2 text-xs text-gray-500">
-        {isLeader ? "Leader" : "Follower"}
+      {/* Server Sync Controls */}
+      <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
+        <div className="flex items-center gap-2">
+          {/* Sync toggle button */}
+          {!isActive ? (
+            <button
+              onClick={startSync}
+              className="px-2 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-500"
+            >
+              Start Sync
+            </button>
+          ) : syncState.isServerLeader ? (
+            <button
+              onClick={stopSync}
+              className="px-2 py-1 text-xs rounded bg-green-600 text-white hover:bg-green-500"
+            >
+              Broadcasting...
+            </button>
+          ) : (
+            <button
+              onClick={claimLeadership}
+              className="px-2 py-1 text-xs rounded bg-yellow-600 text-white hover:bg-yellow-500"
+            >
+              Take Control
+            </button>
+          )}
+
+          {/* Tab leader indicator */}
+          <span className="text-xs text-gray-500">
+            Tab: {isLeader ? "Leader" : "Follower"}
+          </span>
+        </div>
+
+        {/* Server sync status */}
+        {isActive && (
+          <div className="text-xs text-gray-400">
+            {syncState.isServerLeader ? (
+              <span className="text-green-400">Server Leader (v{syncState.serverVersion})</span>
+            ) : syncState.serverLeaderId ? (
+              <span className="text-yellow-400">
+                Following: {syncState.serverLeaderId.slice(0, 12)}...
+              </span>
+            ) : (
+              <span className="text-gray-500">No server leader</span>
+            )}
+            {syncState.lastError && (
+              <span className="text-red-400 ml-2">{syncState.lastError}</span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Main content */}

@@ -27,21 +27,19 @@ export interface PersistenceOptions {
 }
 
 export function useLoroSync({ hamster, doors }: PersistenceOptions) {
-  // Serialize all domains
+  // Serialize all domains - read from actors directly to get current state
   const serialize = useCallback(
-    (): AppStateSnapshot => ({
-      hamster: { state: hamster.state, context: hamster.context },
-      leftDoor: { state: doors.left.state, context: doors.left.context },
-      rightDoor: { state: doors.right.state, context: doors.right.context },
-    }),
-    [
-      hamster.state,
-      hamster.context,
-      doors.left.state,
-      doors.left.context,
-      doors.right.state,
-      doors.right.context,
-    ]
+    (): AppStateSnapshot => {
+      const hamsterSnap = hamster.actor.getSnapshot();
+      const leftDoorSnap = doors.left.actor.getSnapshot();
+      const rightDoorSnap = doors.right.actor.getSnapshot();
+      return {
+        hamster: { state: hamsterSnap.state, context: hamsterSnap.context },
+        leftDoor: { state: leftDoorSnap.state, context: leftDoorSnap.context },
+        rightDoor: { state: rightDoorSnap.state, context: rightDoorSnap.context },
+      };
+    },
+    [hamster.actor, doors.left.actor, doors.right.actor]
   );
 
   // Apply external state
@@ -87,5 +85,5 @@ export function useLoroSync({ hamster, doors }: PersistenceOptions) {
   // Cross-tab sync via liveQuery (same pattern as working demo)
   useDexieLiveQuery(dexieAdapter, applyExternal);
 
-  return { isLeader: isLeader() };
+  return { isLeader: isLeader(), applyExternal, getState: serialize };
 }

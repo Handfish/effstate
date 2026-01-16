@@ -38,6 +38,7 @@ export interface SyncResult {
   pushed: number; // Number of changes pushed
   pulled: boolean; // Whether we pulled new changes
   error?: string;
+  mergedState?: AppStateSnapshot; // The final merged state to apply
 }
 
 // ============================================================================
@@ -281,7 +282,10 @@ export async function pull(): Promise<SyncResult> {
     // Update sync meta
     await db.syncMeta.update(SYNC_META_ID, { lastPullAt: new Date() });
 
-    return { success: true, pushed: 0, pulled: true };
+    // Decode and return the merged state
+    const mergedState = decodeFromLoro(mergedSnapshot);
+
+    return { success: true, pushed: 0, pulled: true, mergedState };
   } catch (error) {
     return {
       success: false,
@@ -298,6 +302,7 @@ export async function pull(): Promise<SyncResult> {
 
 /**
  * Perform bidirectional sync: push local changes, then pull remote changes.
+ * Returns the merged state so callers can apply it to the UI.
  */
 export async function sync(): Promise<SyncResult> {
   const pushResult = await push();
@@ -311,6 +316,7 @@ export async function sync(): Promise<SyncResult> {
     pushed: pushResult.pushed,
     pulled: pullResult.pulled,
     error: pullResult.error,
+    mergedState: pullResult.mergedState,
   };
 }
 
