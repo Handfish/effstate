@@ -1,15 +1,16 @@
 /**
- * App State Hook (matches working demo pattern exactly)
+ * App State Hook
  *
- * Uses Loro for storage format but same simple patterns
- * as demo-dexie-v3-deeply-nested.
+ * Coordinates domain state (hamster, doors) with persistence and sync.
+ * - Tab Leader: Which tab writes to IndexedDB (cross-tab sync)
+ * - Server Leader: Which client pushes to server (cross-browser sync)
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useActorWatch } from "@effstate/react/v3";
 import { useHamster, type HamsterSnapshot } from "./domains/useHamster";
 import { useDoors, type DoorSnapshot } from "./domains/useDoors";
-import { useLoroSync, dexieAdapter, isLeader } from "./persistence/usePersistenceCoordinator";
+import { useLoroSync, dexieAdapter, isTabLeader } from "./persistence/usePersistenceCoordinator";
 
 // ============================================================================
 // Types
@@ -55,13 +56,21 @@ export function useInitialSnapshots() {
 // Main Coordinator Hook
 // ============================================================================
 
-export function useAppState(snapshots: InitialSnapshots | null) {
-  // Domain hooks
-  const hamster = useHamster(snapshots?.hamster ?? null);
-  const doors = useDoors(snapshots?.leftDoor ?? null, snapshots?.rightDoor ?? null);
+export interface UseAppStateOptions {
+  initialSnapshots: InitialSnapshots | null;
+  /** Called before any user action - use to auto-claim server leadership */
+  onBeforeAction?: () => void;
+}
 
-  // Persistence (matches working demo pattern)
-  const { isLeader: isLeaderNow, applyExternal, getState } = useLoroSync({ hamster, doors });
+export function useAppState(options: UseAppStateOptions) {
+  const { initialSnapshots, onBeforeAction } = options;
+
+  // Domain hooks
+  const hamster = useHamster(initialSnapshots?.hamster ?? null);
+  const doors = useDoors(initialSnapshots?.leftDoor ?? null, initialSnapshots?.rightDoor ?? null);
+
+  // Persistence (cross-tab sync via Dexie)
+  const { isTabLeader: isTabLeaderNow, applyExternal, getState } = useLoroSync({ hamster, doors });
 
   // Cross-domain effect: hamster powers doors
   useActorWatch(
@@ -69,6 +78,17 @@ export function useAppState(snapshots: InitialSnapshots | null) {
     (snap) => snap.context.electricityLevel > 0,
     doors.setPower
   );
+
+  // Wrap actions to call onBeforeAction first (for auto-claiming server leadership)
+  const toggleHamster = useCallback(() => {
+    onBeforeAction?.();
+    hamster.toggle();
+  }, [onBeforeAction, hamster]);
+
+  const clickDoor = useCallback((door: "left" | "right") => {
+    onBeforeAction?.();
+    doors.click(door);
+  }, [onBeforeAction, doors]);
 
   return {
     hamster,
@@ -78,16 +98,17 @@ export function useAppState(snapshots: InitialSnapshots | null) {
       leftDoor: { state: doors.left.state, context: doors.left.context },
       rightDoor: { state: doors.right.state, context: doors.right.context },
     },
-    isLeader: isLeaderNow,
-    toggleHamster: hamster.toggle,
-    clickDoor: doors.click,
+    /** Is this tab the leader for cross-tab sync (Dexie/IndexedDB)? */
+    isTabLeader: isTabLeaderNow,
+    toggleHamster,
+    clickDoor,
     applyExternal,
     getState,
   };
 }
 
 // Re-export for convenience
-export { isLeader };
+export { isTabLeader };
 export {
   getHamsterStateLabel,
   getHamsterButtonLabel,

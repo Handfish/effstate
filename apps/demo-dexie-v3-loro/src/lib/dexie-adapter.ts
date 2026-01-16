@@ -11,7 +11,7 @@ import { useEffect, useRef } from "react";
 import {
   db,
   STATE_ID,
-  isLeader,
+  isTabLeader,
   encodeToLoro,
   decodeFromLoro,
   type AppState,
@@ -44,7 +44,7 @@ export function createDexieAdapter(): DexieLoroAdapter {
 
     // Cross-tab sync handled by useDexieLiveQuery
     subscribe: () => () => {},
-    isLeader,
+    isLeader: isTabLeader,
   };
 }
 
@@ -61,11 +61,11 @@ export function useDexieLiveQuery(
 
   useEffect(() => {
     if (!savedState || savedState === prevRef.current) return;
-    if (isLeader()) return; // Leader doesn't sync from external
+    if (isTabLeader()) return; // Tab leader doesn't sync from external (it's the source)
 
     prevRef.current = savedState;
     onExternalChange(decodeFromLoro(savedState.snapshot));
   }, [savedState, onExternalChange]);
 }
 
-export { isLeader };
+export { isTabLeader };

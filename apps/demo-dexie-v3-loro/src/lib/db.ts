@@ -206,24 +206,25 @@ export const STATE_ID = "app-state";
 export const SYNC_META_ID = "sync-meta";
 
 // ============================================================================
-// Leader Election (same as working demo)
+// Tab Leader Election (cross-tab coordination via localStorage)
 // ============================================================================
 
-const LEADER_KEY = "effstate-v3-loro:leader";
+const TAB_LEADER_KEY = "effstate-v3-loro:tab-leader";
 const windowId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-function claimLeadership() {
-  localStorage.setItem(LEADER_KEY, windowId);
+function claimTabLeadership() {
+  localStorage.setItem(TAB_LEADER_KEY, windowId);
 }
 
-export function isLeader(): boolean {
-  return localStorage.getItem(LEADER_KEY) === windowId;
+/** Is this tab the leader for cross-tab sync (Dexie)? */
+export function isTabLeader(): boolean {
+  return localStorage.getItem(TAB_LEADER_KEY) === windowId;
 }
 
 if (typeof window !== "undefined") {
-  claimLeadership();
-  window.addEventListener("focus", claimLeadership);
+  claimTabLeadership();
+  window.addEventListener("focus", claimTabLeadership);
   window.addEventListener("beforeunload", () => {
-    if (isLeader()) localStorage.removeItem(LEADER_KEY);
+    if (isTabLeader()) localStorage.removeItem(TAB_LEADER_KEY);
   });
 }

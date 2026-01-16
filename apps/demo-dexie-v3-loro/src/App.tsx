@@ -1,10 +1,10 @@
 /**
- * App - React Context EventBus for deep component communication
- *
- * Shows how Level 5 components can dispatch events to Level 1
- * using the same machine event classes (Toggle, Click, etc.)
+ * App - Demonstrates two levels of leadership:
+ * - Tab Leader: Cross-tab sync via Dexie/IndexedDB (focused tab writes)
+ * - Server Leader: Cross-browser sync via server (first to interact broadcasts)
  */
 
+import { useCallback, useEffect, useRef } from "react";
 import { HamsterWheelContent } from "@/components/HamsterWheel";
 import { GarageDoor } from "@/components/GarageDoor";
 import { Level1_Dashboard } from "@/components/DeepNesting";
@@ -32,10 +32,32 @@ function App() {
 }
 
 function AppContent({ initialSnapshots }: { initialSnapshots: InitialSnapshots | null }) {
-  const { state, isLeader, toggleHamster, clickDoor, applyExternal, getState } = useAppState(initialSnapshots);
+  // Need ref to access serverSync before it's defined (for onBeforeAction)
+  const serverSyncRef = useRef<ReturnType<typeof useServerSync> | null>(null);
+
+  // Auto-claim server leadership when user interacts (if syncing but not already leader)
+  const handleBeforeAction = useCallback(() => {
+    const sync = serverSyncRef.current;
+    if (sync?.isActive && !sync.syncState.isServerLeader) {
+      sync.claimLeadership();
+    }
+  }, []);
+
+  // App state with auto-leadership claim on user actions
+  const { state, isTabLeader, toggleHamster, clickDoor, applyExternal, getState } = useAppState({
+    initialSnapshots,
+    onBeforeAction: handleBeforeAction,
+  });
+
+  // Server sync (cross-browser)
   const serverSync = useServerSync({
     onStateReceived: applyExternal,
     getLocalState: getState,
+  });
+
+  // Keep ref updated for handleBeforeAction
+  useEffect(() => {
+    serverSyncRef.current = serverSync;
   });
 
   // Handle events from deep components via EventBus
@@ -55,6 +77,7 @@ function AppContent({ initialSnapshots }: { initialSnapshots: InitialSnapshots |
 
   const hasElectricity = state.hamster.context.electricityLevel > 0;
   const { syncState, isActive, claimLeadership, startSync, stopSync } = serverSync;
+  const isServerLeader = syncState.isServerLeader;
 
   return (
     <div
@@ -63,10 +86,10 @@ function AppContent({ initialSnapshots }: { initialSnapshots: InitialSnapshots |
         hasElectricity ? "bg-gray-600" : "bg-gray-800"
       )}
     >
-      {/* Server Sync Controls */}
+      {/* Sync Status Panel */}
       <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
         <div className="flex items-center gap-2">
-          {/* Sync toggle button */}
+          {/* Server sync button */}
           {!isActive ? (
             <button
               onClick={startSync}
@@ -74,7 +97,7 @@ function AppContent({ initialSnapshots }: { initialSnapshots: InitialSnapshots |
             >
               Start Sync
             </button>
-          ) : syncState.isServerLeader ? (
+          ) : isServerLeader ? (
             <button
               onClick={stopSync}
               className="px-2 py-1 text-xs rounded bg-green-600 text-white hover:bg-green-500"
@@ -90,23 +113,23 @@ function AppContent({ initialSnapshots }: { initialSnapshots: InitialSnapshots |
             </button>
           )}
 
-          {/* Tab leader indicator */}
+          {/* Tab leader indicator (cross-tab via IndexedDB) */}
           <span className="text-xs text-gray-500">
-            Tab: {isLeader ? "Leader" : "Follower"}
+            Tab: {isTabLeader ? "Leader" : "Follower"}
           </span>
         </div>
 
-        {/* Server sync status */}
+        {/* Server sync status (cross-browser via server) */}
         {isActive && (
           <div className="text-xs text-gray-400">
-            {syncState.isServerLeader ? (
+            {isServerLeader ? (
               <span className="text-green-400">Server Leader (v{syncState.serverVersion})</span>
             ) : syncState.serverLeaderId ? (
               <span className="text-yellow-400">
-                Following: {syncState.serverLeaderId.slice(0, 12)}...
+                Following: {syncState.serverLeaderId.slice(0, 8)}...
               </span>
             ) : (
-              <span className="text-gray-500">No server leader</span>
+              <span className="text-gray-500">Waiting for leader...</span>
             )}
             {syncState.lastError && (
               <span className="text-red-400 ml-2">{syncState.lastError}</span>

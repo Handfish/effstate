@@ -67,15 +67,8 @@ export function useServerSync(options: UseServerSyncOptions = {}): ServerSyncCon
   // Initialize the sync service with wrapper functions that use refs
   useEffect(() => {
     initialize(
-      (state) => {
-        console.log("[useServerSync] Received state from server:", state);
-        onStateReceivedRef.current?.(state);
-      },
-      () => {
-        const state = getLocalStateRef.current?.();
-        console.log("[useServerSync] Getting local state:", state);
-        return state!;
-      }
+      (state) => onStateReceivedRef.current?.(state),
+      () => getLocalStateRef.current?.()!
     );
   }, []);
 
@@ -84,21 +77,29 @@ export function useServerSync(options: UseServerSyncOptions = {}): ServerSyncCon
     return subscribeSyncState(setSyncState);
   }, []);
 
-  // Auto-push when leader and state changes
-  const prevStateRef = useRef<string | null>(null);
+  // Auto-push when server leader and state changes
+  const prevHashRef = useRef<string | null>(null);
   useEffect(() => {
     if (!syncState.isServerLeader || !getLocalState) return;
 
     const interval = setInterval(async () => {
       const current = getLocalState();
-      const serialized = JSON.stringify(current);
+      // Use stable hash of primitive values (JSON.stringify can vary for Effect classes)
+      const hash = [
+        current.hamster.state._tag,
+        current.hamster.context.electricityLevel,
+        current.hamster.context.wheelRotation,
+        current.leftDoor.state._tag,
+        current.leftDoor.context.position,
+        current.rightDoor.state._tag,
+        current.rightDoor.context.position,
+      ].join("|");
 
-      if (serialized !== prevStateRef.current) {
-        prevStateRef.current = serialized;
-        console.log("[useServerSync] State changed, pushing...");
+      if (hash !== prevHashRef.current) {
+        prevHashRef.current = hash;
         await push();
       }
-    }, 500); // Check for changes every 500ms
+    }, 500);
 
     return () => clearInterval(interval);
   }, [syncState.isServerLeader, getLocalState]);

@@ -10,7 +10,7 @@ import { usePersistence } from "@effstate/react/v3";
 import {
   createDexieAdapter,
   useDexieLiveQuery,
-  isLeader,
+  isTabLeader,
 } from "@/lib/dexie-adapter";
 import type { AppStateSnapshot } from "@/lib/db";
 import type { HamsterDomain } from "../domains/useHamster";
@@ -19,7 +19,7 @@ import type { DoorsDomain } from "../domains/useDoors";
 // Singleton adapter (same as working demo)
 const dexieAdapter = createDexieAdapter();
 
-export { dexieAdapter, isLeader };
+export { dexieAdapter, isTabLeader };
 
 export interface PersistenceOptions {
   hamster: HamsterDomain;
@@ -85,5 +85,5 @@ export function useLoroSync({ hamster, doors }: PersistenceOptions) {
   // Cross-tab sync via liveQuery (same pattern as working demo)
   useDexieLiveQuery(dexieAdapter, applyExternal);
 
-  return { isLeader: isLeader(), applyExternal, getState: serialize };
+  return { isTabLeader: isTabLeader(), applyExternal, getState: serialize };
 }
