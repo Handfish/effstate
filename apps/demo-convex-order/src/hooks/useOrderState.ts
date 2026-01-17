@@ -62,6 +62,7 @@ export interface UseOrderStateResult {
   pendingMutations: number;
   serverState: ConvexOrderState | null;
   serverTotal: number | null;
+  lastEventType: TimelineEvent["type"] | null;
 }
 
 let eventIdCounter = 0;
@@ -75,6 +76,7 @@ export function useOrderState(convexOrder: ConvexOrder): UseOrderStateResult {
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
   const [pendingMutations, setPendingMutations] = useState(0);
+  const [lastEventType, setLastEventType] = useState<TimelineEvent["type"] | null>(null);
 
   // Create machine with initial snapshot from Convex
   const initialSnapshot = convexOrderToSnapshot(convexOrder);
@@ -94,6 +96,7 @@ export function useOrderState(convexOrder: ConvexOrder): UseOrderStateResult {
       ...prev.slice(-49), // Keep last 50 events
       { ...event, id: `evt-${++eventIdCounter}`, timestamp: new Date() },
     ]);
+    setLastEventType(event.type);
   }, []);
 
   // Sync from Convex when data changes
@@ -254,6 +257,7 @@ export function useOrderState(convexOrder: ConvexOrder): UseOrderStateResult {
     pendingMutations,
     serverState: serverStateRef.current,
     serverTotal: serverTotalRef.current,
+    lastEventType,
   };
 }
 
