@@ -1,8 +1,13 @@
 import { useState, useCallback } from "react";
 import { useMutation } from "convex/react";
+import { Effect, pipe } from "effect";
 import { api } from "../../convex/_generated/api";
 import { cn } from "@/lib/utils";
 import type { ConvexOrderState } from "@/lib/convex-adapter";
+
+// ============================================================================
+// Types
+// ============================================================================
 
 interface ConflictSimulatorProps {
   orderId: string;
@@ -10,76 +15,79 @@ interface ConflictSimulatorProps {
   className?: string;
 }
 
+interface Simulation {
+  readonly label: string;
+  readonly description: string;
+  readonly state: ConvexOrderState;
+  readonly color: string;
+  readonly available: boolean;
+}
+
+// ============================================================================
+// Simulation Definitions
+// ============================================================================
+
+const createSimulations = (currentState: string): readonly Simulation[] => [
+  {
+    label: "Force → Processing",
+    description: "Simulate admin starting processing",
+    state: { _tag: "Processing", startedAt: Date.now() },
+    color: "from-yellow-600 to-amber-600",
+    available: currentState === "Cart" || currentState === "Checkout",
+  },
+  {
+    label: "Force → Shipped",
+    description: "Simulate warehouse shipping order",
+    state: { _tag: "Shipped", trackingNumber: "SIM-" + Date.now(), shippedAt: Date.now() },
+    color: "from-purple-600 to-violet-600",
+    available: currentState === "Processing",
+  },
+  {
+    label: "Force → Delivered",
+    description: "Simulate delivery confirmation",
+    state: { _tag: "Delivered", deliveredAt: Date.now() },
+    color: "from-green-600 to-emerald-600",
+    available: currentState === "Shipped",
+  },
+  {
+    label: "Force → Cancelled",
+    description: "Simulate admin cancellation",
+    state: { _tag: "Cancelled", reason: "Simulated server cancellation", cancelledAt: Date.now() },
+    color: "from-red-600 to-rose-600",
+    available: currentState === "Cart" || currentState === "Checkout" || currentState === "Processing",
+  },
+];
+
+// ============================================================================
+// Component
+// ============================================================================
+
 export function ConflictSimulator({ orderId, currentState, className }: ConflictSimulatorProps) {
   const [isSimulating, setIsSimulating] = useState(false);
   const [lastAction, setLastAction] = useState<string | null>(null);
   const updateStateMutation = useMutation(api.functions.orders.updateOrderState);
 
   const simulateServerChange = useCallback(
-    async (targetState: ConvexOrderState, actionName: string) => {
+    (targetState: ConvexOrderState, actionName: string) => {
       setIsSimulating(true);
       setLastAction(actionName);
 
-      try {
+      const program = pipe(
         // Directly update server state, bypassing local EffState
         // This simulates another client or server process changing state
-        await updateStateMutation({
-          orderId,
-          state: targetState,
-        });
-      } finally {
-        setTimeout(() => {
-          setIsSimulating(false);
-        }, 500);
-      }
+        Effect.promise(() => updateStateMutation({ orderId, state: targetState })),
+        // Brief delay before clearing simulation state
+        Effect.flatMap(() => Effect.sleep(500)),
+        // Always clear simulating state when done
+        Effect.ensuring(Effect.sync(() => setIsSimulating(false)))
+      );
+
+      Effect.runPromise(program);
     },
     [orderId, updateStateMutation]
   );
 
-  // Determine available conflict simulations based on current state
-  const getAvailableSimulations = () => {
-    const simulations: Array<{
-      label: string;
-      description: string;
-      state: ConvexOrderState;
-      color: string;
-      available: boolean;
-    }> = [
-      {
-        label: "Force → Processing",
-        description: "Simulate admin starting processing",
-        state: { _tag: "Processing", startedAt: Date.now() },
-        color: "from-yellow-600 to-amber-600",
-        available: currentState === "Cart" || currentState === "Checkout",
-      },
-      {
-        label: "Force → Shipped",
-        description: "Simulate warehouse shipping order",
-        state: { _tag: "Shipped", trackingNumber: "SIM-" + Date.now(), shippedAt: Date.now() },
-        color: "from-purple-600 to-violet-600",
-        available: currentState === "Processing",
-      },
-      {
-        label: "Force → Delivered",
-        description: "Simulate delivery confirmation",
-        state: { _tag: "Delivered", deliveredAt: Date.now() },
-        color: "from-green-600 to-emerald-600",
-        available: currentState === "Shipped",
-      },
-      {
-        label: "Force → Cancelled",
-        description: "Simulate admin cancellation",
-        state: { _tag: "Cancelled", reason: "Simulated server cancellation", cancelledAt: Date.now() },
-        color: "from-red-600 to-rose-600",
-        available:
-          currentState === "Cart" || currentState === "Checkout" || currentState === "Processing",
-      },
-    ];
-
-    return simulations.filter((s) => s.available);
-  };
-
-  const availableSimulations = getAvailableSimulations();
+  const availableSimulations = createSimulations(currentState).filter((s) => s.available);
 
   if (availableSimulations.length === 0) {
     return (

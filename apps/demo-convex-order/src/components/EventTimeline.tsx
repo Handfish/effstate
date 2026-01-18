@@ -1,3 +1,4 @@
+import { Match, pipe } from "effect";
 import { cn } from "@/lib/utils";
 import { useRef, useEffect } from "react";
 import type { TimelineEvent } from "@/hooks/useOrderState";
@@ -5,40 +6,71 @@ import type { TimelineEvent } from "@/hooks/useOrderState";
 // Re-export for convenience
 export type { TimelineEvent };
 
+// ============================================================================
+// Event Type Styling (Match-based)
+// ============================================================================
+
+type EventType = TimelineEvent["type"];
+
+interface EventTypeStyle {
+  readonly color: string;
+  readonly bgColor: string;
+  readonly border: string;
+  readonly icon: string;
+  readonly label: string;
+}
+
+/** Get style configuration for an event type */
+const getEventStyle = (type: EventType): EventTypeStyle =>
+  pipe(
+    Match.value(type),
+    Match.when("optimistic", () => ({
+      color: "text-yellow-400",
+      bgColor: "bg-yellow-500/20",
+      border: "border-yellow-500",
+      icon: "O",
+      label: "Optimistic Update",
+    })),
+    Match.when("server_confirmed", () => ({
+      color: "text-green-400",
+      bgColor: "bg-green-500/20",
+      border: "border-green-500",
+      icon: "C",
+      label: "Server Confirmed",
+    })),
+    Match.when("server_correction", () => ({
+      color: "text-red-400",
+      bgColor: "bg-red-500/20",
+      border: "border-red-500",
+      icon: "!",
+      label: "Server Correction",
+    })),
+    Match.when("external_update", () => ({
+      color: "text-purple-400",
+      bgColor: "bg-purple-500/20",
+      border: "border-purple-500",
+      icon: "S",
+      label: "External Sync",
+    })),
+    Match.exhaustive
+  );
+
+/** All event types for legend rendering */
+const eventTypes: readonly EventType[] = [
+  "optimistic",
+  "server_confirmed",
+  "server_correction",
+  "external_update",
+];
+
+// ============================================================================
+// Component
+// ============================================================================
+
 interface EventTimelineProps {
   events: TimelineEvent[];
   className?: string;
 }
-
-const typeConfig: Record<
-  TimelineEvent["type"],
-  { color: string; bgColor: string; icon: string; label: string }
-> = {
-  optimistic: {
-    color: "text-yellow-400",
-    bgColor: "bg-yellow-500/20",
-    icon: "O",
-    label: "Optimistic Update",
-  },
-  server_confirmed: {
-    color: "text-green-400",
-    bgColor: "bg-green-500/20",
-    icon: "C",
-    label: "Server Confirmed",
-  },
-  server_correction: {
-    color: "text-red-400",
-    bgColor: "bg-red-500/20",
-    icon: "!",
-    label: "Server Correction",
-  },
-  external_update: {
-    color: "text-purple-400",
-    bgColor: "bg-purple-500/20",
-    icon: "S",
-    label: "External Sync",
-  },
-};
 
 export function EventTimeline({ events, className }: EventTimelineProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -60,20 +92,23 @@ export function EventTimeline({ events, className }: EventTimelineProps) {
 
       {/* Legend */}
       <div className="flex flex-wrap gap-3 mb-3 text-xs">
-        {Object.entries(typeConfig).map(([key, config]) => (
-          <div key={key} className="flex items-center gap-1">
-            <span
-              className={cn(
-                "w-4 h-4 rounded flex items-center justify-center text-[10px] font-bold",
-                config.bgColor,
-                config.color
-              )}
-            >
-              {config.icon}
-            </span>
-            <span className="text-gray-500">{config.label}</span>
-          </div>
-        ))}
+        {eventTypes.map((type) => {
+          const style = getEventStyle(type);
+          return (
+            <div key={type} className="flex items-center gap-1">
+              <span
+                className={cn(
+                  "w-4 h-4 rounded flex items-center justify-center text-[10px] font-bold",
+                  style.bgColor,
+                  style.color
+                )}
+              >
+                {style.icon}
+              </span>
+              <span className="text-gray-500">{style.label}</span>
+            </div>
+          );
+        })}
       </div>
 
       {/* Timeline */}
@@ -87,34 +122,28 @@ export function EventTimeline({ events, className }: EventTimelineProps) {
           </div>
         ) : (
           events.map((event) => {
-            const config = typeConfig[event.type];
+            const style = getEventStyle(event.type);
             return (
               <div
                 key={event.id}
                 className={cn(
                   "flex items-start gap-3 p-2 rounded border-l-2 transition-all",
-                  config.bgColor,
-                  event.type === "server_correction"
-                    ? "border-red-500"
-                    : event.type === "server_confirmed"
-                      ? "border-green-500"
-                      : event.type === "optimistic"
-                        ? "border-yellow-500"
-                        : "border-purple-500"
+                  style.bgColor,
+                  style.border
                 )}
               >
                 <span
                   className={cn(
                     "w-6 h-6 rounded flex items-center justify-center text-xs font-bold shrink-0",
-                    config.bgColor,
-                    config.color
+                    style.bgColor,
+                    style.color
                   )}
                 >
-                  {config.icon}
+                  {style.icon}
                 </span>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className={cn("font-mono text-sm font-medium", config.color)}>
+                    <span className={cn("font-mono text-sm font-medium", style.color)}>
                       {event.eventTag ?? event.type}
                     </span>
                     <span className="text-xs text-gray-500">
@@ -128,7 +157,7 @@ export function EventTimeline({ events, className }: EventTimelineProps) {
                   <div className="text-xs text-gray-400 mt-0.5">
                     <span className="text-gray-500">{event.fromState}</span>
                     <span className="mx-1 text-gray-600">→</span>
-                    <span className={config.color}>{event.toState}</span>
+                    <span className={style.color}>{event.toState}</span>
                   </div>
                   {event.details && (
                     <div className="text-xs text-gray-500 mt-1 font-mono">{event.details}</div>

@@ -5,7 +5,7 @@
  *         (can be Cancelled from Cart, Checkout, Processing)
  */
 
-import { Data, Schema } from "effect";
+import { Data, Match, pipe, Schema } from "effect";
 import { defineMachine, type MachineActor, type MachineSnapshot } from "effstate/v3";
 
 // ============================================================================
@@ -229,47 +229,43 @@ export type OrderActor = MachineActor<OrderState, OrderContext, OrderEvent>;
 export type OrderSnapshot = MachineSnapshot<OrderState, OrderContext>;
 
 // ============================================================================
-// State Helpers
+// State Helpers (Match-based for exhaustive pattern matching)
 // ============================================================================
 
-export function getOrderStateLabel(state: OrderState): string {
-  switch (state._tag) {
-    case "Cart":
-      return "In Cart";
-    case "Checkout":
-      return "Checkout";
-    case "Processing":
-      return "Processing";
-    case "Shipped":
-      return "Shipped";
-    case "Delivered":
-      return "Delivered";
-    case "Cancelled":
-      return "Cancelled";
-  }
-}
+export const getOrderStateLabel = (state: OrderState): string =>
+  pipe(
+    Match.value(state),
+    Match.tag("Cart", () => "In Cart"),
+    Match.tag("Checkout", () => "Checkout"),
+    Match.tag("Processing", () => "Processing"),
+    Match.tag("Shipped", () => "Shipped"),
+    Match.tag("Delivered", () => "Delivered"),
+    Match.tag("Cancelled", () => "Cancelled"),
+    Match.exhaustive
+  );
 
-export function getOrderStateColor(state: OrderState): string {
-  switch (state._tag) {
-    case "Cart":
-      return "bg-gray-500";
-    case "Checkout":
-      return "bg-blue-500";
-    case "Processing":
-      return "bg-yellow-500";
-    case "Shipped":
-      return "bg-purple-500";
-    case "Delivered":
-      return "bg-green-500";
-    case "Cancelled":
-      return "bg-red-500";
-  }
-}
+export const getOrderStateColor = (state: OrderState): string =>
+  pipe(
+    Match.value(state),
+    Match.tag("Cart", () => "bg-gray-500"),
+    Match.tag("Checkout", () => "bg-blue-500"),
+    Match.tag("Processing", () => "bg-yellow-500"),
+    Match.tag("Shipped", () => "bg-purple-500"),
+    Match.tag("Delivered", () => "bg-green-500"),
+    Match.tag("Cancelled", () => "bg-red-500"),
+    Match.exhaustive
+  );
 
-export function canCancel(state: OrderState): boolean {
-  return state._tag === "Cart" || state._tag === "Checkout" || state._tag === "Processing";
-}
+/** States that can be cancelled */
+const CancellableStates = ["Cart", "Checkout", "Processing"] as const;
+const isCancellable = (tag: string): tag is (typeof CancellableStates)[number] =>
+  (CancellableStates as readonly string[]).includes(tag);
 
-export function isTerminalState(state: OrderState): boolean {
-  return state._tag === "Delivered" || state._tag === "Cancelled";
-}
+export const canCancel = (state: OrderState): boolean => isCancellable(state._tag);
+
+/** Terminal states (no further transitions) */
+const TerminalStates = ["Delivered", "Cancelled"] as const;
+const isTerminal = (tag: string): tag is (typeof TerminalStates)[number] =>
+  (TerminalStates as readonly string[]).includes(tag);
+
+export const isTerminalState = (state: OrderState): boolean => isTerminal(state._tag);

@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { getStateBg, type StateTag } from "@/lib/state-styles";
 import type { OrderState, OrderContext } from "@/machines/order";
 import type { ConvexOrderState } from "@/lib/convex-adapter";
 
@@ -12,6 +13,10 @@ interface SyncStatusPanelProps {
   pendingMutations: number;
   className?: string;
 }
+
+/** Check if a string is a valid StateTag */
+const isValidStateTag = (tag: string): tag is StateTag =>
+  ["Cart", "Checkout", "Processing", "Shipped", "Delivered", "Cancelled"].includes(tag);
 
 function StateDisplay({
   label,
@@ -28,14 +33,7 @@ function StateDisplay({
   isSource: "local" | "server";
   highlight: boolean;
 }) {
-  const stateColorMap: Record<string, string> = {
-    Cart: "bg-gray-500",
-    Checkout: "bg-blue-500",
-    Processing: "bg-yellow-500",
-    Shipped: "bg-purple-500",
-    Delivered: "bg-green-500",
-    Cancelled: "bg-red-500",
-  };
+  const bgColor = isValidStateTag(stateTag) ? getStateBg(stateTag) : "bg-gray-600";
 
   return (
     <div
@@ -68,12 +66,7 @@ function StateDisplay({
       <div className="space-y-2">
         <div className="flex items-center gap-2">
           <span className="text-xs text-gray-500">State:</span>
-          <span
-            className={cn(
-              "px-2 py-0.5 rounded text-xs font-medium text-white",
-              stateColorMap[stateTag] ?? "bg-gray-600"
-            )}
-          >
+          <span className={cn("px-2 py-0.5 rounded text-xs font-medium text-white", bgColor)}>
             {stateTag}
           </span>
         </div>
