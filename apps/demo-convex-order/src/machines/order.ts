@@ -5,36 +5,65 @@
  *         (can be Cancelled from Cart, Checkout, Processing)
  */
 
-import { Data, Match, pipe, Schema } from "effect";
+import { Brand, Data, Match, pipe, Schema } from "effect";
 import { defineMachine, type MachineActor, type MachineSnapshot } from "effstate/v3";
 
 // ============================================================================
-// State (Discriminated Union)
+// Branded Types (Type-safe domain primitives)
 // ============================================================================
 
-export type OrderState =
-  | { readonly _tag: "Cart" }
-  | { readonly _tag: "Checkout" }
-  | { readonly _tag: "Processing"; readonly startedAt: Date }
-  | { readonly _tag: "Shipped"; readonly trackingNumber: string; readonly shippedAt: Date }
-  | { readonly _tag: "Delivered"; readonly deliveredAt: Date }
-  | { readonly _tag: "Cancelled"; readonly reason: string; readonly cancelledAt: Date };
+export type OrderId = string & Brand.Brand<"OrderId">;
+export type ItemId = string & Brand.Brand<"ItemId">;
+export type Price = number & Brand.Brand<"Price">;
+export type Quantity = number & Brand.Brand<"Quantity">;
 
+export const OrderId = Brand.nominal<OrderId>();
+export const ItemId = Brand.nominal<ItemId>();
+export const Price = Brand.nominal<Price>();
+export const Quantity = Brand.nominal<Quantity>();
+
+/** Generate a new OrderId */
+export const generateOrderId = (): OrderId =>
+  OrderId(`ORD-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`);
+
+// ============================================================================
+// State (Data.TaggedClass - symmetric with Events)
+// ============================================================================
+
+export class Cart extends Data.TaggedClass("Cart")<{}> {}
+
+export class Checkout extends Data.TaggedClass("Checkout")<{}> {}
+
+export class Processing extends Data.TaggedClass("Processing")<{
+  readonly startedAt: Date;
+}> {}
+
+export class Shipped extends Data.TaggedClass("Shipped")<{
+  readonly trackingNumber: string;
+  readonly shippedAt: Date;
+}> {}
+
+export class Delivered extends Data.TaggedClass("Delivered")<{
+  readonly deliveredAt: Date;
+}> {}
+
+export class Cancelled extends Data.TaggedClass("Cancelled")<{
+  readonly reason: string;
+  readonly cancelledAt: Date;
+}> {}
+
+export type OrderState = Cart | Checkout | Processing | Shipped | Delivered | Cancelled;
+
+/** Factory functions for backward compatibility */
 export const OrderState = {
-  Cart: (): OrderState => ({ _tag: "Cart" }),
-  Checkout: (): OrderState => ({ _tag: "Checkout" }),
-  Processing: (startedAt: Date = new Date()): OrderState => ({ _tag: "Processing", startedAt }),
-  Shipped: (trackingNumber: string, shippedAt: Date = new Date()): OrderState => ({
-    _tag: "Shipped",
-    trackingNumber,
-    shippedAt,
-  }),
-  Delivered: (deliveredAt: Date = new Date()): OrderState => ({ _tag: "Delivered", deliveredAt }),
-  Cancelled: (reason: string, cancelledAt: Date = new Date()): OrderState => ({
-    _tag: "Cancelled",
-    reason,
-    cancelledAt,
-  }),
+  Cart: () => new Cart(),
+  Checkout: () => new Checkout(),
+  Processing: (startedAt: Date = new Date()) => new Processing({ startedAt }),
+  Shipped: (trackingNumber: string, shippedAt: Date = new Date()) =>
+    new Shipped({ trackingNumber, shippedAt }),
+  Delivered: (deliveredAt: Date = new Date()) => new Delivered({ deliveredAt }),
+  Cancelled: (reason: string, cancelledAt: Date = new Date()) =>
+    new Cancelled({ reason, cancelledAt }),
 };
 
 // ============================================================================

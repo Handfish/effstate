@@ -11,6 +11,7 @@ import { useSyncedActor, type SyncTimelineEvent } from "@effstate/react/v3";
 import { api } from "../../convex/_generated/api";
 import {
   createOrderMachine,
+  generateOrderId,
   type OrderEvent,
   type OrderActor,
   type OrderSnapshot,
@@ -23,7 +24,6 @@ import {
   type ConvexOrder,
   type ConvexOrderState,
 } from "@/lib/convex-adapter";
-import { generateOrderId } from "@/lib/utils";
 
 // Re-export TimelineEvent type for components
 export type TimelineEvent = SyncTimelineEvent;
