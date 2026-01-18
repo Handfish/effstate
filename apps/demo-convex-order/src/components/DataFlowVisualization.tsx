@@ -1,9 +1,17 @@
 import { useEffect, useState, useRef } from "react";
+import { Match, pipe } from "effect";
 import { cn } from "@/lib/utils";
+
+// ============================================================================
+// Types
+// ============================================================================
+
+type PacketType = "optimistic" | "mutation" | "sync" | "correction";
+type EventType = "optimistic" | "server_confirmed" | "server_correction" | "external_update";
 
 interface Packet {
   id: string;
-  type: "optimistic" | "mutation" | "sync" | "correction";
+  type: PacketType;
   direction: "up" | "down";
   progress: number;
   label: string;
@@ -12,9 +20,65 @@ interface Packet {
 interface DataFlowVisualizationProps {
   isSyncing: boolean;
   pendingMutations: number;
-  lastEventType?: "optimistic" | "server_confirmed" | "server_correction" | "external_update";
+  lastEventType?: EventType;
   className?: string;
 }
+
+// ============================================================================
+// Packet Styling (Record-based for O(1) lookup)
+// ============================================================================
+
+interface PacketStyle {
+  readonly glow: string;
+  readonly fill: string;
+}
+
+const packetStyles: Record<PacketType, PacketStyle> = {
+  optimistic: { glow: "fill-yellow-500/20", fill: "fill-yellow-500" },
+  mutation: { glow: "fill-green-500/20", fill: "fill-green-500" },
+  correction: { glow: "fill-red-500/20", fill: "fill-red-500" },
+  sync: { glow: "fill-purple-500/20", fill: "fill-purple-500" },
+};
+
+// ============================================================================
+// Event-to-Packet Mapping (Match for discriminated union)
+// ============================================================================
+
+interface PacketConfig {
+  readonly type: PacketType;
+  readonly direction: "up" | "down";
+  readonly label: string;
+}
+
+const getPacketConfig = (eventType: EventType): PacketConfig =>
+  pipe(
+    Match.value(eventType),
+    Match.when("optimistic", () => ({
+      type: "optimistic" as const,
+      direction: "up" as const,
+      label: "EVENT",
+    })),
+    Match.when("server_confirmed", () => ({
+      type: "mutation" as const,
+      direction: "down" as const,
+      label: "OK",
+    })),
+    Match.when("server_correction", () => ({
+      type: "correction" as const,
+      direction: "down" as const,
+      label: "SYNC",
+    })),
+    Match.when("external_update", () => ({
+      type: "sync" as const,
+      direction: "down" as const,
+      label: "UPDATE",
+    })),
+    Match.exhaustive
+  );
+
+// ============================================================================
+// Component
+// ============================================================================
 
 export function DataFlowVisualization({
   isSyncing,
@@ -29,26 +93,11 @@ export function DataFlowVisualization({
   useEffect(() => {
     if (!lastEventType) return;
 
+    const config = getPacketConfig(lastEventType);
     const newPacket: Packet = {
       id: `packet-${++packetIdRef.current}`,
-      type:
-        lastEventType === "optimistic"
-          ? "optimistic"
-          : lastEventType === "server_confirmed"
-            ? "mutation"
-            : lastEventType === "server_correction"
-              ? "correction"
-              : "sync", // external_update -> sync
-      direction: lastEventType === "optimistic" ? "up" : "down",
+      ...config,
       progress: 0,
-      label:
-        lastEventType === "optimistic"
-          ? "EVENT"
-          : lastEventType === "server_confirmed"
-            ? "OK"
-            : lastEventType === "server_correction"
-              ? "SYNC"
-              : "UPDATE", // external_update label
     };
 
     setPackets((prev) => [...prev.slice(-10), newPacket]);
@@ -155,7 +204,6 @@ export function DataFlowVisualization({
           <text x="0" y="12" textAnchor="middle" className="fill-gray-400 text-[10px]">
             Client-Side Machine
           </text>
-          {/* Pulse animation when active */}
           {pendingMutations > 0 && (
             <circle cx="70" cy="-20" r="6" className="fill-yellow-500 animate-ping" />
           )}
@@ -186,7 +234,6 @@ export function DataFlowVisualization({
           <text x="0" y="12" textAnchor="middle" className="fill-gray-400 text-[10px]">
             Server + Real-time Sync
           </text>
-          {/* Pulse when syncing */}
           {isSyncing && <circle cx="70" cy="-20" r="6" className="fill-blue-500 animate-ping" />}
           <circle
             cx="70"
@@ -220,6 +267,7 @@ export function DataFlowVisualization({
           const endY = packet.direction === "up" ? 220 : 80;
           const currentY = startY + (endY - startY) * packet.progress;
           const xOffset = packet.direction === "up" ? -30 : 30;
+          const style = packetStyles[packet.type];
 
           return (
             <g
@@ -228,33 +276,9 @@ export function DataFlowVisualization({
               style={{ opacity: 1 - packet.progress * 0.3 }}
             >
               {/* Packet glow */}
-              <circle
-                r="20"
-                className={cn(
-                  "animate-pulse",
-                  packet.type === "optimistic"
-                    ? "fill-yellow-500/20"
-                    : packet.type === "mutation"
-                      ? "fill-green-500/20"
-                      : packet.type === "correction"
-                        ? "fill-red-500/20"
-                        : "fill-purple-500/20"
-                )}
-              />
+              <circle r="20" className={cn("animate-pulse", style.glow)} />
               {/* Packet body */}
-              <circle
-                r="12"
-                className={cn(
-                  "transition-all",
-                  packet.type === "optimistic"
-                    ? "fill-yellow-500"
-                    : packet.type === "mutation"
-                      ? "fill-green-500"
-                      : packet.type === "correction"
-                        ? "fill-red-500"
-                        : "fill-purple-500"
-                )}
-              />
+              <circle r="12" className={cn("transition-all", style.fill)} />
               {/* Packet label */}
               <text
                 y="3"
@@ -271,15 +295,7 @@ export function DataFlowVisualization({
                     key={i}
                     cy={trailY}
                     r={6 - i * 2}
-                    className={cn(
-                      packet.type === "optimistic"
-                        ? "fill-yellow-500"
-                        : packet.type === "mutation"
-                          ? "fill-green-500"
-                          : packet.type === "correction"
-                            ? "fill-red-500"
-                            : "fill-purple-500"
-                    )}
+                    className={style.fill}
                     style={{ opacity: 0.3 - i * 0.1 }}
                   />
                 );

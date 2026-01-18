@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { Effect, pipe } from "effect";
 import { CreateOrderForm } from "./CreateOrderForm";
 import { useOrderList } from "@/hooks/useOrderState";
 import type { OrderItem } from "@/machines/order";
@@ -8,13 +9,16 @@ export function OrderList() {
   const [isCreating, setIsCreating] = useState(false);
 
   const handleCreateOrder = useCallback(
-    async (customerName: string, items: OrderItem[]) => {
+    (customerName: string, items: OrderItem[]) => {
       setIsCreating(true);
-      try {
-        await createOrder(customerName, items);
-      } finally {
-        setIsCreating(false);
-      }
+
+      const program = pipe(
+        Effect.promise(() => createOrder(customerName, items)),
+        Effect.ensuring(Effect.sync(() => setIsCreating(false))),
+        Effect.asVoid
+      );
+
+      return Effect.runPromise(program);
     },
     [createOrder]
   );

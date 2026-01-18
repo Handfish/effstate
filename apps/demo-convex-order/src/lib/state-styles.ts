@@ -1,11 +1,13 @@
 /**
  * Shared State Style Mappings
  *
- * Centralized styling for OrderState variants using Effect Match.
+ * Centralized styling for OrderState variants.
  * Used across components for consistent state visualization.
+ *
+ * Design: Uses a typed Record for O(1) lookups. Match is overkill here since
+ * all cases map to the same structure - just use the type system.
  */
 
-import { Match, pipe } from "effect";
 import type { OrderState } from "@/machines/order";
 
 // ============================================================================
@@ -13,22 +15,17 @@ import type { OrderState } from "@/machines/order";
 // ============================================================================
 
 export interface StateStyle {
-  /** Background color class (e.g., "bg-gray-500") */
   readonly bg: string;
-  /** Text color class (e.g., "text-gray-300") */
   readonly text: string;
-  /** Border color class (e.g., "border-gray-500") */
   readonly border: string;
-  /** Glow/shadow color for effects */
   readonly glow: string;
-  /** Ring color for focus states */
   readonly ring: string;
 }
 
 export type StateTag = OrderState["_tag"];
 
 // ============================================================================
-// Style Definitions
+// Style Definitions (Single Source of Truth)
 // ============================================================================
 
 const styles: Record<StateTag, StateStyle> = {
@@ -77,63 +74,23 @@ const styles: Record<StateTag, StateStyle> = {
 };
 
 // ============================================================================
-// Match-based Accessors
+// Accessors (Direct Record access - type-safe via StateTag constraint)
 // ============================================================================
 
 /** Get full style object for a state tag */
 export const getStateStyle = (tag: StateTag): StateStyle => styles[tag];
 
 /** Get background color class */
-export const getStateBg = (tag: StateTag): string =>
-  pipe(
-    Match.value(tag),
-    Match.when("Cart", () => styles.Cart.bg),
-    Match.when("Checkout", () => styles.Checkout.bg),
-    Match.when("Processing", () => styles.Processing.bg),
-    Match.when("Shipped", () => styles.Shipped.bg),
-    Match.when("Delivered", () => styles.Delivered.bg),
-    Match.when("Cancelled", () => styles.Cancelled.bg),
-    Match.exhaustive
-  );
+export const getStateBg = (tag: StateTag): string => styles[tag].bg;
 
 /** Get text color class */
-export const getStateText = (tag: StateTag): string =>
-  pipe(
-    Match.value(tag),
-    Match.when("Cart", () => styles.Cart.text),
-    Match.when("Checkout", () => styles.Checkout.text),
-    Match.when("Processing", () => styles.Processing.text),
-    Match.when("Shipped", () => styles.Shipped.text),
-    Match.when("Delivered", () => styles.Delivered.text),
-    Match.when("Cancelled", () => styles.Cancelled.text),
-    Match.exhaustive
-  );
+export const getStateText = (tag: StateTag): string => styles[tag].text;
 
 /** Get border color class */
-export const getStateBorder = (tag: StateTag): string =>
-  pipe(
-    Match.value(tag),
-    Match.when("Cart", () => styles.Cart.border),
-    Match.when("Checkout", () => styles.Checkout.border),
-    Match.when("Processing", () => styles.Processing.border),
-    Match.when("Shipped", () => styles.Shipped.border),
-    Match.when("Delivered", () => styles.Delivered.border),
-    Match.when("Cancelled", () => styles.Cancelled.border),
-    Match.exhaustive
-  );
+export const getStateBorder = (tag: StateTag): string => styles[tag].border;
 
 /** Get glow color for drop-shadow effects */
-export const getStateGlow = (tag: StateTag): string =>
-  pipe(
-    Match.value(tag),
-    Match.when("Cart", () => styles.Cart.glow),
-    Match.when("Checkout", () => styles.Checkout.glow),
-    Match.when("Processing", () => styles.Processing.glow),
-    Match.when("Shipped", () => styles.Shipped.glow),
-    Match.when("Delivered", () => styles.Delivered.glow),
-    Match.when("Cancelled", () => styles.Cancelled.glow),
-    Match.exhaustive
-  );
+export const getStateGlow = (tag: StateTag): string => styles[tag].glow;
 
 // ============================================================================
 // Composite Style Helpers
@@ -141,12 +98,12 @@ export const getStateGlow = (tag: StateTag): string =>
 
 /** Get badge classes for state display */
 export const getStateBadgeClasses = (tag: StateTag): string => {
-  const style = getStateStyle(tag);
-  return `${style.bg} ${style.text}`;
+  const s = styles[tag];
+  return `${s.bg} ${s.text}`;
 };
 
 /** Get card accent classes */
 export const getStateCardClasses = (tag: StateTag): string => {
-  const style = getStateStyle(tag);
-  return `${style.border} ${style.ring}`;
+  const s = styles[tag];
+  return `${s.border} ${s.ring}`;
 };
