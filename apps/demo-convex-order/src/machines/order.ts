@@ -24,7 +24,9 @@ export const Quantity = Brand.nominal<Quantity>();
 
 /** Generate a new OrderId */
 export const generateOrderId = (): OrderId =>
-  OrderId(`ORD-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`);
+  OrderId(
+    `ORD-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+  );
 
 // ============================================================================
 // State (Data.TaggedClass - symmetric with Events)
@@ -156,7 +158,7 @@ function addItemToList(items: readonly OrderItem[], newItem: OrderItem): readonl
   const existingIndex = items.findIndex((i) => i.id === newItem.id);
   if (existingIndex >= 0) {
     return items.map((item, index) =>
-      index === existingIndex ? { ...item, quantity: item.quantity + newItem.quantity } : item
+      index === existingIndex ? { ...item, quantity: item.quantity + newItem.quantity } : item,
     );
   }
   return [...items, newItem];
@@ -169,7 +171,7 @@ function removeItemFromList(items: readonly OrderItem[], itemId: string): readon
 function updateItemQuantity(
   items: readonly OrderItem[],
   itemId: string,
-  quantity: number
+  quantity: number,
 ): readonly OrderItem[] {
   if (quantity <= 0) {
     return removeItemFromList(items, itemId);
@@ -270,7 +272,7 @@ export const getOrderStateLabel = (state: OrderState): string =>
     Match.tag("Shipped", () => "Shipped"),
     Match.tag("Delivered", () => "Delivered"),
     Match.tag("Cancelled", () => "Cancelled"),
-    Match.exhaustive
+    Match.exhaustive,
   );
 
 export const getOrderStateColor = (state: OrderState): string =>
@@ -282,7 +284,7 @@ export const getOrderStateColor = (state: OrderState): string =>
     Match.tag("Shipped", () => "bg-purple-500"),
     Match.tag("Delivered", () => "bg-green-500"),
     Match.tag("Cancelled", () => "bg-red-500"),
-    Match.exhaustive
+    Match.exhaustive,
   );
 
 /** States that can be cancelled */

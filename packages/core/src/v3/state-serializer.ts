@@ -85,8 +85,9 @@ export function createStateSerializer<S extends MachineState>(
       if (transform) {
         return transform.serialize(state);
       }
-      // Identity transform - state is already JSON-safe
-      return state as SerializedState;
+      // Always spread to plain object - strips Data.TaggedClass prototypes
+      // which external serializers (Convex, etc.) can't handle
+      return { ...state } as SerializedState;
     },
 
     deserialize(data: SerializedState): S {
@@ -248,8 +249,20 @@ export interface SerializedSnapshot {
  * Snapshot serializer combining state and context serialization
  */
 export interface SnapshotSerializer<S extends MachineState, C extends MachineContext> {
+  /** Serialize full snapshot (state + context) */
   serialize(snapshot: { state: S; context: C }): SerializedSnapshot;
+  /** Deserialize full snapshot */
   deserialize(data: SerializedSnapshot): { state: S; context: C };
+
+  /** Serialize state only (no context needed) */
+  serializeState(state: S): SerializedState;
+  /** Deserialize state only */
+  deserializeState(data: SerializedState): S;
+
+  /** Serialize context only (no state needed) */
+  serializeContext(context: C): Record<string, unknown>;
+  /** Deserialize context only */
+  deserializeContext(data: Record<string, unknown>): C;
 }
 
 /**
@@ -276,6 +289,7 @@ export function createSnapshotSerializer<S extends MachineState, C extends Machi
   const contextSerializer = createContextSerializer<C>(config.context ?? {});
 
   return {
+    // Full snapshot methods
     serialize(snapshot): SerializedSnapshot {
       return {
         state: stateSerializer.serialize(snapshot.state),
@@ -287,6 +301,22 @@ export function createSnapshotSerializer<S extends MachineState, C extends Machi
         state: stateSerializer.deserialize(data.state),
         context: contextSerializer.deserialize(data.context),
       };
+    },
+
+    // Standalone state methods (no context needed)
+    serializeState(state: S): SerializedState {
+      return stateSerializer.serialize(state);
+    },
+    deserializeState(data: SerializedState): S {
+      return stateSerializer.deserialize(data);
+    },
+
+    // Standalone context methods (no state needed)
+    serializeContext(context: C): Record<string, unknown> {
+      return contextSerializer.serialize(context);
+    },
+    deserializeContext(data: Record<string, unknown>): C {
+      return contextSerializer.deserialize(data);
     },
   };
 }

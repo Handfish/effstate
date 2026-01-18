@@ -1,20 +1,13 @@
 /**
  * Convex Adapter - Serialization helpers for EffState <-> Convex
  *
+ * Uses the new EffState Convex adapter factory for minimal boilerplate.
  * Types are derived from schemas in convex/schema.ts (single source of truth).
- * Uses the new EffState serialization utilities for cleaner code.
  */
 
-import {
-  createSnapshotSerializer,
-  dateFieldsTransform,
-} from "effstate/v3";
+import { createSnapshotSerializer, createConvexAdapter, dateFieldsTransform } from "effstate/v3";
 import type { OrderState, OrderContext, OrderSnapshot } from "@/machines/order";
-import type {
-  ConvexOrderItem,
-  ConvexOrderState,
-  ConvexOrder,
-} from "../../convex/schema";
+import type { ConvexOrderItem, ConvexOrderState, ConvexOrder } from "../../convex/schema";
 
 // ============================================================================
 // Re-export types from schema (single source of truth)
@@ -23,7 +16,7 @@ import type {
 export type { ConvexOrderItem, ConvexOrderState, ConvexOrder };
 
 // ============================================================================
-// Snapshot Serializer (using new library utilities)
+// Snapshot Serializer
 // ============================================================================
 
 /**
@@ -35,12 +28,10 @@ export type { ConvexOrderItem, ConvexOrderState, ConvexOrder };
  */
 const orderSnapshotSerializer = createSnapshotSerializer<OrderState, OrderContext>({
   state: {
-    // States with Date fields need transforms
     Processing: dateFieldsTransform(["startedAt"]),
     Shipped: dateFieldsTransform(["shippedAt"]),
     Delivered: dateFieldsTransform(["deliveredAt"]),
     Cancelled: dateFieldsTransform(["cancelledAt"]),
-    // Cart and Checkout have no special fields - no transform needed
   },
   context: {
     dateFields: ["createdAt"],
@@ -48,105 +39,46 @@ const orderSnapshotSerializer = createSnapshotSerializer<OrderState, OrderContex
 });
 
 // ============================================================================
-// State Serialization (simplified exports)
+// Convex Adapter (using new factory!)
 // ============================================================================
 
-export function serializeState(state: OrderState): ConvexOrderState {
-  const serialized = orderSnapshotSerializer.serialize({ state, context: {} as OrderContext }).state;
-  // Spread to plain object - Convex client can't serialize class instances
-  return { ...serialized } as ConvexOrderState;
-}
+/**
+ * Order adapter for Convex integration.
+ *
+ * Provides all serialization/deserialization methods in one object.
+ */
+export const orderAdapter = createConvexAdapter<OrderState, OrderContext, ConvexOrder>({
+  serializer: orderSnapshotSerializer,
 
-export function deserializeState(state: ConvexOrderState): OrderState {
-  return orderSnapshotSerializer.deserialize({
-    state: state as { _tag: OrderState["_tag"] },
-    context: { createdAt: 0 } // Dummy context, only state is used
-  }).state;
-}
-
-// ============================================================================
-// Context Serialization (simplified exports)
-// ============================================================================
-
-export function serializeContext(
-  context: OrderContext
-): Omit<ConvexOrder, "_id" | "state"> {
-  const serialized = orderSnapshotSerializer.serialize({
-    state: { _tag: "Cart" } as OrderState, // Dummy state
-    context,
-  });
-
-  const ctx = serialized.context as {
-    orderId: string;
-    customerName: string;
-    items: ConvexOrderItem[];
-    total: number;
-    createdAt: number;
-  };
-
-  return {
+  contextToDocument: (ctx) => ({
+    _id: "",
     orderId: ctx.orderId,
     customerName: ctx.customerName,
-    items: ctx.items,
+    items: ctx.items.map((item) => ({ ...item })),
     total: ctx.total,
-    createdAt: ctx.createdAt,
-  };
-}
+    createdAt: ctx.createdAt instanceof Date ? ctx.createdAt.getTime() : (ctx.createdAt as number),
+  }),
 
-export function deserializeContext(order: ConvexOrder): OrderContext {
-  const snapshot = orderSnapshotSerializer.deserialize({
-    state: { _tag: "Cart" }, // Dummy state
-    context: {
-      orderId: order.orderId,
-      customerName: order.customerName,
-      items: order.items,
-      total: order.total,
-      createdAt: order.createdAt,
-    },
-  });
-  return snapshot.context;
-}
+  documentToContext: (doc) => ({
+    orderId: doc.orderId,
+    customerName: doc.customerName,
+    items: doc.items.map((item) => ({ ...item })),
+    total: doc.total,
+    createdAt: new Date(doc.createdAt),
+  }),
+});
 
 // ============================================================================
-// Full Snapshot Conversion
+// Convenience Exports
 // ============================================================================
 
-export function convexOrderToSnapshot(order: ConvexOrder): OrderSnapshot {
-  return orderSnapshotSerializer.deserialize({
-    state: order.state as { _tag: OrderState["_tag"] },
-    context: {
-      orderId: order.orderId,
-      customerName: order.customerName,
-      items: order.items,
-      total: order.total,
-      createdAt: order.createdAt,
-    },
-  });
-}
+/** Serialize state to plain object for Convex */
+export const serializeState = (state: OrderState): ConvexOrderState =>
+  orderAdapter.serializeState(state) as ConvexOrderState;
 
-export function snapshotToConvexOrder(
-  snapshot: OrderSnapshot,
-  docId?: string
-): ConvexOrder {
-  const serialized = orderSnapshotSerializer.serialize(snapshot);
-  const ctx = serialized.context as {
-    orderId: string;
-    customerName: string;
-    items: ConvexOrderItem[];
-    total: number;
-    createdAt: number;
-  };
-
-  return {
-    _id: docId ?? "",
-    orderId: ctx.orderId,
-    customerName: ctx.customerName,
-    items: ctx.items,
-    total: ctx.total,
-    createdAt: ctx.createdAt,
-    state: serialized.state as ConvexOrderState,
-  };
-}
+/** Convert Convex document to snapshot */
+export const convexOrderToSnapshot = (order: ConvexOrder): OrderSnapshot =>
+  orderAdapter.fromDocument(order);
 
 // ============================================================================
 // Create Order Data

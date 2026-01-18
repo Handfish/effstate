@@ -13,6 +13,7 @@ export * from "./machine";
 export * from "./state-serializer";
 export * from "./transitions";
 export * from "./schema-utils";
+export * from "./convex-adapter";
 
 // Re-export Machine namespace for convenience
 import * as Machine from "./machine";
@@ -22,4 +23,5 @@ export { Machine };
 import * as Serializer from "./state-serializer";
 import * as Transitions from "./transitions";
 import * as SchemaUtils from "./schema-utils";
-export { Serializer, Transitions, SchemaUtils };
+import * as ConvexAdapterUtils from "./convex-adapter";
+export { Serializer, Transitions, SchemaUtils, ConvexAdapterUtils };

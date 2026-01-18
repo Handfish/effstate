@@ -7,3 +7,4 @@
 export * from "./hooks";
 export * from "./persistence";
 export * from "./synced";
+export * from "./convex";
