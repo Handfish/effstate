@@ -10,7 +10,16 @@
 
 export * from "./types";
 export * from "./machine";
+export * from "./state-serializer";
+export * from "./transitions";
+export * from "./schema-utils";
 
 // Re-export Machine namespace for convenience
 import * as Machine from "./machine";
 export { Machine };
+
+// Re-export namespaces for organization
+import * as Serializer from "./state-serializer";
+import * as Transitions from "./transitions";
+import * as SchemaUtils from "./schema-utils";
+export { Serializer, Transitions, SchemaUtils };

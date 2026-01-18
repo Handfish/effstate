@@ -1,15 +1,9 @@
 import { cn } from "@/lib/utils";
 import { useRef, useEffect } from "react";
+import type { TimelineEvent } from "@/hooks/useOrderState";
 
-export interface TimelineEvent {
-  id: string;
-  timestamp: Date;
-  type: "event" | "sync" | "optimistic" | "server_confirmed" | "server_correction";
-  eventName: string;
-  fromState: string;
-  toState: string;
-  details?: string;
-}
+// Re-export for convenience
+export type { TimelineEvent };
 
 interface EventTimelineProps {
   events: TimelineEvent[];
@@ -20,12 +14,6 @@ const typeConfig: Record<
   TimelineEvent["type"],
   { color: string; bgColor: string; icon: string; label: string }
 > = {
-  event: {
-    color: "text-blue-400",
-    bgColor: "bg-blue-500/20",
-    icon: "E",
-    label: "Event Sent",
-  },
   optimistic: {
     color: "text-yellow-400",
     bgColor: "bg-yellow-500/20",
@@ -44,11 +32,11 @@ const typeConfig: Record<
     icon: "!",
     label: "Server Correction",
   },
-  sync: {
+  external_update: {
     color: "text-purple-400",
     bgColor: "bg-purple-500/20",
     icon: "S",
-    label: "_syncSnapshot()",
+    label: "External Sync",
   },
 };
 
@@ -112,9 +100,7 @@ export function EventTimeline({ events, className }: EventTimelineProps) {
                       ? "border-green-500"
                       : event.type === "optimistic"
                         ? "border-yellow-500"
-                        : event.type === "sync"
-                          ? "border-purple-500"
-                          : "border-blue-500"
+                        : "border-purple-500"
                 )}
               >
                 <span
@@ -129,7 +115,7 @@ export function EventTimeline({ events, className }: EventTimelineProps) {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className={cn("font-mono text-sm font-medium", config.color)}>
-                      {event.eventName}
+                      {event.eventTag ?? event.type}
                     </span>
                     <span className="text-xs text-gray-500">
                       {event.timestamp.toLocaleTimeString(undefined, {

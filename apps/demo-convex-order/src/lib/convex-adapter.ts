@@ -1,9 +1,14 @@
 /**
  * Convex Adapter - Serialization helpers for EffState <-> Convex
+ *
+ * Uses the new EffState serialization utilities for cleaner code.
  */
 
+import {
+  createSnapshotSerializer,
+  dateFieldsTransform,
+} from "effstate/v3";
 import type { OrderState, OrderContext, OrderSnapshot } from "@/machines/order";
-import { OrderState as OS } from "@/machines/order";
 
 // ============================================================================
 // Convex Types (matches schema.ts)
@@ -35,75 +40,86 @@ export interface ConvexOrder {
 }
 
 // ============================================================================
-// State Serialization
+// Snapshot Serializer (using new library utilities)
+// ============================================================================
+
+/**
+ * Snapshot serializer configured for Order state machine.
+ *
+ * Handles:
+ * - State variants with Date fields (Processing, Shipped, Delivered, Cancelled)
+ * - Context createdAt Date field
+ */
+const orderSnapshotSerializer = createSnapshotSerializer<OrderState, OrderContext>({
+  state: {
+    // States with Date fields need transforms
+    Processing: dateFieldsTransform(["startedAt"]),
+    Shipped: dateFieldsTransform(["shippedAt"]),
+    Delivered: dateFieldsTransform(["deliveredAt"]),
+    Cancelled: dateFieldsTransform(["cancelledAt"]),
+    // Cart and Checkout have no special fields - no transform needed
+  },
+  context: {
+    dateFields: ["createdAt"],
+  },
+});
+
+// ============================================================================
+// State Serialization (simplified exports)
 // ============================================================================
 
 export function serializeState(state: OrderState): ConvexOrderState {
-  switch (state._tag) {
-    case "Cart":
-      return { _tag: "Cart" };
-    case "Checkout":
-      return { _tag: "Checkout" };
-    case "Processing":
-      return { _tag: "Processing", startedAt: state.startedAt.getTime() };
-    case "Shipped":
-      return {
-        _tag: "Shipped",
-        trackingNumber: state.trackingNumber,
-        shippedAt: state.shippedAt.getTime(),
-      };
-    case "Delivered":
-      return { _tag: "Delivered", deliveredAt: state.deliveredAt.getTime() };
-    case "Cancelled":
-      return {
-        _tag: "Cancelled",
-        reason: state.reason,
-        cancelledAt: state.cancelledAt.getTime(),
-      };
-  }
+  return orderSnapshotSerializer.serialize({ state, context: {} as OrderContext }).state as ConvexOrderState;
 }
 
 export function deserializeState(state: ConvexOrderState): OrderState {
-  switch (state._tag) {
-    case "Cart":
-      return OS.Cart();
-    case "Checkout":
-      return OS.Checkout();
-    case "Processing":
-      return OS.Processing(new Date(state.startedAt));
-    case "Shipped":
-      return OS.Shipped(state.trackingNumber, new Date(state.shippedAt));
-    case "Delivered":
-      return OS.Delivered(new Date(state.deliveredAt));
-    case "Cancelled":
-      return OS.Cancelled(state.reason, new Date(state.cancelledAt));
-  }
+  return orderSnapshotSerializer.deserialize({
+    state: state as { _tag: OrderState["_tag"] },
+    context: { createdAt: 0 } // Dummy context, only state is used
+  }).state;
 }
 
 // ============================================================================
-// Context Serialization
+// Context Serialization (simplified exports)
 // ============================================================================
 
 export function serializeContext(
   context: OrderContext
 ): Omit<ConvexOrder, "_id" | "state"> {
+  const serialized = orderSnapshotSerializer.serialize({
+    state: { _tag: "Cart" } as OrderState, // Dummy state
+    context,
+  });
+
+  const ctx = serialized.context as {
+    orderId: string;
+    customerName: string;
+    items: ConvexOrderItem[];
+    total: number;
+    createdAt: number;
+  };
+
   return {
-    orderId: context.orderId,
-    customerName: context.customerName,
-    items: context.items.map((item) => ({ ...item })),
-    total: context.total,
-    createdAt: context.createdAt.getTime(),
+    orderId: ctx.orderId,
+    customerName: ctx.customerName,
+    items: ctx.items,
+    total: ctx.total,
+    createdAt: ctx.createdAt,
   };
 }
 
 export function deserializeContext(order: ConvexOrder): OrderContext {
-  return {
-    orderId: order.orderId,
-    customerName: order.customerName,
-    items: order.items.map((item) => ({ ...item })),
-    total: order.total,
-    createdAt: new Date(order.createdAt),
-  };
+  const snapshot = orderSnapshotSerializer.deserialize({
+    state: { _tag: "Cart" }, // Dummy state
+    context: {
+      orderId: order.orderId,
+      customerName: order.customerName,
+      items: order.items,
+      total: order.total,
+      createdAt: order.createdAt,
+    },
+  });
+  return snapshot.context;
 }
 
 // ============================================================================
@@ -111,20 +127,39 @@ export function deserializeContext(order: ConvexOrder): OrderContext {
 // ============================================================================
 
 export function convexOrderToSnapshot(order: ConvexOrder): OrderSnapshot {
-  return {
-    state: deserializeState(order.state),
-    context: deserializeContext(order),
-  };
+  return orderSnapshotSerializer.deserialize({
+    state: order.state as { _tag: OrderState["_tag"] },
+    context: {
+      orderId: order.orderId,
+      customerName: order.customerName,
+      items: order.items,
+      total: order.total,
+      createdAt: order.createdAt,
+    },
+  });
 }
 
 export function snapshotToConvexOrder(
   snapshot: OrderSnapshot,
   docId?: string
 ): ConvexOrder {
+  const serialized = orderSnapshotSerializer.serialize(snapshot);
+  const ctx = serialized.context as {
+    orderId: string;
+    customerName: string;
+    items: ConvexOrderItem[];
+    total: number;
+    createdAt: number;
+  };
+
   return {
     _id: docId ?? "",
-    ...serializeContext(snapshot.context),
-    state: serializeState(snapshot.state),
+    orderId: ctx.orderId,
+    customerName: ctx.customerName,
+    items: ctx.items,
+    total: ctx.total,
+    createdAt: ctx.createdAt,
+    state: serialized.state as ConvexOrderState,
   };
 }
 

@@ -1,11 +1,12 @@
 /**
  * Combined EffState + Convex hooks for order management
- * With event tracking and sync status for visualization
+ *
+ * Uses the new useSyncedActor hook for simplified sync management.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { useActor } from "@effstate/react/v3";
+import { useSyncedActor, type SyncTimelineEvent } from "@effstate/react/v3";
 import { api } from "../../convex/_generated/api";
 import {
   createOrderMachine,
@@ -22,10 +23,12 @@ import {
   type ConvexOrderState,
 } from "@/lib/convex-adapter";
 import { generateOrderId } from "@/lib/utils";
-import type { TimelineEvent } from "@/components/EventTimeline";
+
+// Re-export TimelineEvent type for components
+export type TimelineEvent = SyncTimelineEvent;
 
 // ============================================================================
-// Latency Simulation Context
+// Latency Simulation
 // ============================================================================
 
 let simulatedLatency = 0;
@@ -38,15 +41,8 @@ export function getSimulatedLatency() {
   return simulatedLatency;
 }
 
-async function withLatency<T>(fn: () => Promise<T>): Promise<T> {
-  if (simulatedLatency > 0) {
-    await new Promise((resolve) => setTimeout(resolve, simulatedLatency));
-  }
-  return fn();
-}
-
 // ============================================================================
-// useOrderState - Per-order EffState + Convex sync with tracking
+// useOrderState - Per-order EffState + Convex sync
 // ============================================================================
 
 export interface UseOrderStateResult {
@@ -65,126 +61,36 @@ export interface UseOrderStateResult {
   lastEventType: TimelineEvent["type"] | null;
 }
 
-let eventIdCounter = 0;
-
 export function useOrderState(convexOrder: ConvexOrder): UseOrderStateResult {
   const updateStateMutation = useMutation(api.functions.orders.updateOrderState);
   const updateItemsMutation = useMutation(api.functions.orders.updateOrderItems);
 
-  // Tracking state
-  const [events, setEvents] = useState<TimelineEvent[]>([]);
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
-  const [pendingMutations, setPendingMutations] = useState(0);
-  const [lastEventType, setLastEventType] = useState<TimelineEvent["type"] | null>(null);
+  // Create machine for this order
+  const machine = useMemo(
+    () => createOrderMachine(convexOrderToSnapshot(convexOrder).context),
+    [convexOrder.orderId]
+  );
 
-  // Create machine with initial snapshot from Convex
-  const initialSnapshot = convexOrderToSnapshot(convexOrder);
-  const machineRef = useRef(createOrderMachine(initialSnapshot.context));
+  // Initial snapshot from Convex
+  const initialSnapshot = useMemo(
+    () => convexOrderToSnapshot(convexOrder),
+    // Only compute on first render for this orderId
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [convexOrder.orderId]
+  );
 
-  const { snapshot, state, context, send: baseSend, actor } = useActor(machineRef.current, {
+  // Use the new useSyncedActor hook
+  const { snapshot, state, context, send: baseSend, actor, syncStatus } = useSyncedActor({
+    machine,
     initialSnapshot,
-  });
-
-  // Track server state separately for comparison
-  const serverStateRef = useRef<ConvexOrderState>(convexOrder.state);
-  const serverTotalRef = useRef<number>(convexOrder.total);
-
-  // Helper to add event to timeline
-  const addEvent = useCallback((event: Omit<TimelineEvent, "id" | "timestamp">) => {
-    setEvents((prev) => [
-      ...prev.slice(-49), // Keep last 50 events
-      { ...event, id: `evt-${++eventIdCounter}`, timestamp: new Date() },
-    ]);
-    setLastEventType(event.type);
-  }, []);
-
-  // Sync from Convex when data changes
-  const prevConvexOrderRef = useRef<ConvexOrder | null>(null);
-  useEffect(() => {
-    const prevOrder = prevConvexOrderRef.current;
-    const stateChanged = prevOrder && prevOrder.state._tag !== convexOrder.state._tag;
-    const itemsChanged =
-      prevOrder && JSON.stringify(prevOrder.items) !== JSON.stringify(convexOrder.items);
-
-    // Update server state refs
-    serverStateRef.current = convexOrder.state;
-    serverTotalRef.current = convexOrder.total;
-
-    // Skip if same order
-    if (
-      prevOrder &&
-      prevOrder.state._tag === convexOrder.state._tag &&
-      JSON.stringify(prevOrder.items) === JSON.stringify(convexOrder.items)
-    ) {
-      return;
-    }
-
-    prevConvexOrderRef.current = convexOrder;
-    const newSnapshot = convexOrderToSnapshot(convexOrder);
-
-    // Check if this is a correction (server differs from local)
-    const localState = actor.getSnapshot();
-    const isCorrection = localState.state._tag !== convexOrder.state._tag;
-
-    if (prevOrder) {
-      if (isCorrection) {
-        addEvent({
-          type: "server_correction",
-          eventName: "_syncSnapshot()",
-          fromState: localState.state._tag,
-          toState: convexOrder.state._tag,
-          details: "Server state differs from local - correcting",
-        });
-      } else if (stateChanged || itemsChanged) {
-        addEvent({
-          type: "sync",
-          eventName: "Convex Update",
-          fromState: prevOrder.state._tag,
-          toState: convexOrder.state._tag,
-          details: "Real-time sync from server",
-        });
-      }
-    }
-
-    // Use _syncSnapshot to update local state from server
-    actor._syncSnapshot(newSnapshot);
-    setLastSyncTime(new Date());
-  }, [convexOrder, actor, addEvent]);
-
-  // Wrapped send that syncs to Convex with tracking
-  const send = useCallback(
-    async (event: OrderEvent) => {
-      const prevState = actor.getSnapshot().state._tag;
-
-      // Log the event
-      addEvent({
-        type: "event",
-        eventName: event._tag,
-        fromState: prevState,
-        toState: prevState, // Will be updated after transition
-        details: JSON.stringify(event, null, 0).slice(0, 100),
-      });
-
-      // Optimistic: update local state immediately
-      baseSend(event);
-
-      // Get the new state after local transition
-      const newSnapshot = actor.getSnapshot();
-      const newState = newSnapshot.state._tag;
-
-      // Log optimistic update if state changed
-      if (newState !== prevState) {
-        addEvent({
-          type: "optimistic",
-          eventName: `Local → ${newState}`,
-          fromState: prevState,
-          toState: newState,
-          details: "Instant UI update (optimistic)",
-        });
-      }
-
-      // Sync to Convex based on event type
+    externalSnapshot: convexOrder,
+    deserializeExternal: convexOrderToSnapshot,
+    externalEquals: (a, b) =>
+      a.state._tag === b.state._tag &&
+      JSON.stringify(a.items) === JSON.stringify(b.items),
+    latency: simulatedLatency,
+    persist: async (newSnapshot, event) => {
+      // Determine if this is a state event or item event
       const isStateEvent =
         event._tag === "ProceedToCheckout" ||
         event._tag === "BackToCart" ||
@@ -194,54 +100,31 @@ export function useOrderState(convexOrder: ConvexOrder): UseOrderStateResult {
         event._tag === "CancelOrder";
 
       const isItemEvent =
-        event._tag === "AddItem" || event._tag === "RemoveItem" || event._tag === "UpdateQuantity";
+        event._tag === "AddItem" ||
+        event._tag === "RemoveItem" ||
+        event._tag === "UpdateQuantity";
 
-      if (isStateEvent || isItemEvent) {
-        setIsSyncing(true);
-        setPendingMutations((p) => p + 1);
-
-        try {
-          if (isStateEvent) {
-            await withLatency(() =>
-              updateStateMutation({
-                orderId: context.orderId,
-                state: serializeState(newSnapshot.state),
-              })
-            );
-          } else {
-            await withLatency(() =>
-              updateItemsMutation({
-                orderId: context.orderId,
-                items: [...newSnapshot.context.items],
-                total: newSnapshot.context.total,
-              })
-            );
-          }
-
-          // Log server confirmation
-          addEvent({
-            type: "server_confirmed",
-            eventName: "Convex Confirmed",
-            fromState: prevState,
-            toState: newState,
-            details: `Mutation persisted after ${simulatedLatency}ms`,
-          });
-        } catch (error) {
-          addEvent({
-            type: "server_correction",
-            eventName: "Mutation Failed",
-            fromState: newState,
-            toState: prevState,
-            details: String(error),
-          });
-        } finally {
-          setIsSyncing(false);
-          setPendingMutations((p) => Math.max(0, p - 1));
-          setLastSyncTime(new Date());
-        }
+      if (isStateEvent) {
+        await updateStateMutation({
+          orderId: context.orderId,
+          state: serializeState(newSnapshot.state),
+        });
+      } else if (isItemEvent) {
+        await updateItemsMutation({
+          orderId: context.orderId,
+          items: [...newSnapshot.context.items],
+          total: newSnapshot.context.total,
+        });
       }
     },
-    [baseSend, actor, context.orderId, updateStateMutation, updateItemsMutation, addEvent]
+  });
+
+  // Wrap send to handle the promise (useSyncedActor.send is async)
+  const send = useCallback(
+    (event: OrderEvent) => {
+      baseSend(event);
+    },
+    [baseSend]
   );
 
   return {
@@ -250,14 +133,14 @@ export function useOrderState(convexOrder: ConvexOrder): UseOrderStateResult {
     context,
     send,
     actor,
-    // Visualization data
-    events,
-    isSyncing,
-    lastSyncTime,
-    pendingMutations,
-    serverState: serverStateRef.current,
-    serverTotal: serverTotalRef.current,
-    lastEventType,
+    // Visualization data from syncStatus
+    events: syncStatus.timeline as TimelineEvent[],
+    isSyncing: syncStatus.isSyncing,
+    lastSyncTime: syncStatus.lastSyncTime,
+    pendingMutations: syncStatus.pendingMutations,
+    serverState: convexOrder.state,
+    serverTotal: convexOrder.total,
+    lastEventType: syncStatus.lastEventType,
   };
 }
 
@@ -280,14 +163,17 @@ export function useOrderList(): UseOrderListResult {
       const orderId = generateOrderId();
       const total = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
-      await withLatency(() =>
-        createOrderMutation({
-          orderId,
-          customerName,
-          items: items.map((item) => ({ ...item })),
-          total,
-        })
-      );
+      // Apply simulated latency
+      if (simulatedLatency > 0) {
+        await new Promise((resolve) => setTimeout(resolve, simulatedLatency));
+      }
+
+      await createOrderMutation({
+        orderId,
+        customerName,
+        items: items.map((item) => ({ ...item })),
+        total,
+      });
 
       return orderId;
     },

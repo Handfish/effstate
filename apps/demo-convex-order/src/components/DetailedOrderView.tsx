@@ -280,7 +280,7 @@ export function DetailedOrderView({ order }: DetailedOrderViewProps) {
             <DataFlowVisualization
               isSyncing={isSyncing}
               pendingMutations={pendingMutations}
-              lastEventType={lastEventType === "event" ? undefined : lastEventType ?? undefined}
+              lastEventType={lastEventType ?? undefined}
             />
           </div>
 

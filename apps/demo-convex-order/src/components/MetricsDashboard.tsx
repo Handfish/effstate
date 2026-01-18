@@ -60,7 +60,7 @@ export function MetricsDashboard({ events, simulatedLatency, className }: Metric
     const optimisticEvents = events.filter((e) => e.type === "optimistic");
     const confirmedEvents = events.filter((e) => e.type === "server_confirmed");
     const correctionEvents = events.filter((e) => e.type === "server_correction");
-    const syncEvents = events.filter((e) => e.type === "sync");
+    const syncEvents = events.filter((e) => e.type === "external_update");
 
     // Calculate perceived latency (time from optimistic to confirmed)
     let avgPerceivedLatency = 0;

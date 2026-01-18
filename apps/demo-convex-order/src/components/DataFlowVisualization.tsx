@@ -12,7 +12,7 @@ interface Packet {
 interface DataFlowVisualizationProps {
   isSyncing: boolean;
   pendingMutations: number;
-  lastEventType?: "optimistic" | "server_confirmed" | "server_correction" | "sync";
+  lastEventType?: "optimistic" | "server_confirmed" | "server_correction" | "external_update";
   className?: string;
 }
 
@@ -38,7 +38,7 @@ export function DataFlowVisualization({
             ? "mutation"
             : lastEventType === "server_correction"
               ? "correction"
-              : "sync",
+              : "sync", // external_update -> sync
       direction: lastEventType === "optimistic" ? "up" : "down",
       progress: 0,
       label:
@@ -48,7 +48,7 @@ export function DataFlowVisualization({
             ? "OK"
             : lastEventType === "server_correction"
               ? "SYNC"
-              : "UPDATE",
+              : "UPDATE", // external_update label
     };
 
     setPackets((prev) => [...prev.slice(-10), newPacket]);

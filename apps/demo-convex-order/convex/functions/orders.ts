@@ -2,7 +2,7 @@ import { Effect, Schema, Option } from "effect";
 import { query, mutation, ConfectQueryCtx, ConfectMutationCtx } from "../confect";
 
 // ============================================================================
-// Args & Return Schemas
+// Schemas
 // ============================================================================
 
 const OrderItemSchema = Schema.Struct({
@@ -12,6 +12,13 @@ const OrderItemSchema = Schema.Struct({
   price: Schema.Number,
 });
 
+/**
+ * Order state schema - manual Schema.Union for Confect compatibility.
+ *
+ * Note: The EffState schema helpers (tagOnlyState, stateWithTimestamp, etc.)
+ * are designed for general use. For Confect/Convex with stricter type requirements,
+ * the manual approach below works better.
+ */
 const OrderStateSchema = Schema.Union(
   Schema.Struct({ _tag: Schema.Literal("Cart") }),
   Schema.Struct({ _tag: Schema.Literal("Checkout") }),
@@ -35,23 +42,24 @@ const OrderStateSchema = Schema.Union(
   })
 );
 
+// Common order return schema
+const OrderReturnSchema = Schema.Struct({
+  _id: Schema.String,
+  orderId: Schema.String,
+  customerName: Schema.String,
+  items: Schema.Array(OrderItemSchema),
+  total: Schema.Number,
+  createdAt: Schema.Number,
+  state: OrderStateSchema,
+});
+
 // ============================================================================
 // Queries
 // ============================================================================
 
 export const listOrders = query({
   args: Schema.Struct({}),
-  returns: Schema.Array(
-    Schema.Struct({
-      _id: Schema.String,
-      orderId: Schema.String,
-      customerName: Schema.String,
-      items: Schema.Array(OrderItemSchema),
-      total: Schema.Number,
-      createdAt: Schema.Number,
-      state: OrderStateSchema,
-    })
-  ),
+  returns: Schema.Array(OrderReturnSchema),
   handler: () =>
     Effect.gen(function* () {
       const { db } = yield* ConfectQueryCtx;
@@ -70,18 +78,7 @@ export const listOrders = query({
 
 export const getOrder = query({
   args: Schema.Struct({ orderId: Schema.String }),
-  returns: Schema.Union(
-    Schema.Struct({
-      _id: Schema.String,
-      orderId: Schema.String,
-      customerName: Schema.String,
-      items: Schema.Array(OrderItemSchema),
-      total: Schema.Number,
-      createdAt: Schema.Number,
-      state: OrderStateSchema,
-    }),
-    Schema.Null
-  ),
+  returns: Schema.Union(OrderReturnSchema, Schema.Null),
   handler: ({ orderId }) =>
     Effect.gen(function* () {
       const { db } = yield* ConfectQueryCtx;
@@ -150,7 +147,9 @@ export const updateOrderState = mutation({
 
       const order = orderOption.value;
 
-      // Validate transition
+      // Validate transition using the transition graph
+      // Note: In a production app, you'd import the machine and use createTransitionValidator
+      // For now, we keep the inline validation to avoid circular dependencies
       if (!isValidTransition(order.state._tag, state._tag)) {
         return false;
       }
@@ -190,9 +189,23 @@ export const updateOrderItems = mutation({
 });
 
 // ============================================================================
-// Helpers
+// Transition Validation
 // ============================================================================
 
+/**
+ * Valid state transitions derived from the state machine.
+ *
+ * Note: In an ideal setup, this would be imported from a shared transitions module
+ * that extracts this from the machine definition. For Convex, we keep it inline
+ * to avoid bundling issues with the machine code.
+ *
+ * To use the library's transition validator:
+ * ```ts
+ * import { createTransitionValidator } from "effstate/v3";
+ * import { orderMachine } from "../machines/order";
+ * const isValidTransition = createTransitionValidator(orderMachine);
+ * ```
+ */
 type StateTag = "Cart" | "Checkout" | "Processing" | "Shipped" | "Delivered" | "Cancelled";
 
 const validTransitions: Record<StateTag, readonly StateTag[]> = {
