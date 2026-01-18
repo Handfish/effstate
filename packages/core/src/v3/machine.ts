@@ -36,6 +36,18 @@ function callHandler<
 }
 
 /**
+ * Narrow state type for entry/exit effects.
+ * Safe because we look up the state config by state._tag,
+ * so the state variant matches the config's expected type.
+ */
+function narrowState<S extends MachineState, K extends S["_tag"]>(
+  state: S,
+  _tag: K
+): Extract<S, { _tag: K }> {
+  return state as Extract<S, { _tag: K }>;
+}
+
+/**
  * Define a state machine with the v3 API
  */
 export function defineMachine<
@@ -112,7 +124,7 @@ function interpret<
 
           // Run exit effect
           if (oldStateConfig?.exit) {
-            Effect.runFork(oldStateConfig.exit(snapshot.state as any, snapshot.context));
+            Effect.runFork(oldStateConfig.exit(narrowState(snapshot.state, oldStateTag as S["_tag"]), snapshot.context));
           }
 
           // Cancel any running stream
@@ -140,7 +152,7 @@ function interpret<
 
           // Run entry effect
           if (stateConfig?.entry) {
-            Effect.runFork(stateConfig.entry(snapshot.state as any, snapshot.context));
+            Effect.runFork(stateConfig.entry(narrowState(snapshot.state, newStateTag as S["_tag"]), snapshot.context));
           }
 
           // Start run stream if defined
@@ -198,11 +210,12 @@ function interpret<
     };
 
     // Initialize initial state
-    const initialStateConfig = config.states[snapshot.state._tag as S["_tag"]];
+    const initialStateTag = snapshot.state._tag as S["_tag"];
+    const initialStateConfig = config.states[initialStateTag];
 
     // Run entry effect for initial state
     if (initialStateConfig?.entry) {
-      Effect.runFork(initialStateConfig.entry(snapshot.state as any, snapshot.context));
+      Effect.runFork(initialStateConfig.entry(narrowState(snapshot.state, initialStateTag), snapshot.context));
     }
 
     // Start run stream for initial state
@@ -233,16 +246,16 @@ function interpret<
         subscribers.clear();
       },
       _syncSnapshot: (newSnapshot) => {
-        const oldStateTag = snapshot.state._tag;
-        const newStateTag = newSnapshot.state._tag;
+        const oldStateTag = snapshot.state._tag as S["_tag"];
+        const newStateTag = newSnapshot.state._tag as S["_tag"];
 
         // If state changed, handle exit
         if (oldStateTag !== newStateTag) {
-          const oldStateConfig = config.states[oldStateTag as S["_tag"]];
+          const oldStateConfig = config.states[oldStateTag];
 
           // Run exit effect
           if (oldStateConfig?.exit) {
-            Effect.runFork(oldStateConfig.exit(snapshot.state as any, snapshot.context));
+            Effect.runFork(oldStateConfig.exit(narrowState(snapshot.state, oldStateTag), snapshot.context));
           }
 
           // Cancel old state's run stream
@@ -258,11 +271,11 @@ function interpret<
 
         // If state changed, handle entry
         if (oldStateTag !== newStateTag) {
-          const stateConfig = config.states[newStateTag as S["_tag"]];
+          const stateConfig = config.states[newStateTag];
 
           // Run entry effect
           if (stateConfig?.entry) {
-            Effect.runFork(stateConfig.entry(snapshot.state as any, snapshot.context));
+            Effect.runFork(stateConfig.entry(narrowState(snapshot.state, newStateTag), snapshot.context));
           }
 
           // Start run stream
