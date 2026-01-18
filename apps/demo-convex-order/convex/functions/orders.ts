@@ -1,11 +1,16 @@
 import { Data, Effect, Schema, Option, pipe } from "effect";
 import { query, mutation, ConfectQueryCtx, ConfectMutationCtx } from "../confect";
+import {
+  OrderStateSchema,
+  OrderDocumentSchema,
+  type ConvexOrderState,
+} from "../schema";
 
 // ============================================================================
-// Types
+// Types (derived from schema)
 // ============================================================================
 
-type StateTag = "Cart" | "Checkout" | "Processing" | "Shipped" | "Delivered" | "Cancelled";
+type StateTag = ConvexOrderState["_tag"];
 
 // ============================================================================
 // Tagged Errors (Structured error handling)
@@ -41,53 +46,19 @@ const NonNegativeNumber = Schema.Number.pipe(
   Schema.nonNegative({ message: () => "Number must not be negative" })
 );
 
-const OrderItemSchema = Schema.Struct({
+/**
+ * Refined OrderItem schema for mutation validation.
+ * Adds constraints beyond the base schema in schema.ts.
+ */
+const ValidatedOrderItemSchema = Schema.Struct({
   id: NonEmptyString,
   name: NonEmptyString,
   quantity: PositiveNumber,
   price: NonNegativeNumber,
 });
 
-/**
- * Order state schema - manual Schema.Union for Confect compatibility.
- *
- * Note: The EffState schema helpers (tagOnlyState, stateWithTimestamp, etc.)
- * are designed for general use. For Confect/Convex with stricter type requirements,
- * the manual approach below works better.
- */
-const OrderStateSchema = Schema.Union(
-  Schema.Struct({ _tag: Schema.Literal("Cart") }),
-  Schema.Struct({ _tag: Schema.Literal("Checkout") }),
-  Schema.Struct({
-    _tag: Schema.Literal("Processing"),
-    startedAt: Schema.Number,
-  }),
-  Schema.Struct({
-    _tag: Schema.Literal("Shipped"),
-    trackingNumber: Schema.String,
-    shippedAt: Schema.Number,
-  }),
-  Schema.Struct({
-    _tag: Schema.Literal("Delivered"),
-    deliveredAt: Schema.Number,
-  }),
-  Schema.Struct({
-    _tag: Schema.Literal("Cancelled"),
-    reason: Schema.String,
-    cancelledAt: Schema.Number,
-  })
-);
-
-// Common order return schema
-const OrderReturnSchema = Schema.Struct({
-  _id: Schema.String,
-  orderId: Schema.String,
-  customerName: Schema.String,
-  items: Schema.Array(OrderItemSchema),
-  total: Schema.Number,
-  createdAt: Schema.Number,
-  state: OrderStateSchema,
-});
+// Note: Base schemas (OrderStateSchema, OrderDocumentSchema) are imported from ../schema
+// ValidatedOrderItemSchema adds refinements for mutation input validation
 
 // ============================================================================
 // Helpers (DRY order transformations)
@@ -138,7 +109,7 @@ const getOrderOrFail = (orderOption: Option.Option<DbOrder>, orderId: string) =>
 
 export const listOrders = query({
   args: Schema.Struct({}),
-  returns: Schema.Array(OrderReturnSchema),
+  returns: Schema.Array(OrderDocumentSchema),
   handler: () =>
     Effect.gen(function* () {
       const { db } = yield* ConfectQueryCtx;
@@ -149,7 +120,7 @@ export const listOrders = query({
 
 export const getOrder = query({
   args: Schema.Struct({ orderId: Schema.String }),
-  returns: Schema.Union(OrderReturnSchema, Schema.Null),
+  returns: Schema.Union(OrderDocumentSchema, Schema.Null),
   handler: ({ orderId }) =>
     Effect.gen(function* () {
       const { db } = yield* ConfectQueryCtx;
@@ -206,7 +177,7 @@ export const createOrder = mutation({
   args: Schema.Struct({
     orderId: NonEmptyString,
     customerName: NonEmptyString,
-    items: Schema.Array(OrderItemSchema),
+    items: Schema.Array(ValidatedOrderItemSchema),
     total: NonNegativeNumber,
   }),
   returns: Schema.String,
@@ -261,7 +232,7 @@ export const updateOrderState = mutation({
 export const updateOrderItems = mutation({
   args: Schema.Struct({
     orderId: NonEmptyString,
-    items: Schema.Array(OrderItemSchema),
+    items: Schema.Array(ValidatedOrderItemSchema),
     total: NonNegativeNumber,
   }),
   returns: Schema.Boolean,

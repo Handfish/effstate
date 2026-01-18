@@ -29,7 +29,7 @@ import {
 export type TimelineEvent = SyncTimelineEvent;
 
 // ============================================================================
-// Latency Simulation
+// Latency Simulation (Module-level state for demo purposes)
 // ============================================================================
 
 let simulatedLatency = 0;
@@ -39,6 +39,12 @@ export const setSimulatedLatency = (ms: number) => {
 };
 
 export const getSimulatedLatency = () => simulatedLatency;
+
+/** Apply simulated latency if configured, otherwise no-op */
+const withSimulatedLatency = <A>(effect: Effect.Effect<A>): Effect.Effect<A> =>
+  simulatedLatency > 0
+    ? pipe(Effect.sleep(simulatedLatency), Effect.flatMap(() => effect))
+    : effect;
 
 // ============================================================================
 // Persistence Effect Builders
@@ -100,6 +106,20 @@ const buildPersistEffect = (
   );
 
 // ============================================================================
+// Snapshot Comparison (Avoids JSON.stringify overhead)
+// ============================================================================
+
+/** Compare two snapshots for equality (state tag + items) */
+const snapshotsEqual = (a: { state: { _tag: string }; items: readonly OrderItem[] }, b: { state: { _tag: string }; items: readonly OrderItem[] }): boolean => {
+  if (a.state._tag !== b.state._tag) return false;
+  if (a.items.length !== b.items.length) return false;
+  return a.items.every((item, i) => {
+    const other = b.items[i];
+    return item.id === other.id && item.quantity === other.quantity && item.price === other.price;
+  });
+};
+
+// ============================================================================
 // useOrderState - Per-order EffState + Convex sync
 // ============================================================================
 
@@ -145,23 +165,26 @@ export function useOrderState(convexOrder: ConvexOrder): UseOrderStateResult {
     [convexOrder.orderId]
   );
 
+  // Persist callback - extracted for clarity
+  const persist = useCallback(
+    (newSnapshot: OrderSnapshot, event: OrderEvent) =>
+      pipe(
+        buildPersistEffect(newSnapshot, event, mutations),
+        Effect.asVoid,
+        Effect.runPromise
+      ),
+    [mutations]
+  );
+
   // Use the new useSyncedActor hook
   const { snapshot, state, context, send, actor, syncStatus } = useSyncedActor({
     machine,
     initialSnapshot,
     externalSnapshot: convexOrder,
     deserializeExternal: convexOrderToSnapshot,
-    externalEquals: (a, b) =>
-      a.state._tag === b.state._tag &&
-      JSON.stringify(a.items) === JSON.stringify(b.items),
+    externalEquals: snapshotsEqual,
     latency: simulatedLatency,
-    persist: (newSnapshot, event) =>
-      Effect.runPromise(
-        pipe(
-          buildPersistEffect(newSnapshot, event, mutations),
-          Effect.asVoid
-        )
-      ),
+    persist,
   });
 
   return {
@@ -203,23 +226,16 @@ export function useOrderList(): UseOrderListResult {
       const orderId = generateOrderId();
 
       const program = pipe(
-        // Apply simulated latency if configured
-        simulatedLatency > 0
-          ? Effect.sleep(simulatedLatency)
-          : Effect.void,
-        // Then create the order
-        Effect.flatMap(() =>
-          Effect.promise(() =>
-            createOrderMutation({
-              orderId,
-              customerName,
-              items: items.map((item) => ({ ...item })),
-              total: calculateTotal(items),
-            })
-          )
+        Effect.promise(() =>
+          createOrderMutation({
+            orderId,
+            customerName,
+            items: items.map((item) => ({ ...item })),
+            total: calculateTotal(items),
+          })
         ),
-        // Return the orderId
-        Effect.map(() => orderId)
+        withSimulatedLatency,
+        Effect.as(orderId)
       );
 
       return Effect.runPromise(program);

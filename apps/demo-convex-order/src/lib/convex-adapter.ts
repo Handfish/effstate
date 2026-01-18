@@ -1,6 +1,7 @@
 /**
  * Convex Adapter - Serialization helpers for EffState <-> Convex
  *
+ * Types are derived from schemas in convex/schema.ts (single source of truth).
  * Uses the new EffState serialization utilities for cleaner code.
  */
 
@@ -9,35 +10,17 @@ import {
   dateFieldsTransform,
 } from "effstate/v3";
 import type { OrderState, OrderContext, OrderSnapshot } from "@/machines/order";
+import type {
+  ConvexOrderItem,
+  ConvexOrderState,
+  ConvexOrder,
+} from "../../convex/schema";
 
 // ============================================================================
-// Convex Types (matches schema.ts)
+// Re-export types from schema (single source of truth)
 // ============================================================================
 
-export interface ConvexOrderItem {
-  id: string;
-  name: string;
-  quantity: number;
-  price: number;
-}
-
-export type ConvexOrderState =
-  | { _tag: "Cart" }
-  | { _tag: "Checkout" }
-  | { _tag: "Processing"; startedAt: number }
-  | { _tag: "Shipped"; trackingNumber: string; shippedAt: number }
-  | { _tag: "Delivered"; deliveredAt: number }
-  | { _tag: "Cancelled"; reason: string; cancelledAt: number };
-
-export interface ConvexOrder {
-  _id: string;
-  orderId: string;
-  customerName: string;
-  items: ConvexOrderItem[];
-  total: number;
-  createdAt: number;
-  state: ConvexOrderState;
-}
+export type { ConvexOrderItem, ConvexOrderState, ConvexOrder };
 
 // ============================================================================
 // Snapshot Serializer (using new library utilities)
