@@ -182,7 +182,8 @@ export interface MachineConfig<
 > {
   readonly id: string;
   /** Optional schema for context validation/serialization. Must decode to type C. */
-  readonly context?: Schema.Schema<C, C, never>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly context?: Schema.Schema<C, any, never>;
   readonly initialContext: C;
   readonly initialState: S;
 
@@ -224,7 +225,8 @@ export interface MachineDefinition<
   readonly id: string;
   readonly config: MachineConfig<S, C, E>;
   /** Schema for context validation/serialization. Must decode to type C. */
-  readonly contextSchema?: Schema.Schema<C, C, never>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly contextSchema?: Schema.Schema<C, any, never>;
   readonly interpret: (options?: {
     snapshot?: MachineSnapshot<S, C>;
   }) => Effect.Effect<MachineActor<S, C, E>>;
