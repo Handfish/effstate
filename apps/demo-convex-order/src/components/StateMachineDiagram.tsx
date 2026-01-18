@@ -1,10 +1,19 @@
 import { cn } from "@/lib/utils";
 import type { OrderState } from "@/machines/order";
+import type { StateTag } from "@/lib/state-styles";
+
+// ============================================================================
+// Types
+// ============================================================================
 
 interface StateMachineDiagramProps {
   currentState: OrderState;
   className?: string;
 }
+
+// ============================================================================
+// State Configuration
+// ============================================================================
 
 const states = [
   { id: "Cart", label: "Cart", x: 50, y: 100 },
@@ -31,23 +40,53 @@ const transitions: Array<{
   { from: "Processing", to: "Cancelled", label: "cancel" },
 ];
 
-const stateColors: Record<string, { bg: string; border: string; text: string }> = {
-  Cart: { bg: "fill-gray-700", border: "stroke-gray-500", text: "fill-gray-300" },
-  Checkout: { bg: "fill-blue-900", border: "stroke-blue-500", text: "fill-blue-200" },
-  Processing: { bg: "fill-yellow-900", border: "stroke-yellow-500", text: "fill-yellow-200" },
-  Shipped: { bg: "fill-purple-900", border: "stroke-purple-500", text: "fill-purple-200" },
-  Delivered: { bg: "fill-green-900", border: "stroke-green-500", text: "fill-green-200" },
-  Cancelled: { bg: "fill-red-900", border: "stroke-red-500", text: "fill-red-200" },
+// ============================================================================
+// Unified State Styling (Record-based)
+// ============================================================================
+
+interface StateVisualStyle {
+  readonly inactive: { bg: string; border: string; text: string };
+  readonly active: { bg: string; border: string; glow: string };
+}
+
+const stateStyles: Record<StateTag, StateVisualStyle> = {
+  Cart: {
+    inactive: { bg: "fill-gray-700", border: "stroke-gray-500", text: "fill-gray-300" },
+    active: { bg: "fill-gray-600", border: "stroke-gray-300", glow: "drop-shadow-[0_0_8px_rgba(156,163,175,0.5)]" },
+  },
+  Checkout: {
+    inactive: { bg: "fill-blue-900", border: "stroke-blue-500", text: "fill-blue-200" },
+    active: { bg: "fill-blue-700", border: "stroke-blue-300", glow: "drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]" },
+  },
+  Processing: {
+    inactive: { bg: "fill-yellow-900", border: "stroke-yellow-500", text: "fill-yellow-200" },
+    active: { bg: "fill-yellow-700", border: "stroke-yellow-300", glow: "drop-shadow-[0_0_8px_rgba(234,179,8,0.5)]" },
+  },
+  Shipped: {
+    inactive: { bg: "fill-purple-900", border: "stroke-purple-500", text: "fill-purple-200" },
+    active: { bg: "fill-purple-700", border: "stroke-purple-300", glow: "drop-shadow-[0_0_8px_rgba(168,85,247,0.5)]" },
+  },
+  Delivered: {
+    inactive: { bg: "fill-green-900", border: "stroke-green-500", text: "fill-green-200" },
+    active: { bg: "fill-green-700", border: "stroke-green-300", glow: "drop-shadow-[0_0_8px_rgba(34,197,94,0.5)]" },
+  },
+  Cancelled: {
+    inactive: { bg: "fill-red-900", border: "stroke-red-500", text: "fill-red-200" },
+    active: { bg: "fill-red-700", border: "stroke-red-300", glow: "drop-shadow-[0_0_8px_rgba(239,68,68,0.5)]" },
+  },
 };
 
-const activeColors: Record<string, { bg: string; border: string; glow: string }> = {
-  Cart: { bg: "fill-gray-600", border: "stroke-gray-300", glow: "drop-shadow-[0_0_8px_rgba(156,163,175,0.5)]" },
-  Checkout: { bg: "fill-blue-700", border: "stroke-blue-300", glow: "drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]" },
-  Processing: { bg: "fill-yellow-700", border: "stroke-yellow-300", glow: "drop-shadow-[0_0_8px_rgba(234,179,8,0.5)]" },
-  Shipped: { bg: "fill-purple-700", border: "stroke-purple-300", glow: "drop-shadow-[0_0_8px_rgba(168,85,247,0.5)]" },
-  Delivered: { bg: "fill-green-700", border: "stroke-green-300", glow: "drop-shadow-[0_0_8px_rgba(34,197,94,0.5)]" },
-  Cancelled: { bg: "fill-red-700", border: "stroke-red-300", glow: "drop-shadow-[0_0_8px_rgba(239,68,68,0.5)]" },
+/** Get resolved styles for a state based on active status */
+const getStateNodeStyle = (stateId: StateTag, isActive: boolean) => {
+  const config = stateStyles[stateId];
+  return isActive
+    ? { bg: config.active.bg, border: config.active.border, glow: config.active.glow, text: "fill-white" }
+    : { bg: config.inactive.bg, border: config.inactive.border, glow: "", text: config.inactive.text };
 };
+
+// ============================================================================
+// Helpers
+// ============================================================================
 
 function getStatePosition(stateId: string) {
   return states.find((s) => s.id === stateId) ?? { x: 0, y: 0 };
@@ -125,13 +164,10 @@ export function StateMachineDiagram({ currentState, className }: StateMachineDia
         {/* State nodes */}
         {states.map((state) => {
           const isActive = state.id === currentTag;
-          const colors = isActive ? activeColors[state.id] : stateColors[state.id];
+          const style = getStateNodeStyle(state.id, isActive);
 
           return (
-            <g
-              key={state.id}
-              className={cn("transition-all duration-300", isActive && activeColors[state.id].glow)}
-            >
+            <g key={state.id} className={cn("transition-all duration-300", style.glow)}>
               <rect
                 x={state.x - 50}
                 y={state.y - 25}
@@ -140,8 +176,8 @@ export function StateMachineDiagram({ currentState, className }: StateMachineDia
                 rx={8}
                 className={cn(
                   "transition-all duration-300 stroke-2",
-                  colors.bg,
-                  colors.border,
+                  style.bg,
+                  style.border,
                   isActive && "stroke-[3px]"
                 )}
               />
@@ -151,7 +187,8 @@ export function StateMachineDiagram({ currentState, className }: StateMachineDia
                 textAnchor="middle"
                 className={cn(
                   "text-sm font-medium transition-all duration-300",
-                  isActive ? "fill-white font-bold" : stateColors[state.id].text
+                  style.text,
+                  isActive && "font-bold"
                 )}
               >
                 {state.label}
