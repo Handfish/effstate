@@ -52,7 +52,9 @@ const orderSnapshotSerializer = createSnapshotSerializer<OrderState, OrderContex
 // ============================================================================
 
 export function serializeState(state: OrderState): ConvexOrderState {
-  return orderSnapshotSerializer.serialize({ state, context: {} as OrderContext }).state as ConvexOrderState;
+  const serialized = orderSnapshotSerializer.serialize({ state, context: {} as OrderContext }).state;
+  // Spread to plain object - Convex client can't serialize class instances
+  return { ...serialized } as ConvexOrderState;
 }
 
 export function deserializeState(state: ConvexOrderState): OrderState {

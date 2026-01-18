@@ -43,7 +43,10 @@ export const getSimulatedLatency = () => simulatedLatency;
 /** Apply simulated latency if configured, otherwise no-op */
 const withSimulatedLatency = <A>(effect: Effect.Effect<A>): Effect.Effect<A> =>
   simulatedLatency > 0
-    ? pipe(Effect.sleep(simulatedLatency), Effect.flatMap(() => effect))
+    ? pipe(
+        Effect.sleep(simulatedLatency),
+        Effect.flatMap(() => effect),
+      )
     : effect;
 
 // ============================================================================
@@ -59,7 +62,14 @@ type Mutations = {
 };
 
 /** State transition events that persist state changes */
-const StateEvents = ["ProceedToCheckout", "BackToCart", "PlaceOrder", "MarkShipped", "MarkDelivered", "CancelOrder"] as const;
+const StateEvents = [
+  "ProceedToCheckout",
+  "BackToCart",
+  "PlaceOrder",
+  "MarkShipped",
+  "MarkDelivered",
+  "CancelOrder",
+] as const;
 
 /** Item modification events that persist context changes */
 const ItemEvents = ["AddItem", "RemoveItem", "UpdateQuantity"] as const;
@@ -76,7 +86,7 @@ const persistState = (snapshot: OrderSnapshot, mutations: Mutations) =>
     mutations.updateState({
       orderId: snapshot.context.orderId,
       state: serializeState(snapshot.state),
-    })
+    }),
   );
 
 /** Persist items to Convex */
@@ -86,23 +96,19 @@ const persistItems = (snapshot: OrderSnapshot, mutations: Mutations) =>
       orderId: snapshot.context.orderId,
       items: [...snapshot.context.items],
       total: snapshot.context.total,
-    })
+    }),
   );
 
 /**
  * Build a persistence effect from an event using Match.
  * Exhaustive pattern matching ensures all events are handled.
  */
-const buildPersistEffect = (
-  snapshot: OrderSnapshot,
-  event: OrderEvent,
-  mutations: Mutations
-) =>
+const buildPersistEffect = (snapshot: OrderSnapshot, event: OrderEvent, mutations: Mutations) =>
   pipe(
     Match.value(event._tag),
     Match.when(isStateEvent, () => persistState(snapshot, mutations)),
     Match.when(isItemEvent, () => persistItems(snapshot, mutations)),
-    Match.exhaustive
+    Match.exhaustive,
   );
 
 // ============================================================================
@@ -110,7 +116,10 @@ const buildPersistEffect = (
 // ============================================================================
 
 /** Compare two snapshots for equality (state tag + items) */
-const snapshotsEqual = (a: { state: { _tag: string }; items: readonly OrderItem[] }, b: { state: { _tag: string }; items: readonly OrderItem[] }): boolean => {
+const snapshotsEqual = (
+  a: { state: { _tag: string }; items: readonly OrderItem[] },
+  b: { state: { _tag: string }; items: readonly OrderItem[] },
+): boolean => {
   if (a.state._tag !== b.state._tag) return false;
   if (a.items.length !== b.items.length) return false;
   return a.items.every((item, i) => {
@@ -148,13 +157,13 @@ export function useOrderState(convexOrder: ConvexOrder): UseOrderStateResult {
       updateState: updateStateMutation,
       updateItems: updateItemsMutation,
     }),
-    [updateStateMutation, updateItemsMutation]
+    [updateStateMutation, updateItemsMutation],
   );
 
   // Create machine for this order
   const machine = useMemo(
     () => createOrderMachine(convexOrderToSnapshot(convexOrder).context),
-    [convexOrder.orderId]
+    [convexOrder.orderId],
   );
 
   // Initial snapshot from Convex
@@ -162,18 +171,14 @@ export function useOrderState(convexOrder: ConvexOrder): UseOrderStateResult {
     () => convexOrderToSnapshot(convexOrder),
     // Only compute on first render for this orderId
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [convexOrder.orderId]
+    [convexOrder.orderId],
   );
 
   // Persist callback - extracted for clarity
   const persist = useCallback(
     (newSnapshot: OrderSnapshot, event: OrderEvent) =>
-      pipe(
-        buildPersistEffect(newSnapshot, event, mutations),
-        Effect.asVoid,
-        Effect.runPromise
-      ),
-    [mutations]
+      pipe(buildPersistEffect(newSnapshot, event, mutations), Effect.asVoid, Effect.runPromise),
+    [mutations],
   );
 
   // Use the new useSyncedActor hook
@@ -232,15 +237,15 @@ export function useOrderList(): UseOrderListResult {
             customerName,
             items: items.map((item) => ({ ...item })),
             total: calculateTotal(items),
-          })
+          }),
         ),
         withSimulatedLatency,
-        Effect.as(orderId)
+        Effect.as(orderId),
       );
 
       return Effect.runPromise(program);
     },
-    [createOrderMutation]
+    [createOrderMutation],
   );
 
   return {
