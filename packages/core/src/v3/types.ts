@@ -181,7 +181,8 @@ export interface MachineConfig<
   E extends MachineEvent,
 > {
   readonly id: string;
-  readonly context?: Schema.Schema.Any;
+  /** Optional schema for context validation/serialization. Must decode to type C. */
+  readonly context?: Schema.Schema<C, C, never>;
   readonly initialContext: C;
   readonly initialState: S;
 
@@ -222,7 +223,8 @@ export interface MachineDefinition<
 > {
   readonly id: string;
   readonly config: MachineConfig<S, C, E>;
-  readonly contextSchema?: Schema.Schema.Any;
+  /** Schema for context validation/serialization. Must decode to type C. */
+  readonly contextSchema?: Schema.Schema<C, C, never>;
   readonly interpret: (options?: {
     snapshot?: MachineSnapshot<S, C>;
   }) => Effect.Effect<MachineActor<S, C, E>>;
