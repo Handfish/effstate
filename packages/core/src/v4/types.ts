@@ -1,29 +1,39 @@
 /**
- * EffState v3 Core Types
+ * EffState v4 Core Types
  *
- * Simplified API with same type safety guarantees:
- * - Object-based handlers (no Match boilerplate)
- * - Implicit stay for unhandled events
- * - Discriminated union states preserved
- * - Effect/Stream integration for async operations
+ * PhD-level type safety:
+ * - Full R (Requirements) channel support
+ * - Full E (Error) channel support
+ * - Proper discriminated union handling
+ * - Effect/Stream integration with dependency injection
  */
 
 import type { Effect, Schema, Stream } from "effect";
 
 // ============================================================================
-// Core Types (same as v2)
+// Core Types
 // ============================================================================
 
+/** Base state shape - must have readonly _tag */
 export type MachineState = { readonly _tag: string };
+
+/** Base event shape - must have readonly _tag */
 export type MachineEvent = { readonly _tag: string };
+
+/** Base context shape */
 export type MachineContext = object;
 
+/** Extract the tag type from a state */
 export type StateTag<S extends MachineState> = S["_tag"];
+
+/** Extract a specific state variant by tag */
 export type StateByTag<S extends MachineState, T extends S["_tag"]> = Extract<S, { _tag: T }>;
+
+/** Extract a specific event variant by tag */
 export type EventByTag<E extends MachineEvent, T extends E["_tag"]> = Extract<E, { _tag: T }>;
 
 // ============================================================================
-// Transition Results (clean return-object pattern)
+// Transition Results
 // ============================================================================
 
 /**
@@ -55,57 +65,39 @@ export type Transition<S extends MachineState, C extends MachineContext> =
 /**
  * Handler for a single event type.
  * Return what you want to happen - no builder functions needed.
- *
- * @example
- * ```ts
- * Click: () => ({ goto: DoorState.Opening(new Date()) })
- * DoorTick: (ctx, event) => ({ update: { position: ctx.position + event.delta } })
- * PowerOff: () => null  // stay, do nothing
- * Log: (ctx) => ({ actions: [() => console.log(ctx.count)] })  // actions only
- * Submit: (ctx) => ({
- *   goto: State.Submitted(),
- *   actions: [() => analytics.track('submitted', ctx)]
- * })
- * ```
  */
-export type EventHandler<S extends MachineState, C extends MachineContext, E extends MachineEvent> = (
-  ctx: C,
-  event: E,
-) => Transition<S, C>;
+export type EventHandler<
+  S extends MachineState,
+  C extends MachineContext,
+  E extends MachineEvent
+> = (ctx: C, event: E) => Transition<S, C>;
 
 /**
  * Object mapping event tags to handlers.
- * Partial = unhandled events stay. Full = exhaustive.
+ * Partial = unhandled events stay in current state.
  */
-export type EventHandlers<S extends MachineState, C extends MachineContext, E extends MachineEvent> = {
+export type EventHandlers<
+  S extends MachineState,
+  C extends MachineContext,
+  E extends MachineEvent
+> = {
   [K in E["_tag"]]?: EventHandler<S, C, EventByTag<E, K>>;
 };
 
 /**
  * Exhaustive handlers - requires ALL event types handled
  */
-export type ExhaustiveEventHandlers<S extends MachineState, C extends MachineContext, E extends MachineEvent> = {
+export type ExhaustiveEventHandlers<
+  S extends MachineState,
+  C extends MachineContext,
+  E extends MachineEvent
+> = {
   [K in E["_tag"]]: EventHandler<S, C, EventByTag<E, K>>;
 };
 
 /**
  * Helper to enforce exhaustive event handling.
  * Use this when you want compile-time errors for missing handlers.
- *
- * @example
- * ```ts
- * states: {
- *   Closed: {
- *     on: strict<DoorState, DoorContext, DoorEvent>({
- *       Click: () => ({ goto: DoorState.Opening() }),
- *       DoorTick: () => null,  // must handle all events
- *       PowerOn: () => null,
- *       PowerOff: () => null,
- *       // ... compiler error if any event missing
- *     }),
- *   },
- * }
- * ```
  */
 export function strict<
   S extends MachineState,
@@ -116,57 +108,60 @@ export function strict<
 }
 
 // ============================================================================
-// State Configuration (simplified - no R type for browser use)
+// State Configuration (with R and E channels)
 // ============================================================================
 
+/**
+ * State configuration base with full Effect type parameters.
+ *
+ * @typeParam S - State discriminated union
+ * @typeParam C - Context type
+ * @typeParam E - Event discriminated union
+ * @typeParam TStateTag - The specific state tag this config is for
+ * @typeParam R - Requirements (Effect context/services)
+ * @typeParam Err - Error type for effects
+ */
 interface StateConfigBase<
   S extends MachineState,
   C extends MachineContext,
   E extends MachineEvent,
   TStateTag extends S["_tag"],
+  R,
+  Err,
 > {
-  /** Entry effect when entering this state */
-  entry?: (state: StateByTag<S, TStateTag>, ctx: C) => Effect.Effect<void>;
+  /**
+   * Entry effect when entering this state.
+   * Can require services via R channel.
+   */
+  entry?: (state: StateByTag<S, TStateTag>, ctx: C) => Effect.Effect<void, Err, R>;
 
-  /** Exit effect when leaving this state */
-  exit?: (state: StateByTag<S, TStateTag>, ctx: C) => Effect.Effect<void>;
+  /**
+   * Exit effect when leaving this state.
+   * Can require services via R channel.
+   */
+  exit?: (state: StateByTag<S, TStateTag>, ctx: C) => Effect.Effect<void, Err, R>;
 
-  /** Continuous stream while in this state (e.g., animation ticks, async fetches)
-   *  Can be a static stream or a function that receives snapshot for conditional behavior.
-   *  For one-shot effects, use a function that returns Stream.fromEffect(...) conditionally. */
-  run?: Stream.Stream<E> | ((snapshot: MachineSnapshot<S, C>) => Stream.Stream<E>);
+  /**
+   * Continuous stream while in this state (e.g., animation ticks, async fetches).
+   * Can be a static stream or a function that receives snapshot for conditional behavior.
+   * Can require services via R channel.
+   */
+  run?: Stream.Stream<E, Err, R> | ((snapshot: MachineSnapshot<S, C>) => Stream.Stream<E, Err, R>);
 }
 
 /**
  * State configuration with optional strict mode.
  * - strict: false (default) - unhandled events stay in current state
  * - strict: true - ALL events must be explicitly handled (compile error if missing)
- *
- * @example
- * ```ts
- * states: {
- *   // Lenient: unhandled events stay
- *   Idle: {
- *     on: { Toggle: () => ({ goto: State.Running() }) }
- *   },
- *   // Strict: must handle ALL events
- *   Running: {
- *     strict: true,
- *     on: {
- *       Toggle: () => ({ goto: State.Idle() }),
- *       Tick: (ctx) => ({ update: { count: ctx.count + 1 } }),
- *       // Compiler error if any event missing!
- *     }
- *   },
- * }
- * ```
  */
 export type StateConfig<
   S extends MachineState,
   C extends MachineContext,
   E extends MachineEvent,
   TStateTag extends S["_tag"],
-> = StateConfigBase<S, C, E, TStateTag> & (
+  R = never,
+  Err = never,
+> = StateConfigBase<S, C, E, TStateTag, R, Err> & (
   | { strict?: false; on: EventHandlers<S, C, E> }
   | { strict: true; on: ExhaustiveEventHandlers<S, C, E> }
 );
@@ -175,15 +170,30 @@ export type StateConfig<
 // Machine Configuration
 // ============================================================================
 
+/**
+ * Machine configuration with full type parameters.
+ *
+ * @typeParam S - State discriminated union
+ * @typeParam C - Context type
+ * @typeParam E - Event discriminated union
+ * @typeParam R - Requirements (Effect context/services needed by entry/exit/run)
+ * @typeParam Err - Error type for effects
+ */
 export interface MachineConfig<
   S extends MachineState,
   C extends MachineContext,
   E extends MachineEvent,
+  R = never,
+  Err = never,
 > {
   readonly id: string;
-  /** Optional schema for context validation/serialization. Must decode to type C. */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly context?: Schema.Schema<C, any, never>;
+
+  /**
+   * Optional schema for context validation/serialization.
+   * Any schema that decodes to type C is accepted.
+   */
+  readonly context?: Schema.Schema<C>;
+
   readonly initialContext: C;
   readonly initialState: S;
 
@@ -192,12 +202,12 @@ export interface MachineConfig<
 
   /** State configurations */
   readonly states: {
-    [K in S["_tag"]]: StateConfig<S, C, E, K>;
+    [K in S["_tag"]]: StateConfig<S, C, E, K, R, Err>;
   };
 }
 
 // ============================================================================
-// Machine Definition & Actor
+// Machine Snapshot
 // ============================================================================
 
 export interface MachineSnapshot<S extends MachineState, C extends MachineContext> {
@@ -205,29 +215,108 @@ export interface MachineSnapshot<S extends MachineState, C extends MachineContex
   readonly context: C;
 }
 
+// ============================================================================
+// Machine Actor
+// ============================================================================
+
 export interface MachineActor<
   S extends MachineState,
   C extends MachineContext,
   E extends MachineEvent,
 > {
+  /** Send an event to the machine */
   readonly send: (event: E) => void;
+
+  /** Get current snapshot */
   readonly getSnapshot: () => MachineSnapshot<S, C>;
+
+  /** Subscribe to snapshot changes */
   readonly subscribe: (observer: (snapshot: MachineSnapshot<S, C>) => void) => () => void;
+
+  /** Stop the actor and cleanup resources */
   readonly stop: () => void;
+
+  /**
+   * Sync snapshot from external source (e.g., Convex).
+   * Triggers exit/entry effects if state changes.
+   */
   readonly _syncSnapshot: (snapshot: MachineSnapshot<S, C>) => void;
 }
 
+// ============================================================================
+// Machine Definition
+// ============================================================================
+
+/**
+ * Machine definition with full type parameters.
+ *
+ * @typeParam S - State discriminated union
+ * @typeParam C - Context type
+ * @typeParam E - Event discriminated union
+ * @typeParam R - Requirements for entry/exit/run effects
+ * @typeParam Err - Error type for effects
+ */
 export interface MachineDefinition<
   S extends MachineState,
   C extends MachineContext,
   E extends MachineEvent,
+  R = never,
+  Err = never,
 > {
   readonly id: string;
-  readonly config: MachineConfig<S, C, E>;
-  /** Schema for context validation/serialization. Must decode to type C. */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly contextSchema?: Schema.Schema<C, any, never>;
+  readonly config: MachineConfig<S, C, E, R, Err>;
+
+  /** Schema for context validation/serialization */
+  readonly contextSchema?: Schema.Schema<C>;
+
+  /**
+   * Create an actor from this machine.
+   *
+   * Returns an Effect that:
+   * - Requires R (services needed by entry/exit/run)
+   * - May fail with Err
+   * - Produces a MachineActor
+   */
   readonly interpret: (options?: {
     snapshot?: MachineSnapshot<S, C>;
-  }) => Effect.Effect<MachineActor<S, C, E>>;
+  }) => Effect.Effect<MachineActor<S, C, E>, Err, R>;
 }
+
+// ============================================================================
+// Type-level utilities for advanced usage
+// ============================================================================
+
+/**
+ * Extract the state type from a machine definition.
+ */
+export type MachineStateType<T> = T extends MachineDefinition<infer S, infer _C, infer _E, infer _R, infer _Err>
+  ? S
+  : never;
+
+/**
+ * Extract the context type from a machine definition.
+ */
+export type MachineContextType<T> = T extends MachineDefinition<infer _S, infer C, infer _E, infer _R, infer _Err>
+  ? C
+  : never;
+
+/**
+ * Extract the event type from a machine definition.
+ */
+export type MachineEventType<T> = T extends MachineDefinition<infer _S, infer _C, infer E, infer _R, infer _Err>
+  ? E
+  : never;
+
+/**
+ * Extract the requirements type from a machine definition.
+ */
+export type MachineRequirements<T> = T extends MachineDefinition<infer _S, infer _C, infer _E, infer R, infer _Err>
+  ? R
+  : never;
+
+/**
+ * Extract the error type from a machine definition.
+ */
+export type MachineError<T> = T extends MachineDefinition<infer _S, infer _C, infer _E, infer _R, infer Err>
+  ? Err
+  : never;

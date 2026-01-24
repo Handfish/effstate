@@ -1,9 +1,14 @@
 /**
  * EffState v4 - Schema-First State Machines
  *
- * v4 = v3 + Schema-First Helpers
+ * PhD-level type safety:
+ * - Full R (Requirements) channel support for dependency injection
+ * - Full E (Error) channel support for error tracking
+ * - Schema-based runtime validation
+ * - Proper type guards using Schema.is
+ * - No unsafe casts
  *
- * Everything from v3:
+ * v4 = v3 features + Schema-First Helpers:
  * - Object-based handlers (no Match boilerplate)
  * - Implicit stay for unhandled events
  * - Discriminated union states
@@ -12,23 +17,71 @@
  * - Actions
  *
  * Plus schema-first helpers for Convex/Confect integration:
- * - State() - create states with bundled schema + constructor
- * - Event() - create events with bundled schema + constructor
+ * - State() - create states with bundled schema + constructor + type guard
+ * - Event() - create events with bundled schema + constructor + type guard
  * - Union() - create union schemas from State/Event definitions
  *
  * Single source of truth: define once, use everywhere.
  */
 
 // Schema-first helpers (NEW in v4)
-export { State, Event, Union } from "./state";
-export type { StateType, EventType, UnionType } from "./state";
+export {
+  State,
+  Event,
+  Union,
+  unionDecoder,
+  unionGuard,
+} from "./state";
 
-// Everything from v3
-export * from "./types";
-export * from "./machine";
+export type {
+  SchemaFields,
+  StateDefinition,
+  StateType,
+  EventType,
+  UnionType,
+} from "./state";
+
+// Core types (with R and Err channels)
+export type {
+  MachineState,
+  MachineEvent,
+  MachineContext,
+  StateTag,
+  StateByTag,
+  EventByTag,
+  TransitionAction,
+  Transition,
+  EventHandler,
+  EventHandlers,
+  ExhaustiveEventHandlers,
+  StateConfig,
+  MachineConfig,
+  MachineSnapshot,
+  MachineActor,
+  MachineDefinition,
+  // Type extractors
+  MachineStateType,
+  MachineContextType,
+  MachineEventType,
+  MachineRequirements,
+  MachineError,
+} from "./types";
+
+export { strict } from "./types";
+
+// Machine
+export { defineMachine, define } from "./machine";
+
+// Serialization utilities
 export * from "./state-serializer";
+
+// Transition analysis
 export * from "./transitions";
+
+// Schema utilities
 export * from "./schema-utils";
+
+// Convex adapter
 export * from "./convex-adapter";
 
 // Re-export Machine namespace for convenience
@@ -42,6 +95,6 @@ import * as SchemaUtils from "./schema-utils";
 import * as ConvexAdapterUtils from "./convex-adapter";
 export { Serializer, Transitions, SchemaUtils, ConvexAdapterUtils };
 
-// Re-export Schema for convenience
-import { Schema } from "effect";
-export { Schema };
+// Re-export Effect types for convenience
+import { Schema, Effect, Stream, Either } from "effect";
+export { Schema, Effect, Stream, Either };
