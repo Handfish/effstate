@@ -8,7 +8,7 @@
  * - Effect/Stream integration with dependency injection
  */
 
-import type { Effect, Schema, Stream } from "effect";
+import type { Cause, Effect, Schema, Stream } from "effect";
 
 // ============================================================================
 // Core Types
@@ -39,6 +39,29 @@ export type EventByTag<E extends MachineEvent, T extends E["_tag"]> = Extract<E,
 /**
  * Fire-and-forget action executed during a transition.
  * Has closure access to ctx and event from the handler.
+ *
+ * Design decision: Why `() => void` instead of `Effect<void, Err, R>`?
+ *
+ * Actions are intentionally simple synchronous side effects for:
+ * - Logging: `() => console.log("transitioned")`
+ * - External refs: `() => externalRef.current = value`
+ * - Analytics: `() => track("event")`
+ *
+ * For effectful operations that need:
+ * - Dependencies (R channel) → use entry/exit effects
+ * - Error handling (Err channel) → use entry/exit effects
+ * - Async operations → use run streams
+ *
+ * This is a "functional core, imperative shell" boundary. The core
+ * (state transitions, handlers) is pure. Actions are the escape hatch
+ * for synchronous side effects at the edge.
+ *
+ * A fully pure alternative would be:
+ * ```typescript
+ * type TransitionAction<R, Err> = Effect.Effect<void, Err, R>
+ * ```
+ * But this adds significant complexity to the API with minimal benefit,
+ * since entry/exit/run already provide full Effect support.
  */
 export type TransitionAction = () => void;
 
@@ -221,18 +244,50 @@ export interface MachineSnapshot<S extends MachineState, C extends MachineContex
 // Machine Actor
 // ============================================================================
 
+/**
+ * The runtime actor interface for interacting with a running machine.
+ *
+ * Design decision: Why are methods like `send` returning `void` instead of `Effect`?
+ *
+ * This is an intentional "functional core, imperative shell" design:
+ *
+ * 1. **interpret** returns `Effect<MachineActor, never, R>` - the creation is effectful,
+ *    requiring services from R to be provided.
+ *
+ * 2. **MachineActor methods** are imperative - they're designed for integration with
+ *    React, callbacks, and other imperative UI frameworks where running Effects on
+ *    every interaction adds friction.
+ *
+ * A fully pure alternative would be:
+ * ```typescript
+ * interface PureMachineActor<S, C, E> {
+ *   send: (event: E) => Effect<void, never, never>;
+ *   getSnapshot: Effect<Snapshot, never, never>;
+ *   stop: Effect<void, never, never>;
+ * }
+ * ```
+ *
+ * We chose the imperative interface because:
+ * - React integration: `onClick={() => actor.send(event)}` is cleaner than Effect.runSync
+ * - The interesting effects (entry/exit/run) are already properly managed
+ * - Send is synchronous state update - no R or Err to track
+ * - Matches XState, Zustand, and other state management conventions
+ *
+ * The "purity" is preserved where it matters: entry/exit/run effects have full
+ * R and Err channels. The actor interface is just the imperative boundary.
+ */
 export interface MachineActor<
   S extends MachineState,
   C extends MachineContext,
   E extends MachineEvent,
 > {
-  /** Send an event to the machine */
+  /** Send an event to the machine (synchronous state update) */
   readonly send: (event: E) => void;
 
-  /** Get current snapshot */
+  /** Get current snapshot (synchronous read) */
   readonly getSnapshot: () => MachineSnapshot<S, C>;
 
-  /** Subscribe to snapshot changes */
+  /** Subscribe to snapshot changes (callback-based for React compatibility) */
   readonly subscribe: (observer: (snapshot: MachineSnapshot<S, C>) => void) => () => void;
 
   /** Stop the actor and cleanup resources */
@@ -285,7 +340,7 @@ export interface MachineDefinition<
    */
   readonly interpret: (options?: {
     snapshot?: MachineSnapshot<S, C>;
-    onError?: (error: { effectType: "entry" | "exit" | "run"; stateTag: string; cause: unknown }) => void;
+    onError?: (error: { effectType: "entry" | "exit" | "run"; stateTag: string; cause: Cause.Cause<Err> }) => void;
   }) => Effect.Effect<MachineActor<S, C, E>, never, R>;
 }
 

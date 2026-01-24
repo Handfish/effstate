@@ -28,7 +28,16 @@ import type {
 /**
  * Call an event handler with proper typing.
  *
- * Sound: handler lookup by event._tag guarantees type alignment.
+ * The casts here are unavoidable due to TypeScript's "correlated union" limitation:
+ * TypeScript can't express that `handlers[event._tag]` returns a handler specifically
+ * typed for `event`. This is a known limitation (see TypeScript #30581).
+ *
+ * Soundness argument:
+ * - handlers has type { [K in E["_tag"]]?: EventHandler<S, C, EventByTag<E, K>> }
+ * - event._tag is one of E["_tag"] union members
+ * - Therefore handlers[event._tag] returns EventHandler<S, C, EventByTag<E, typeof event._tag>>
+ * - Since event: E and event._tag matches, event IS EventByTag<E, typeof event._tag>
+ * - The cast from EventHandler<S, C, EventByTag<E, K>> to (ctx: C, event: E) => ... is sound
  */
 function callHandler<
   S extends MachineState,
@@ -39,8 +48,10 @@ function callHandler<
   ctx: C,
   event: E
 ): Transition<S, C> | null {
+  // Cast 1: event._tag is string at runtime, but we know it's E["_tag"]
   const handler = handlers[event._tag as E["_tag"]];
   if (!handler) return null;
+  // Cast 2: handler is for EventByTag<E, K>, event is E, but they're the same
   type Handler = (ctx: C, event: E) => Transition<S, C>;
   return (handler as Handler)(ctx, event);
 }
@@ -48,7 +59,16 @@ function callHandler<
 /**
  * Narrow a state to a specific variant.
  *
- * Sound: caller verifies state._tag === expectedTag before calling.
+ * This cast is necessary because TypeScript can't narrow a generic S to StateByTag<S, K>
+ * even when we've verified state._tag === expectedTag at runtime.
+ *
+ * Soundness argument:
+ * - Caller verifies state._tag === expectedTag before calling
+ * - StateByTag<S, K> = Extract<S, { _tag: K }>
+ * - Since state._tag === expectedTag === K, state IS StateByTag<S, K>
+ * - The cast is just telling TypeScript what we've verified at runtime
+ *
+ * Note: _expectedTag parameter exists only for type inference, not used at runtime.
  */
 function narrowState<S extends MachineState, K extends S["_tag"]>(
   state: S,
@@ -146,21 +166,38 @@ function interpret<
       if (options?.onError) {
         options.onError(error);
       } else {
-        // Default: log to console (synchronous, doesn't need Effect)
+        // Default: log to console
+        // Note: We use console.error here instead of Effect.logError because:
+        // 1. handleError is called from forked fibers, outside the main Effect.gen
+        // 2. Using Effect.logError would require another runFork just for logging
+        // 3. Users who want Effect-based logging can provide their own onError
         console.error(`EffState: ${effectType}(${stateTag}) failed:`, Cause.pretty(cause));
       }
     };
 
-    // Current snapshot (mutable)
+    // Internal mutable state
+    //
+    // Design decision: Why `let` instead of `Ref`?
+    //
+    // A fully pure implementation would use:
+    //   const snapshotRef = yield* Ref.make(initialSnapshot)
+    //   const subscribersRef = yield* SubscriptionRef.make(...)
+    //   const fiberRef = yield* Ref.make<Option<Fiber>>(Option.none())
+    //
+    // We chose mutable variables because:
+    // 1. All mutations happen within the actor's closure - no external access
+    // 2. The MachineActor interface is already imperative (see design note above)
+    // 3. Using Refs would require Effect composition for every state access
+    // 4. Performance: direct mutation is faster than Ref.get/Ref.set
+    //
+    // The trade-off: internal implementation is imperative, but the boundaries
+    // (interpret requiring R, entry/exit/run being Effects) maintain purity
+    // where it matters for composition and testing.
     let snapshot: MachineSnapshot<S, C> = options?.snapshot ?? {
       state: config.initialState,
       context: config.initialContext,
     };
-
-    // Subscribers
     const subscribers = new Set<(snap: MachineSnapshot<S, C>) => void>();
-
-    // Active stream fiber (error is never because we catchAllCause before forking)
     let runFiber: Fiber.RuntimeFiber<void, never> | null = null;
 
     // Notify all subscribers

@@ -9,7 +9,8 @@
   "typesVersions": {
     "*": {
       "v2": ["./dist/v2/index.d.ts"],
-      "v3": ["./dist/v3/index.d.ts"]
+      "v3": ["./dist/v3/index.d.ts"],
+      "v4": ["./dist/v4/index.d.ts"]
     }
   },
   "exports": {
@@ -41,6 +42,16 @@
       "require": {
         "types": "./dist/v3/index.d.cts",
         "default": "./dist/v3/index.cjs"
+      }
+    },
+    "./v4": {
+      "import": {
+        "types": "./dist/v4/index.d.ts",
+        "default": "./dist/v4/index.js"
+      },
+      "require": {
+        "types": "./dist/v4/index.d.cts",
+        "default": "./dist/v4/index.cjs"
       }
     }
   },
