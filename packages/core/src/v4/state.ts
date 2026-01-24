@@ -2,12 +2,23 @@
  * EffState v4 - Schema-First State Definitions
  *
  * PhD-level type safety:
- * - No unsafe casts (as unknown as)
  * - Schema-based runtime validation
- * - Proper type guards using Schema.is
+ * - Proper type guards using Schema.is (validates ALL fields, not just _tag)
  * - Full type inference preservation
  *
  * Single source of truth: define once, use everywhere.
+ *
+ * Note on type casts: This file contains 4 `as unknown as` casts that are
+ * sound but unavoidable due to TypeScript limitations:
+ *
+ * 1. Schema R channel casts (lines ~147, ~334, ~359): Effect Schema tracks
+ *    an R (Requirements) channel. Simple data schemas have R={} but decode/is
+ *    functions need R=never. Since State/Event are only for data schemas
+ *    without context requirements, this narrowing is safe.
+ *
+ * 2. Generic spread cast (line ~160): TypeScript can't infer that spreading
+ *    { _tag: tag } with TFields produces the exact StateType. The type
+ *    algebra is correct but TS needs help.
  */
 
 import { Either, Schema, ParseResult } from "effect";

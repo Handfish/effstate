@@ -3,10 +3,10 @@
  *
  * PhD-level type safety:
  * - Full R (Requirements) channel support for dependency injection
- * - Full E (Error) channel support for error tracking
+ * - Honest error handling (errors via callback, never silent failures)
  * - Schema-based runtime validation
  * - Proper type guards using Schema.is
- * - No unsafe casts
+ * - Minimal, documented casts (see state.ts header for details)
  *
  * v4 = v3 features + Schema-First Helpers:
  * - Object-based handlers (no Match boilerplate)
@@ -71,6 +71,7 @@ export { strict } from "./types";
 
 // Machine
 export { defineMachine, define } from "./machine";
+export type { MachineEffectError, InterpretOptions } from "./machine";
 
 // Serialization utilities
 export * from "./state-serializer";

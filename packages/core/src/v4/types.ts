@@ -3,7 +3,7 @@
  *
  * PhD-level type safety:
  * - Full R (Requirements) channel support
- * - Full E (Error) channel support
+ * - Honest Err (Error) channel - errors typed but handled via callback
  * - Proper discriminated union handling
  * - Effect/Stream integration with dependency injection
  */
@@ -108,7 +108,7 @@ export function strict<
 }
 
 // ============================================================================
-// State Configuration (with R and E channels)
+// State Configuration (with R and Err channels)
 // ============================================================================
 
 /**
@@ -119,7 +119,7 @@ export function strict<
  * @typeParam E - Event discriminated union
  * @typeParam TStateTag - The specific state tag this config is for
  * @typeParam R - Requirements (Effect context/services)
- * @typeParam Err - Error type for effects
+ * @typeParam Err - Error type for effects (honestly typed, handled via callback)
  */
 interface StateConfigBase<
   S extends MachineState,
@@ -132,12 +132,14 @@ interface StateConfigBase<
   /**
    * Entry effect when entering this state.
    * Can require services via R channel.
+   * Errors are reported via onError callback, not thrown.
    */
   entry?: (state: StateByTag<S, TStateTag>, ctx: C) => Effect.Effect<void, Err, R>;
 
   /**
    * Exit effect when leaving this state.
    * Can require services via R channel.
+   * Errors are reported via onError callback, not thrown.
    */
   exit?: (state: StateByTag<S, TStateTag>, ctx: C) => Effect.Effect<void, Err, R>;
 
@@ -145,6 +147,7 @@ interface StateConfigBase<
    * Continuous stream while in this state (e.g., animation ticks, async fetches).
    * Can be a static stream or a function that receives snapshot for conditional behavior.
    * Can require services via R channel.
+   * Errors are reported via onError callback.
    */
   run?: Stream.Stream<E, Err, R> | ((snapshot: MachineSnapshot<S, C>) => Stream.Stream<E, Err, R>);
 }
@@ -177,7 +180,7 @@ export type StateConfig<
  * @typeParam C - Context type
  * @typeParam E - Event discriminated union
  * @typeParam R - Requirements (Effect context/services needed by entry/exit/run)
- * @typeParam Err - Error type for effects
+ * @typeParam Err - Error type for entry/exit/run effects
  */
 export interface MachineConfig<
   S extends MachineState,
@@ -190,7 +193,6 @@ export interface MachineConfig<
 
   /**
    * Optional schema for context validation/serialization.
-   * Any schema that decodes to type C is accepted.
    */
   readonly context?: Schema.Schema<C>;
 
@@ -254,7 +256,7 @@ export interface MachineActor<
  * @typeParam C - Context type
  * @typeParam E - Event discriminated union
  * @typeParam R - Requirements for entry/exit/run effects
- * @typeParam Err - Error type for effects
+ * @typeParam Err - Error type for entry/exit/run effects (handled via callback)
  */
 export interface MachineDefinition<
   S extends MachineState,
@@ -274,12 +276,17 @@ export interface MachineDefinition<
    *
    * Returns an Effect that:
    * - Requires R (services needed by entry/exit/run)
-   * - May fail with Err
+   * - Never fails (errors are handled via onError callback)
    * - Produces a MachineActor
+   *
+   * This is the honest approach: the Effect itself doesn't fail,
+   * but entry/exit/run effects can fail and those errors are
+   * reported via the onError callback in interpret options.
    */
   readonly interpret: (options?: {
     snapshot?: MachineSnapshot<S, C>;
-  }) => Effect.Effect<MachineActor<S, C, E>, Err, R>;
+    onError?: (error: { effectType: "entry" | "exit" | "run"; stateTag: string; cause: unknown }) => void;
+  }) => Effect.Effect<MachineActor<S, C, E>, never, R>;
 }
 
 // ============================================================================

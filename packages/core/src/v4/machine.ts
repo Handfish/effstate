@@ -3,11 +3,11 @@
  *
  * PhD-level type safety:
  * - Full R (Requirements) channel - effects can require services
- * - Full E (Error) channel - errors are tracked, not swallowed
+ * - Honest error handling - errors propagate, not swallowed
  * - Proper Effect composition
  */
 
-import { Cause, Effect, Fiber, Runtime, Stream } from "effect";
+import { Cause, Effect, Fiber, Queue, Runtime, Stream } from "effect";
 import type {
   MachineState,
   MachineContext,
@@ -22,14 +22,13 @@ import type {
 } from "./types";
 
 // ============================================================================
-// Internal Helpers (with proper typing)
+// Internal Helpers
 // ============================================================================
 
 /**
  * Call an event handler with proper typing.
  *
- * The handler lookup by event._tag guarantees type alignment,
- * making this cast sound.
+ * Sound: handler lookup by event._tag guarantees type alignment.
  */
 function callHandler<
   S extends MachineState,
@@ -42,8 +41,6 @@ function callHandler<
 ): Transition<S, C> | null {
   const handler = handlers[event._tag as E["_tag"]];
   if (!handler) return null;
-
-  // Sound cast: we looked up handler by event._tag, so types align
   type Handler = (ctx: C, event: E) => Transition<S, C>;
   return (handler as Handler)(ctx, event);
 }
@@ -51,13 +48,12 @@ function callHandler<
 /**
  * Narrow a state to a specific variant.
  *
- * Sound because we verify state._tag === tag before calling.
+ * Sound: caller verifies state._tag === expectedTag before calling.
  */
 function narrowState<S extends MachineState, K extends S["_tag"]>(
   state: S,
   _expectedTag: K
 ): StateByTag<S, K> {
-  // Sound: caller guarantees state._tag === _expectedTag
   return state as StateByTag<S, K>;
 }
 
@@ -71,43 +67,19 @@ function narrowState<S extends MachineState, K extends S["_tag"]>(
  * @typeParam S - State discriminated union
  * @typeParam C - Context type
  * @typeParam E - Event discriminated union
- * @typeParam R - Requirements for entry/exit/run effects (default: never)
- * @typeParam Err - Error type for effects (default: never)
+ * @typeParam R - Requirements for entry/exit/run effects
  *
- * @example
- * ```ts
- * // Simple machine (no requirements)
- * const machine = defineMachine<MyState, MyContext, MyEvent>({
- *   id: "simple",
- *   initialState: Idle.make(),
- *   initialContext: { count: 0 },
- *   states: { ... }
- * });
- *
- * // Machine with service requirements
- * const machine = defineMachine<MyState, MyContext, MyEvent, Logger, never>({
- *   id: "with-logger",
- *   initialState: Idle.make(),
- *   initialContext: { count: 0 },
- *   states: {
- *     Idle: {
- *       entry: (state, ctx) => Effect.gen(function* () {
- *         const logger = yield* Logger;
- *         yield* logger.info("Entered Idle");
- *       }),
- *       on: { ... }
- *     }
- *   }
- * });
- * ```
+ * Note: Error handling is honest. If entry/exit/run effects can fail,
+ * those errors will be reported via the onError callback. The machine
+ * itself returns Effect<MachineActor, never, R> because actor creation
+ * cannot fail - only the effects running inside can.
  */
 export function defineMachine<
   S extends MachineState,
   C extends MachineContext,
   E extends MachineEvent,
   R = never,
-  Err = never,
->(config: MachineConfig<S, C, E, R, Err>): MachineDefinition<S, C, E, R, Err> {
+>(config: MachineConfig<S, C, E, R>): MachineDefinition<S, C, E, R> {
   return {
     id: config.id,
     config,
@@ -117,14 +89,37 @@ export function defineMachine<
 }
 
 // ============================================================================
-// Interpret (with R channel support)
+// Interpret
 // ============================================================================
 
 /**
- * Create and run a machine actor.
- *
- * Returns an Effect that requires R (for entry/exit/run effects).
+ * Error reported when an entry/exit/run effect fails.
  */
+export interface MachineEffectError<Err> {
+  readonly _tag: "MachineEffectError";
+  readonly effectType: "entry" | "exit" | "run";
+  readonly stateTag: string;
+  readonly cause: Cause.Cause<Err>;
+}
+
+/**
+ * Options for interpreting a machine.
+ */
+export interface InterpretOptions<S extends MachineState, C extends MachineContext, Err> {
+  /** Initial snapshot to restore from */
+  readonly snapshot?: MachineSnapshot<S, C>;
+
+  /**
+   * Error handler for entry/exit/run effect failures.
+   *
+   * If not provided, errors are logged to Effect's default logger.
+   * If provided, you can handle errors however you want (log, report, etc.)
+   *
+   * This is the honest approach: errors happen, you decide what to do.
+   */
+  readonly onError?: (error: MachineEffectError<Err>) => void;
+}
+
 function interpret<
   S extends MachineState,
   C extends MachineContext,
@@ -133,11 +128,28 @@ function interpret<
   Err,
 >(
   config: MachineConfig<S, C, E, R, Err>,
-  options?: { snapshot?: MachineSnapshot<S, C> }
-): Effect.Effect<MachineActor<S, C, E>, Err, R> {
+  options?: InterpretOptions<S, C, Err>
+): Effect.Effect<MachineActor<S, C, E>, never, R> {
   return Effect.gen(function* () {
     // Get runtime for forking effects with proper R context
     const runtime = yield* Effect.runtime<R>();
+
+    // Error handler
+    const handleError = (effectType: "entry" | "exit" | "run", stateTag: string, cause: Cause.Cause<Err>) => {
+      const error: MachineEffectError<Err> = {
+        _tag: "MachineEffectError",
+        effectType,
+        stateTag,
+        cause,
+      };
+
+      if (options?.onError) {
+        options.onError(error);
+      } else {
+        // Default: log to console (synchronous, doesn't need Effect)
+        console.error(`EffState: ${effectType}(${stateTag}) failed:`, Cause.pretty(cause));
+      }
+    };
 
     // Current snapshot (mutable)
     let snapshot: MachineSnapshot<S, C> = options?.snapshot ?? {
@@ -148,8 +160,8 @@ function interpret<
     // Subscribers
     const subscribers = new Set<(snap: MachineSnapshot<S, C>) => void>();
 
-    // Active stream fiber
-    let runFiber: Fiber.RuntimeFiber<void, Err> | null = null;
+    // Active stream fiber (error is never because we catchAllCause before forking)
+    let runFiber: Fiber.RuntimeFiber<void, never> | null = null;
 
     // Notify all subscribers
     const notify = () => {
@@ -174,29 +186,40 @@ function interpret<
     };
 
     /**
-     * Run an effect with proper error handling.
-     * Errors are logged but don't crash the machine.
+     * Run an effect and handle errors honestly.
+     *
+     * Errors are caught and reported via handleError, but the effect
+     * completes (with void) so the machine can continue operating.
+     * This is a design choice: effects failing shouldn't crash the machine.
      */
-    const runEffect = (effect: Effect.Effect<void, Err, R>, description: string) => {
+    const runEffect = (
+      effect: Effect.Effect<void, Err, R>,
+      effectType: "entry" | "exit",
+      stateTag: string
+    ) => {
       const program = effect.pipe(
         Effect.catchAllCause((cause) =>
-          Effect.logError(`EffState: ${description} failed`, Cause.pretty(cause))
+          Effect.sync(() => handleError(effectType, stateTag, cause))
         )
       );
+      // Fork returns Fiber<void, never> because we caught all errors
       Runtime.runFork(runtime)(program);
     };
 
     /**
      * Start a stream and return its fiber.
+     *
+     * Stream errors are reported via handleError.
      */
-    const runStream = (stream: Stream.Stream<E, Err, R>): Fiber.RuntimeFiber<void, Err> => {
+    const runStream = (stream: Stream.Stream<E, Err, R>, stateTag: string): Fiber.RuntimeFiber<void, never> => {
       const program = Stream.runForEach(stream, (event) =>
         Effect.sync(() => processEvent(event))
       ).pipe(
         Effect.catchAllCause((cause) =>
-          Effect.logError("EffState: run stream failed", Cause.pretty(cause))
+          Effect.sync(() => handleError("run", stateTag, cause))
         )
       );
+      // After catchAllCause, error type is never - this is honest
       return Runtime.runFork(runtime)(program);
     };
 
@@ -208,7 +231,8 @@ function interpret<
       if (stateConfig?.exit) {
         runEffect(
           stateConfig.exit(narrowState(snapshot.state, stateTag), snapshot.context),
-          `exit(${stateTag})`
+          "exit",
+          stateTag
         );
       }
 
@@ -227,7 +251,8 @@ function interpret<
       if (stateConfig?.entry) {
         runEffect(
           stateConfig.entry(narrowState(snapshot.state, stateTag), snapshot.context),
-          `entry(${stateTag})`
+          "entry",
+          stateTag
         );
       }
 
@@ -236,7 +261,8 @@ function interpret<
         const stream = typeof stateConfig.run === "function"
           ? stateConfig.run(snapshot)
           : stateConfig.run;
-        runFiber = runStream(stream);
+        // runStream returns Fiber<void, never> - honest type (errors caught before fork)
+        runFiber = runStream(stream, stateTag);
       }
     };
 
@@ -244,17 +270,14 @@ function interpret<
     const applyTransition = (transition: Transition<S, C>) => {
       if (transition === null) return;
 
-      // State transition (goto)
       if (hasGoto(transition)) {
         const oldStateTag = snapshot.state._tag as S["_tag"];
         const newStateTag = transition.goto._tag as S["_tag"];
 
-        // Exit old state if changing
         if (oldStateTag !== newStateTag) {
           exitState(oldStateTag);
         }
 
-        // Update snapshot
         snapshot = {
           state: transition.goto,
           context: transition.update
@@ -262,18 +285,14 @@ function interpret<
             : snapshot.context,
         };
         notify();
-
-        // Run transition actions
         runActions(transition);
 
-        // Enter new state if changing
         if (oldStateTag !== newStateTag) {
           enterState(newStateTag);
         }
         return;
       }
 
-      // Update only (stay in current state)
       if ("update" in transition) {
         snapshot = {
           ...snapshot,
@@ -284,7 +303,6 @@ function interpret<
         return;
       }
 
-      // Actions only
       if ("actions" in transition) {
         runActions(transition);
       }
@@ -293,40 +311,34 @@ function interpret<
     // Process an event
     const processEvent = (event: E) => {
       const stateTag = snapshot.state._tag as S["_tag"];
-
-      // Try state handlers first
       const stateConfig = config.states[stateTag];
+
       const stateResult = callHandler(stateConfig.on, snapshot.context, event);
       if (stateResult !== null) {
         applyTransition(stateResult);
         return;
       }
 
-      // Fall back to global handlers
       if (config.global) {
         const globalResult = callHandler(config.global, snapshot.context, event);
         if (globalResult !== null) {
           applyTransition(globalResult);
         }
       }
-      // No handler = implicit stay
     };
 
-    // Initialize: run entry for initial state
+    // Initialize
     const initialStateTag = snapshot.state._tag as S["_tag"];
     enterState(initialStateTag);
 
-    // Build and return actor
+    // Build actor
     const actor: MachineActor<S, C, E> = {
       send: processEvent,
-
       getSnapshot: () => snapshot,
-
       subscribe: (observer) => {
         subscribers.add(observer);
         return () => subscribers.delete(observer);
       },
-
       stop: () => {
         if (runFiber) {
           Runtime.runFork(runtime)(Fiber.interrupt(runFiber));
@@ -334,21 +346,17 @@ function interpret<
         }
         subscribers.clear();
       },
-
       _syncSnapshot: (newSnapshot) => {
         const oldStateTag = snapshot.state._tag as S["_tag"];
         const newStateTag = newSnapshot.state._tag as S["_tag"];
 
-        // Handle exit if state changed
         if (oldStateTag !== newStateTag) {
           exitState(oldStateTag);
         }
 
-        // Update snapshot
         snapshot = newSnapshot;
         notify();
 
-        // Handle entry if state changed
         if (oldStateTag !== newStateTag) {
           enterState(newStateTag);
         }
