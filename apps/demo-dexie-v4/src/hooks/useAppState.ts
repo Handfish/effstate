@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { useActor, useActorWatch, usePersistence } from "@effstate/react/v4";
+import { useActor, useActorBridge, usePersistence } from "@effstate/react/v4";
 import type { MachineSnapshot } from "effstate/v4";
 import {
   hamsterWheelMachine,
@@ -174,16 +174,10 @@ export function useAppState(initialSnapshots: InitialSnapshots | null): AppState
   // Connect Dexie liveQuery for cross-tab sync
   useDexieLiveQuery(dexieAdapter, applyExternal);
 
-  // Power sync: hamster → doors
-  useActorWatch(
-    hamster.actor,
-    (snap) => snap.context.electricityLevel > 0,
-    (isPowered) => {
-      const event = isPowered ? PowerOn.make() : PowerOff.make();
-      leftDoor.send(event);
-      rightDoor.send(event);
-    }
-  );
+  // Power sync: hamster → doors (idiomatic EffState cross-actor communication)
+  const toPowerEvent = (isPowered: boolean) => isPowered ? PowerOn.make() : PowerOff.make();
+  useActorBridge(hamster.actor, leftDoor.actor, (snap) => snap.context.electricityLevel > 0, toPowerEvent);
+  useActorBridge(hamster.actor, rightDoor.actor, (snap) => snap.context.electricityLevel > 0, toPowerEvent);
 
   return {
     state: {

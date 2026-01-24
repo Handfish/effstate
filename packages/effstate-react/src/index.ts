@@ -1,7 +1,18 @@
 /**
- * EffState v4 React Hooks
+ * EffState React - Hooks for effstate-v4 state machines
  *
- * Clean, composable hooks for state machine integration.
+ * Clean, composable hooks for state machine integration in React.
+ *
+ * @example
+ * ```tsx
+ * import { useActor } from "effstate-react";
+ * import { myMachine } from "./machines/my-machine";
+ *
+ * function App() {
+ *   const { state, send } = useActor(myMachine);
+ *   return <button onClick={() => send(Click.make())}>{state._tag}</button>;
+ * }
+ * ```
  */
 
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
@@ -13,7 +24,17 @@ import type {
   MachineActor,
   MachineSnapshot,
   MachineDefinition,
-} from "effstate/v4";
+} from "effstate-v4";
+
+// Re-export types for convenience
+export type {
+  MachineState,
+  MachineContext,
+  MachineEvent,
+  MachineActor,
+  MachineSnapshot,
+  MachineDefinition,
+} from "effstate-v4";
 
 // ============================================================================
 // Core Hook: useActor
@@ -40,6 +61,18 @@ export interface UseActorResult<
 
 /**
  * Create and manage a machine actor.
+ *
+ * @example
+ * ```tsx
+ * const { state, send } = useActor(counterMachine);
+ *
+ * return (
+ *   <div>
+ *     <p>State: {state._tag}</p>
+ *     <button onClick={() => send(Increment.make())}>+</button>
+ *   </div>
+ * );
+ * ```
  */
 export function useActor<
   S extends MachineState,
@@ -91,6 +124,13 @@ export function useActor<
 
 /**
  * Run a side effect whenever the actor's snapshot changes.
+ *
+ * @example
+ * ```tsx
+ * useActorEffect(actor, (snapshot) => {
+ *   console.log("State changed to:", snapshot.state._tag);
+ * });
+ * ```
  */
 export function useActorEffect<
   S extends MachineState,
@@ -129,6 +169,16 @@ export function useActorEffect<
 
 /**
  * Sync an actor's snapshot with an external source (persistence, cross-tab, etc.)
+ *
+ * @example
+ * ```tsx
+ * useActorSync(actor, savedState, {
+ *   isLeader: isTabLeader,
+ *   serialize: (snap) => JSON.stringify(snap),
+ *   deserialize: (json) => JSON.parse(json),
+ *   onSave: (json) => localStorage.setItem("state", json),
+ * });
+ * ```
  */
 export function useActorSync<
   S extends MachineState,
@@ -158,7 +208,7 @@ export function useActorSync<
   useEffect(() => {
     if (isLeader || externalSnapshot === undefined) return;
 
-    // Only sync if external actually changed (deep compare would be better, but this catches most cases)
+    // Only sync if external actually changed
     if (prevExternalRef.current !== externalSnapshot) {
       prevExternalRef.current = externalSnapshot;
       actor._syncSnapshot(optionsRef.current.deserialize(externalSnapshot));
@@ -169,25 +219,23 @@ export function useActorSync<
   useEffect(() => {
     if (!isLeader) return;
 
-    let timeout: number | null = null;
-    const _setTimeout = (globalThis as Record<string, unknown>).setTimeout as (fn: () => void, ms: number) => number;
-    const _clearTimeout = (globalThis as Record<string, unknown>).clearTimeout as (id: number) => void;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
 
     const unsubscribe = actor.subscribe((snapshot) => {
-      if (timeout) _clearTimeout(timeout);
-      timeout = _setTimeout(() => {
+      if (timeout) clearTimeout(timeout);
+      timeout = setTimeout(() => {
         optionsRef.current.onSave(optionsRef.current.serialize(snapshot));
       }, saveDebounce);
     });
 
     // Save initial state
-    timeout = _setTimeout(() => {
+    timeout = setTimeout(() => {
       optionsRef.current.onSave(optionsRef.current.serialize(actor.getSnapshot()));
     }, saveDebounce);
 
     return () => {
       unsubscribe();
-      if (timeout) _clearTimeout(timeout);
+      if (timeout) clearTimeout(timeout);
     };
   }, [actor, isLeader, saveDebounce]);
 }
@@ -198,6 +246,17 @@ export function useActorSync<
 
 /**
  * Watch a value derived from an actor's snapshot and trigger a callback when it changes.
+ *
+ * @example
+ * ```tsx
+ * useActorWatch(
+ *   actor,
+ *   (snap) => snap.context.count,
+ *   (count, prevCount) => {
+ *     console.log(`Count changed from ${prevCount} to ${count}`);
+ *   }
+ * );
+ * ```
  */
 export function useActorWatch<
   S extends MachineState,
@@ -246,7 +305,7 @@ export function useActorWatch<
  * and handles the wiring explicitly.
  *
  * @example
- * ```ts
+ * ```tsx
  * // Hamster electricity powers garage doors
  * useActorBridge(
  *   hamster.actor,
@@ -257,7 +316,7 @@ export function useActorWatch<
  * ```
  *
  * @example
- * ```ts
+ * ```tsx
  * // Sync shared value between actors
  * useActorBridge(
  *   source.actor,

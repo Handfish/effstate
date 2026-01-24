@@ -1,0 +1,53 @@
+{
+  "name": "effstate-v4",
+  "version": "0.1.0",
+  "description": "Lean, schema-first state machines for Effect",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "peerDependencies": {
+    "effect": "^3.0.0"
+  },
+  "devDependencies": {
+    "effect": "^3.19.12",
+    "tsup": "^8.0.0",
+    "typescript": "^5.2.2"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/handfish/effstate.git",
+    "directory": "packages/effstate-v4"
+  },
+  "keywords": [
+    "state-machine",
+    "effect",
+    "typescript",
+    "schema",
+    "fsm"
+  ]
+}
