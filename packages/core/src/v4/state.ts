@@ -1,8 +1,10 @@
 /**
  * EffState v4 - Schema-First State Definitions
  *
- * Single source of truth for both EffState and Confect.
- * No serialization needed - plain objects throughout.
+ * Helpers that bundle Effect Schema + constructor for seamless
+ * integration with both EffState AND Confect/Convex.
+ *
+ * Single source of truth: define once, use everywhere.
  */
 
 import { Schema } from "effect";
@@ -30,7 +32,16 @@ import { Schema } from "effect";
  * const processing = Processing.make({ startedAt: Date.now() });
  *
  * // Use schema with Confect
- * const OrderState = Schema.Union(Cart.schema, Processing.schema);
+ * const OrderState = Union(Cart, Processing);
+ *
+ * // Use with v4 machine (full features!)
+ * defineMachine({
+ *   initialState: Cart.make(),
+ *   states: {
+ *     Cart: { on: { ... } },
+ *     Processing: { run: tickStream, on: { ... } },  // streams work!
+ *   }
+ * });
  * ```
  */
 export function State<
@@ -43,50 +54,65 @@ export function State<
     ...fields,
   });
 
-  // Infer the type
+  // Infer the type from schema
   type StateType = Schema.Schema.Type<typeof schema>;
   type FieldsOnly = Omit<StateType, "_tag">;
 
   // Constructor - handles empty fields case
+  // Uses conditional tuple for clean API: Cart.make() vs Processing.make({ startedAt: 123 })
   const make = (
     ...[data]: keyof FieldsOnly extends never ? [] : [data: FieldsOnly]
   ): StateType => {
-    const result = {
+    // The cast is safe: we're constructing exactly what the schema describes
+    // TypeScript can't infer this because of the spread over generic TFields
+    return {
       _tag: tag,
       ...(data ?? {}),
-    };
-    return result as unknown as StateType;
+    } as unknown as StateType;
   };
 
   // Type guard
-  const is = (state: unknown): state is StateType => {
-    if (typeof state !== "object" || state === null) return false;
-    return "_tag" in state && (state as { _tag: unknown })._tag === tag;
+  const is = (value: unknown): value is StateType => {
+    if (typeof value !== "object" || value === null) return false;
+    return "_tag" in value && value._tag === tag;
   };
 
   return {
+    /** Effect Schema for this state (use with Confect) */
     schema,
+    /** Create an instance of this state */
     make,
+    /** The tag string */
     _tag: tag as TTag,
+    /** Type guard */
     is,
   };
 }
 
 /**
  * Infer the state type from a State definition.
+ *
+ * @example
+ * ```ts
+ * const Cart = State("Cart", {});
+ * type CartState = StateType<typeof Cart>;
+ * // { readonly _tag: "Cart" }
+ * ```
  */
 export type StateType<T> = T extends { schema: infer S }
-  ? S extends Schema.Schema.Any
-    ? Schema.Schema.Type<S>
+  ? S extends Schema.Schema<infer A, infer _I, infer _R>
+    ? A
     : never
   : never;
 
 // ============================================================================
-// Event Helper (same pattern)
+// Event Helper (same pattern as State)
 // ============================================================================
 
 /**
  * Create a tagged event with schema and constructor.
+ *
+ * Same API as State - events are just tagged objects.
  *
  * @example
  * ```ts
@@ -95,9 +121,12 @@ export type StateType<T> = T extends { schema: infer S }
  *
  * // Create events
  * const event = AddItem.make({ item: { id: "1", name: "Widget", quantity: 1, price: 10 } });
+ *
+ * // Use with machine
+ * actor.send(ProceedToCheckout.make());
  * ```
  */
-export const Event = State; // Same implementation, different semantic name
+export const Event = State;
 
 /**
  * Infer the event type from an Event definition.
@@ -105,7 +134,7 @@ export const Event = State; // Same implementation, different semantic name
 export type EventType<T> = StateType<T>;
 
 // ============================================================================
-// Union Helpers
+// Union Helper
 // ============================================================================
 
 /**
@@ -113,22 +142,48 @@ export type EventType<T> = StateType<T>;
  *
  * @example
  * ```ts
- * const OrderState = Union(Cart, Checkout, Processing, Shipped, Delivered, Cancelled);
- * type OrderState = UnionType<typeof OrderState>;
+ * const Cart = State("Cart", {});
+ * const Checkout = State("Checkout", {});
+ * const Processing = State("Processing", { startedAt: Schema.Number });
+ *
+ * // Create union schema for Confect
+ * const OrderStateSchema = Union(Cart, Checkout, Processing);
+ * type OrderState = Schema.Schema.Type<typeof OrderStateSchema>;
+ *
+ * // Use in Convex table definition
+ * defineTable(Schema.Struct({
+ *   state: OrderStateSchema,
+ * }))
  * ```
  */
-export function Union<T extends { schema: Schema.Schema.Any }[]>(
-  ...members: T
-): Schema.Schema<StateType<T[number]>> {
+export function Union<
+  T extends readonly { schema: Schema.Schema.Any }[]
+>(...members: T): Schema.Union<UnionMemberSchemas<T>> {
   const schemas = members.map((m) => m.schema);
   if (schemas.length < 2) {
     throw new Error("Union requires at least 2 members");
   }
-  const [first, second, ...rest] = schemas as [Schema.Schema.Any, Schema.Schema.Any, ...Schema.Schema.Any[]];
-  return Schema.Union(first, second, ...rest) as unknown as Schema.Schema<StateType<T[number]>>;
+  return Schema.Union(
+    ...(schemas as unknown as readonly [Schema.Schema.Any, Schema.Schema.Any, ...Schema.Schema.Any[]])
+  ) as unknown as Schema.Union<UnionMemberSchemas<T>>;
 }
 
+// Helper type to extract schema array from members
+type UnionMemberSchemas<T extends readonly { schema: Schema.Schema.Any }[]> = {
+  -readonly [K in keyof T]: T[K] extends { schema: infer S } ? S : never;
+} extends infer U
+  ? U extends readonly [Schema.Schema.Any, Schema.Schema.Any, ...Schema.Schema.Any[]]
+    ? U
+    : never
+  : never;
+
 /**
- * Infer the union type.
+ * Infer the union type from a Union schema.
+ *
+ * @example
+ * ```ts
+ * const OrderStateSchema = Union(Cart, Checkout, Processing);
+ * type OrderState = UnionType<typeof OrderStateSchema>;
+ * ```
  */
-export type UnionType<T> = T extends Schema.Schema.Any ? Schema.Schema.Type<T> : never;
+export type UnionType<T> = T extends Schema.Schema<infer A, infer _I, infer _R> ? A : never;

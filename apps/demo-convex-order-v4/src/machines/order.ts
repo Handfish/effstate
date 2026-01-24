@@ -122,8 +122,9 @@ function updateItemQuantity(items: readonly OrderItem[], itemId: string, quantit
 export function createOrderMachine(initialContext: OrderContext) {
   return defineMachine<OrderState, OrderContext, OrderEvent>({
     id: `order-${initialContext.orderId}`,
-    initial: Cart.make(),
-    context: initialContext,
+    context: OrderContextSchema,
+    initialState: Cart.make(),
+    initialContext,
 
     states: {
       Cart: {
