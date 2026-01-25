@@ -1,15 +1,28 @@
 /**
- * SpacetimeDB Connection State Machine
+ * SpacetimeDB Connection State Machine (Hybrid Architecture)
  *
- * Handles:
- * - Connection lifecycle (connect, disconnect, reconnect)
- * - Exponential backoff retry
- * - State resync after reconnect
- * - Stale connection detection via health checks
+ * This machine uses:
+ * - EffState v4 for state machine logic (transitions, entry/exit, auto-canceling streams)
+ * - Effect.Service (SpacetimeSDK) for SDK operations via the R channel
+ *
+ * Benefits:
+ * - Type-safe discriminated union states (each state has its own data)
+ * - Auto-canceling health checks and retry timers (run streams)
+ * - Entry/exit effects declared in config, not scattered
+ * - SDK operations properly abstracted for testing
  */
 
-import { State, Event, defineMachine, Schema, Effect, Stream } from "effstate-v4";
-import { Context, Duration, Schedule } from "effect";
+import {
+  State,
+  Event,
+  defineMachine,
+  Schema,
+  Effect,
+  Stream,
+} from "effstate-v4";
+import { Duration, Schedule } from "effect";
+import { SpacetimeSDK } from "../services/SpacetimeSDK";
+import { ConnectionError, SubscriptionError } from "../lib/errors";
 
 // ============================================================================
 // Configuration
@@ -25,7 +38,7 @@ export const RECONNECT_CONFIG = {
 } as const;
 
 // ============================================================================
-// States - each state carries its own typed data
+// States - Each state carries its own typed data
 // ============================================================================
 
 export const Disconnected = State("Disconnected", {});
@@ -56,7 +69,6 @@ export const Syncing = State("Syncing", {
 export const ErrorState = State("Error", {
   message: Schema.String,
   canRetry: Schema.Boolean,
-  // Store last connection info for retry
   lastUri: Schema.optional(Schema.String),
   lastModuleName: Schema.optional(Schema.String),
 });
@@ -82,16 +94,16 @@ export const ConnectionSuccess = Event("ConnectionSuccess", {
   identity: Schema.String,
 });
 
-export const ConnectionError = Event("ConnectionError", {
-  message: Schema.String,
+export const ConnectionFailed = Event("ConnectionFailed", {
+  error: Schema.String,
 });
 
 export const Disconnect = Event("Disconnect", {});
 
 export const SyncComplete = Event("SyncComplete", {});
 
-export const SyncError = Event("SyncError", {
-  message: Schema.String,
+export const SyncFailed = Event("SyncFailed", {
+  error: Schema.String,
 });
 
 export const HealthCheck = Event("HealthCheck", {});
@@ -102,78 +114,75 @@ export const RetryNow = Event("RetryNow", {});
 
 export const Reset = Event("Reset", {});
 
+// New: Message received (for health tracking)
+export const MessageReceived = Event("MessageReceived", {});
+
 export type ConnectionEvent =
   | typeof Connect.schema.Type
   | typeof ConnectionSuccess.schema.Type
-  | typeof ConnectionError.schema.Type
+  | typeof ConnectionFailed.schema.Type
   | typeof Disconnect.schema.Type
   | typeof SyncComplete.schema.Type
-  | typeof SyncError.schema.Type
+  | typeof SyncFailed.schema.Type
   | typeof HealthCheck.schema.Type
   | typeof StaleDetected.schema.Type
   | typeof RetryNow.schema.Type
-  | typeof Reset.schema.Type;
+  | typeof Reset.schema.Type
+  | typeof MessageReceived.schema.Type;
 
 // ============================================================================
-// Context - shared mutable data across states
+// Context
 // ============================================================================
 
 export interface ConnectionContext {
   lastMessageAt: number;
   totalReconnects: number;
-  // Current connection info (duplicated from state for easier access)
   currentUri: string | null;
   currentModuleName: string | null;
   currentIdentity: string | null;
+  currentAttempt: number; // Track attempt in context for handlers
 }
 
 // ============================================================================
-// Service Interface (for dependency injection)
+// Streams (auto-cancel on state exit)
 // ============================================================================
 
-export interface SpacetimeService {
-  readonly connect: (uri: string, moduleName: string) => Effect.Effect<string, Error>;
-  readonly disconnect: () => Effect.Effect<void, never>;
-  readonly resubscribe: () => Effect.Effect<void, Error>;
-  readonly clearLocalState: () => Effect.Effect<void, never>;
-}
-
-export class SpacetimeService extends Context.Tag("SpacetimeService")<
-  SpacetimeService,
-  SpacetimeService
->() {}
-
-// ============================================================================
-// Streams
-// ============================================================================
-
-// Health check stream - runs while Connected, auto-cancels on state exit
+// Health check stream - runs while Connected
 const healthCheckStream = Stream.fromSchedule(
   Schedule.spaced(Duration.millis(RECONNECT_CONFIG.healthCheckIntervalMs))
 ).pipe(Stream.map(() => HealthCheck.make()));
 
-// Retry timer stream - emits RetryNow after calculated backoff delay
+// Retry timer stream - calculates backoff and emits RetryNow
 const createRetryStream = (attempt: number) => {
   const delay = Math.min(
-    RECONNECT_CONFIG.initialDelayMs * Math.pow(RECONNECT_CONFIG.backoffMultiplier, attempt - 1),
+    RECONNECT_CONFIG.initialDelayMs *
+      Math.pow(RECONNECT_CONFIG.backoffMultiplier, attempt - 1),
     RECONNECT_CONFIG.maxDelayMs
   );
 
-  return Stream.fromEffect(Effect.sleep(Duration.millis(delay))).pipe(
+  // Add jitter (0-30%)
+  const jitter = Math.random() * 0.3 * delay;
+  const finalDelay = delay + jitter;
+
+  console.log(
+    `[Reconnect] Waiting ${Math.round(finalDelay)}ms before attempt ${attempt}`
+  );
+
+  return Stream.fromEffect(Effect.sleep(Duration.millis(finalDelay))).pipe(
     Stream.map(() => RetryNow.make())
   );
 };
 
 // ============================================================================
-// Machine Definition
+// Machine Definition with SpacetimeSDK Service
 // ============================================================================
 
 export const connectionMachine = defineMachine<
   ConnectionState,
   ConnectionContext,
   ConnectionEvent,
-  never, // R - no requirements for demo (would be SpacetimeService in real impl)
-  never  // Err - no typed errors for demo
+  SpacetimeSDK, // R: requires SpacetimeSDK service
+  ConnectionError | SubscriptionError // Err: possible effect errors
 >({
   id: "spacetimedb-connection",
 
@@ -185,11 +194,12 @@ export const connectionMachine = defineMachine<
     currentUri: null,
     currentModuleName: null,
     currentIdentity: null,
+    currentAttempt: 0,
   },
 
   states: {
     Disconnected: {
-      entry: () => Effect.log("[Connection] Disconnected"),
+      entry: () => Effect.log("[Machine] → Disconnected"),
 
       on: {
         Connect: (_ctx, event) => ({
@@ -200,14 +210,37 @@ export const connectionMachine = defineMachine<
           update: {
             currentUri: event.uri,
             currentModuleName: event.moduleName,
+            currentAttempt: 0,
           },
         }),
       },
     },
 
     Connecting: {
+      // Entry effect uses SpacetimeSDK service via R channel
       entry: (snap) =>
-        Effect.log(`[Connection] Connecting to ${snap.context.currentUri}...`),
+        Effect.gen(function* () {
+          const sdk = yield* SpacetimeSDK;
+          const { currentUri, currentModuleName } = snap.context;
+
+          yield* Effect.log(`[Machine] → Connecting to ${currentUri}`);
+
+          // Actually attempt connection via SDK
+          // Note: The result will be sent back as an event
+          // In real impl, you'd wire SDK callbacks to send these events
+          const result = yield* sdk.connect(currentUri!, currentModuleName!).pipe(
+            Effect.either
+          );
+
+          // For demo, we're simulating - in real impl, SDK callbacks would send events
+          if (result._tag === "Right") {
+            yield* Effect.log(`[Machine] SDK connected: ${result.right}`);
+            // Would trigger: send(ConnectionSuccess.make({ identity: result.right }))
+          } else {
+            yield* Effect.log(`[Machine] SDK connect failed: ${result.left.message}`);
+            // Would trigger: send(ConnectionFailed.make({ error: result.left.message }))
+          }
+        }),
 
       on: {
         ConnectionSuccess: (ctx, event) => ({
@@ -221,19 +254,54 @@ export const connectionMachine = defineMachine<
           },
         }),
 
-        ConnectionError: (ctx, event) => ({
-          goto: ErrorState.make({
-            message: event.message,
-            canRetry: true,
-            lastUri: ctx.currentUri ?? undefined,
-            lastModuleName: ctx.currentModuleName ?? undefined,
-          }),
-        }),
+        ConnectionFailed: (ctx, event) => {
+          // If we were in a reconnection cycle, bump attempt
+          const nextAttempt = ctx.currentAttempt + 1;
+
+          if (nextAttempt < RECONNECT_CONFIG.maxRetries) {
+            return {
+              goto: Reconnecting.make({
+                uri: ctx.currentUri!,
+                moduleName: ctx.currentModuleName!,
+                attempt: nextAttempt,
+              }),
+              update: { currentAttempt: nextAttempt },
+            };
+          }
+
+          return {
+            goto: ErrorState.make({
+              message: event.error,
+              canRetry: true,
+              lastUri: ctx.currentUri ?? undefined,
+              lastModuleName: ctx.currentModuleName ?? undefined,
+            }),
+          };
+        },
       },
     },
 
     Syncing: {
-      entry: () => Effect.log("[Connection] Syncing state..."),
+      entry: () =>
+        Effect.gen(function* () {
+          const sdk = yield* SpacetimeSDK;
+
+          yield* Effect.log("[Machine] → Syncing (clearing + subscribing)");
+
+          // Clear stale local state
+          yield* sdk.clearLocalState();
+
+          // Subscribe to all tables
+          const result = yield* sdk.subscribeAll().pipe(Effect.either);
+
+          if (result._tag === "Left") {
+            yield* Effect.log(`[Machine] Sync failed: ${result.left._tag}`);
+            // Would trigger: send(SyncFailed.make({ error: ... }))
+          } else {
+            yield* Effect.log("[Machine] Sync complete");
+            // Would trigger: send(SyncComplete.make())
+          }
+        }),
 
       on: {
         SyncComplete: (ctx) => ({
@@ -242,12 +310,15 @@ export const connectionMachine = defineMachine<
             moduleName: ctx.currentModuleName!,
             identity: ctx.currentIdentity!,
           }),
-          update: { lastMessageAt: Date.now() },
+          update: {
+            lastMessageAt: Date.now(),
+            currentAttempt: 0, // Reset attempt counter on success
+          },
         }),
 
-        SyncError: (ctx, event) => ({
+        SyncFailed: (ctx, event) => ({
           goto: ErrorState.make({
-            message: `Sync failed: ${event.message}`,
+            message: `Sync failed: ${event.error}`,
             canRetry: true,
             lastUri: ctx.currentUri ?? undefined,
             lastModuleName: ctx.currentModuleName ?? undefined,
@@ -257,29 +328,46 @@ export const connectionMachine = defineMachine<
     },
 
     Connected: {
-      entry: () => Effect.log("[Connection] Connected and synced!"),
-      exit: () => Effect.log("[Connection] Leaving connected state"),
+      entry: () => Effect.log("[Machine] → Connected! ✓"),
+      exit: () =>
+        Effect.gen(function* () {
+          const sdk = yield* SpacetimeSDK;
+          yield* Effect.log("[Machine] ← Leaving Connected");
+          yield* sdk.disconnect();
+        }),
 
-      // Health check stream runs while in this state, auto-cancels on exit
+      // Health check stream: auto-starts on entry, auto-cancels on exit
       run: healthCheckStream,
 
       on: {
+        // Health check evaluates staleness
         HealthCheck: (ctx) => {
           const elapsed = Date.now() - ctx.lastMessageAt;
 
           if (elapsed > RECONNECT_CONFIG.staleTimeoutMs) {
-            // Connection is stale - this would trigger StaleDetected
-            // For demo, just log
+            console.warn(
+              `[Health] Connection stale (${elapsed}ms > ${RECONNECT_CONFIG.staleTimeoutMs}ms)`
+            );
+            // Return StaleDetected transition - but we handle it below
+            // For now, just log. In real impl, this would trigger reconnect.
             return {
               actions: [
-                () => console.warn(`[Health] Connection stale (${elapsed}ms)`),
+                () =>
+                  console.log(
+                    "[Health] Would trigger StaleDetected → Reconnecting"
+                  ),
               ],
             };
           }
 
-          // Connection healthy
+          // Healthy - no transition
           return null;
         },
+
+        // Track received messages
+        MessageReceived: () => ({
+          update: { lastMessageAt: Date.now() },
+        }),
 
         StaleDetected: (ctx) => ({
           goto: Reconnecting.make({
@@ -287,6 +375,10 @@ export const connectionMachine = defineMachine<
             moduleName: ctx.currentModuleName!,
             attempt: 1,
           }),
+          update: {
+            currentAttempt: 1,
+            totalReconnects: ctx.totalReconnects + 1,
+          },
         }),
 
         Disconnect: (ctx) => ({
@@ -295,21 +387,23 @@ export const connectionMachine = defineMachine<
             moduleName: ctx.currentModuleName!,
             attempt: 1,
           }),
-          update: { totalReconnects: ctx.totalReconnects + 1 },
+          update: {
+            currentAttempt: 1,
+            totalReconnects: ctx.totalReconnects + 1,
+          },
         }),
       },
     },
 
     Reconnecting: {
       entry: (snap) => {
-        // We know we're in Reconnecting state, so cast is safe
         const state = snap.state as typeof Reconnecting.schema.Type;
         return Effect.log(
-          `[Connection] Reconnecting (attempt ${state.attempt}/${RECONNECT_CONFIG.maxRetries})...`
+          `[Machine] → Reconnecting (attempt ${state.attempt}/${RECONNECT_CONFIG.maxRetries})`
         );
       },
 
-      // Retry timer stream - emits RetryNow after backoff delay
+      // Retry timer stream: emits RetryNow after backoff delay, auto-cancels on exit
       run: (snap) => {
         const state = snap.state as typeof Reconnecting.schema.Type;
         return createRetryStream(state.attempt);
@@ -317,10 +411,17 @@ export const connectionMachine = defineMachine<
 
       on: {
         RetryNow: (ctx) => {
-          // Check if we've exceeded max retries
-          // We need attempt from state, but we only have ctx here
-          // Solution: also track attempt in context
-          // For now, transition to Connecting and let it try
+          if (ctx.currentAttempt >= RECONNECT_CONFIG.maxRetries) {
+            return {
+              goto: ErrorState.make({
+                message: `Max retries (${RECONNECT_CONFIG.maxRetries}) exceeded`,
+                canRetry: true,
+                lastUri: ctx.currentUri ?? undefined,
+                lastModuleName: ctx.currentModuleName ?? undefined,
+              }),
+            };
+          }
+
           return {
             goto: Connecting.make({
               uri: ctx.currentUri!,
@@ -329,6 +430,7 @@ export const connectionMachine = defineMachine<
           };
         },
 
+        // Can receive success/failure during reconnecting too
         ConnectionSuccess: (ctx, event) => ({
           goto: Syncing.make({
             uri: ctx.currentUri!,
@@ -338,21 +440,36 @@ export const connectionMachine = defineMachine<
           update: { currentIdentity: event.identity },
         }),
 
-        ConnectionError: (ctx, event) => ({
-          goto: ErrorState.make({
-            message: event.message,
-            canRetry: true,
-            lastUri: ctx.currentUri ?? undefined,
-            lastModuleName: ctx.currentModuleName ?? undefined,
-          }),
-        }),
+        ConnectionFailed: (ctx, event) => {
+          const nextAttempt = ctx.currentAttempt + 1;
+
+          if (nextAttempt >= RECONNECT_CONFIG.maxRetries) {
+            return {
+              goto: ErrorState.make({
+                message: event.error,
+                canRetry: true,
+                lastUri: ctx.currentUri ?? undefined,
+                lastModuleName: ctx.currentModuleName ?? undefined,
+              }),
+            };
+          }
+
+          return {
+            goto: Reconnecting.make({
+              uri: ctx.currentUri!,
+              moduleName: ctx.currentModuleName!,
+              attempt: nextAttempt,
+            }),
+            update: { currentAttempt: nextAttempt },
+          };
+        },
       },
     },
 
     Error: {
       entry: (snap) => {
         const state = snap.state as typeof ErrorState.schema.Type;
-        return Effect.log(`[Connection] Error: ${state.message}`);
+        return Effect.log(`[Machine] → Error: ${state.message}`);
       },
 
       on: {
@@ -362,6 +479,7 @@ export const connectionMachine = defineMachine<
             currentUri: null,
             currentModuleName: null,
             currentIdentity: null,
+            currentAttempt: 0,
           },
         }),
 
@@ -373,6 +491,7 @@ export const connectionMachine = defineMachine<
           update: {
             currentUri: event.uri,
             currentModuleName: event.moduleName,
+            currentAttempt: 0,
           },
         }),
       },
@@ -388,13 +507,14 @@ export const connectionMachine = defineMachine<
         currentUri: null,
         currentModuleName: null,
         currentIdentity: null,
+        currentAttempt: 0,
       },
     }),
   },
 });
 
 // ============================================================================
-// Type exports for consumers
+// Type exports
 // ============================================================================
 
 export type ConnectionMachine = typeof connectionMachine;

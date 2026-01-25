@@ -1,25 +1,27 @@
 /**
- * useConnection Hook
+ * useConnection Hook (Hybrid Architecture)
  *
- * Provides connection state management for SpacetimeDB with:
- * - Auto-reconnection
- * - State resync
- * - Health monitoring
- * - Typed state access
+ * This hook:
+ * - Creates the EffState connection machine
+ * - Provides the SpacetimeSDK service via Effect Layer
+ * - Exposes typed state and actions to React
  */
 
-import { useEffect, useCallback, useMemo } from "react";
-import { useActor, useActorEffect } from "effstate-react";
+import { useEffect, useCallback, useMemo, useRef } from "react";
+import { Effect, Layer } from "effect";
+import type { MachineActor } from "effstate-react";
+import { useSyncExternalStore } from "react";
 import {
   connectionMachine,
   Connect,
   Disconnect,
   ConnectionSuccess,
-  ConnectionError,
+  ConnectionFailed,
   SyncComplete,
-  SyncError,
+  SyncFailed,
   StaleDetected,
   Reset,
+  MessageReceived,
   Connected,
   Connecting,
   Reconnecting,
@@ -29,7 +31,9 @@ import {
   RECONNECT_CONFIG,
   type ConnectionState,
   type ConnectionContext,
+  type ConnectionEvent,
 } from "../machines/connection";
+import { SpacetimeSDK, MockSpacetimeSDKLayer } from "../services/SpacetimeSDK";
 
 // ============================================================================
 // Hook Result Type
@@ -49,7 +53,7 @@ export interface UseConnectionResult {
   isError: boolean;
   isDisconnected: boolean;
 
-  // Connection info (when connected)
+  // Connection info
   identity: string | null;
   uri: string | null;
 
@@ -67,14 +71,14 @@ export interface UseConnectionResult {
   retry: () => void;
   reset: () => void;
 
-  // For SpacetimeDB integration
+  // SDK callback wiring (call these from SpacetimeDB SDK callbacks)
   onConnected: (identity: string) => void;
   onConnectionError: (message: string) => void;
   onDisconnected: () => void;
   onSyncComplete: () => void;
   onSyncError: (message: string) => void;
   onStaleDetected: () => void;
-  markMessageReceived: () => void;
+  onMessageReceived: () => void;
 }
 
 // ============================================================================
@@ -83,8 +87,52 @@ export interface UseConnectionResult {
 
 export function useConnection(options?: {
   autoConnect?: { uri: string; moduleName: string };
+  sdkLayer?: Layer.Layer<SpacetimeSDK>;
 }): UseConnectionResult {
-  const { state, context, stateTag, send, actor } = useActor(connectionMachine);
+  // Use provided layer or default to mock
+  const sdkLayer = options?.sdkLayer ?? MockSpacetimeSDKLayer;
+
+  // Create actor ref (persists across renders)
+  const actorRef = useRef<MachineActor<
+    ConnectionState,
+    ConnectionContext,
+    ConnectionEvent
+  > | null>(null);
+
+  // Initialize actor on first render
+  if (actorRef.current === null) {
+    // Create the interpret effect with SDK layer provided
+    const interpretWithLayer = connectionMachine.interpret({
+      onError: (error) => {
+        console.error(`[Connection] Effect error:`, error);
+      },
+    }).pipe(
+      Effect.provide(sdkLayer)
+    );
+
+    // Run synchronously to create actor
+    actorRef.current = Effect.runSync(interpretWithLayer);
+  }
+
+  const actor = actorRef.current;
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      actorRef.current?.stop();
+      actorRef.current = null;
+    };
+  }, []);
+
+  // Subscribe to state changes
+  const snapshot = useSyncExternalStore(
+    actor.subscribe,
+    actor.getSnapshot,
+    actor.getSnapshot
+  );
+
+  const { state, context } = snapshot;
+  const stateTag = state._tag;
 
   // ============================================================================
   // Derived State
@@ -120,6 +168,11 @@ export function useConnection(options?: {
   // Actions
   // ============================================================================
 
+  const send = useCallback(
+    (event: ConnectionEvent) => actor.send(event),
+    [actor]
+  );
+
   const connect = useCallback(
     (uri: string, moduleName: string) => {
       send(Connect.make({ uri, moduleName }));
@@ -133,9 +186,15 @@ export function useConnection(options?: {
 
   const retry = useCallback(() => {
     if (ErrorState.is(actor.getSnapshot().state)) {
-      const errorState = actor.getSnapshot().state as typeof ErrorState.schema.Type;
+      const errorState = actor.getSnapshot()
+        .state as typeof ErrorState.schema.Type;
       if (errorState.lastUri && errorState.lastModuleName) {
-        send(Connect.make({ uri: errorState.lastUri, moduleName: errorState.lastModuleName }));
+        send(
+          Connect.make({
+            uri: errorState.lastUri,
+            moduleName: errorState.lastModuleName,
+          })
+        );
       }
     }
   }, [send, actor]);
@@ -144,7 +203,10 @@ export function useConnection(options?: {
     send(Reset.make());
   }, [send]);
 
-  // Event handlers for SpacetimeDB SDK callbacks
+  // ============================================================================
+  // SDK Callback Wiring
+  // ============================================================================
+
   const onConnected = useCallback(
     (identity: string) => {
       send(ConnectionSuccess.make({ identity }));
@@ -154,7 +216,7 @@ export function useConnection(options?: {
 
   const onConnectionError = useCallback(
     (message: string) => {
-      send(ConnectionError.make({ message }));
+      send(ConnectionFailed.make({ error: message }));
     },
     [send]
   );
@@ -169,7 +231,7 @@ export function useConnection(options?: {
 
   const onSyncError = useCallback(
     (message: string) => {
-      send(SyncError.make({ message }));
+      send(SyncFailed.make({ error: message }));
     },
     [send]
   );
@@ -178,14 +240,12 @@ export function useConnection(options?: {
     send(StaleDetected.make());
   }, [send]);
 
-  // Message tracking for health checks
-  const markMessageReceived = useCallback(() => {
-    // In a real implementation, you'd send a MessageReceived event
-    // that updates context.lastMessageAt
-  }, []);
+  const onMessageReceived = useCallback(() => {
+    send(MessageReceived.make());
+  }, [send]);
 
   // ============================================================================
-  // Auto-connect on mount
+  // Auto-connect
   // ============================================================================
 
   useEffect(() => {
@@ -198,13 +258,12 @@ export function useConnection(options?: {
   // Debug logging
   // ============================================================================
 
-  useActorEffect(
-    actor,
-    (snapshot) => {
-      console.log(`[Connection] State: ${snapshot.state._tag}`, snapshot.state);
-    },
-    []
-  );
+  useEffect(() => {
+    const unsub = actor.subscribe((snap) => {
+      console.log(`[useConnection] State: ${snap.state._tag}`, snap.state);
+    });
+    return unsub;
+  }, [actor]);
 
   return {
     state,
@@ -232,6 +291,6 @@ export function useConnection(options?: {
     onSyncComplete,
     onSyncError,
     onStaleDetected,
-    markMessageReceived,
+    onMessageReceived,
   };
 }

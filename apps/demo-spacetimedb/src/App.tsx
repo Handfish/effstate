@@ -39,6 +39,7 @@ function App() {
     onSyncComplete,
     onSyncError,
     onStaleDetected,
+    onMessageReceived,
   } = connection;
 
   return (
@@ -135,6 +136,12 @@ function App() {
                 className="px-3 py-1 text-sm bg-gray-800 rounded hover:bg-gray-700"
               >
                 onStaleDetected
+              </button>
+              <button
+                onClick={onMessageReceived}
+                className="px-3 py-1 text-sm bg-gray-800 rounded hover:bg-gray-700"
+              >
+                onMessageReceived
               </button>
             </div>
           </div>
