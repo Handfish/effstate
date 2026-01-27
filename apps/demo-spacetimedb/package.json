@@ -11,8 +11,8 @@
   },
   "dependencies": {
     "effect": "^3.19.12",
-    "effstate-v4": "workspace:*",
-    "effstate-react": "workspace:*",
+    "@handfish/effstate-v4": "workspace:*",
+    "@handfish/effstate-react": "workspace:*",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },

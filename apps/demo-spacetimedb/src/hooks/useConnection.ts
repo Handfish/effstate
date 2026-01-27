@@ -9,7 +9,7 @@
 
 import { useEffect, useCallback, useMemo, useRef } from "react";
 import { Effect, Layer } from "effect";
-import type { MachineActor } from "effstate-react";
+import type { MachineActor } from "@handfish/effstate-react";
 import { useSyncExternalStore } from "react";
 import {
   connectionMachine,

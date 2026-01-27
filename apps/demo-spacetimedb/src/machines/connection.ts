@@ -19,7 +19,7 @@ import {
   Schema,
   Effect,
   Stream,
-} from "effstate-v4";
+} from "@handfish/effstate-v4";
 import { Duration, Schedule } from "effect";
 import { SpacetimeSDK } from "../services/SpacetimeSDK";
 import { ConnectionError, SubscriptionError } from "../lib/errors";

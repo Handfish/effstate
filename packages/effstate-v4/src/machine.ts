@@ -124,7 +124,12 @@ function interpret<
       context: config.initialContext,
     };
     const subscribers = new Set<(snap: MachineSnapshot<S, C>) => void>();
+    let stopped = false;
+
+    // Fiber tracking for proper cleanup
     let runFiber: Fiber.RuntimeFiber<void, never> | null = null;
+    let entryFiber: Fiber.RuntimeFiber<void, never> | null = null;
+    const exitFibers = new Set<Fiber.RuntimeFiber<void, never>>();
 
     // Notify subscribers
     const notify = () => {
@@ -133,7 +138,7 @@ function interpret<
       }
     };
 
-    // Run entry effect
+    // Run entry effect - tracked so it can be cancelled on rapid transitions
     const runEntry = (stateTag: string) => {
       const stateConfig = config.states[stateTag as S["_tag"]] as StateConfig<S, C, E, R, Err> | undefined;
       if (!stateConfig?.entry) return;
@@ -143,10 +148,10 @@ function interpret<
           Effect.sync(() => handleError("entry", stateTag, cause))
         )
       );
-      Runtime.runFork(runtime)(program);
+      entryFiber = Runtime.runFork(runtime)(program);
     };
 
-    // Run exit effect
+    // Run exit effect - tracked for cleanup, self-removes when complete
     const runExit = (stateTag: string) => {
       const stateConfig = config.states[stateTag as S["_tag"]] as StateConfig<S, C, E, R, Err> | undefined;
       if (!stateConfig?.exit) return;
@@ -156,7 +161,15 @@ function interpret<
           Effect.sync(() => handleError("exit", stateTag, cause))
         )
       );
-      Runtime.runFork(runtime)(program);
+      const fiber = Runtime.runFork(runtime)(program);
+
+      // Track fiber and auto-remove when complete
+      exitFibers.add(fiber);
+      Runtime.runFork(runtime)(
+        Fiber.await(fiber).pipe(
+          Effect.ensuring(Effect.sync(() => exitFibers.delete(fiber)))
+        )
+      );
     };
 
     // Run stream (returns fiber for cancellation)
@@ -197,6 +210,12 @@ function interpret<
         const newStateTag = transition.goto._tag as S["_tag"];
         const hadRunningStream = runFiber !== null;
 
+        // Cancel previous entry effect if still running (rapid transition)
+        if (entryFiber) {
+          Runtime.runFork(runtime)(Fiber.interrupt(entryFiber));
+          entryFiber = null;
+        }
+
         // Cancel run stream - if one exists, chain new stream start to interrupt completion
         if (runFiber) {
           const oldFiber = runFiber;
@@ -205,12 +224,14 @@ function interpret<
           // Ensure old stream is fully interrupted before starting new one
           Runtime.runFork(runtime)(
             Fiber.interrupt(oldFiber).pipe(
-              Effect.ensuring(Effect.sync(() => startRunStream()))
+              Effect.ensuring(Effect.sync(() => {
+                if (!stopped) startRunStream();
+              }))
             )
           );
         }
 
-        // Run exit effect
+        // Run exit effect (tracked, will self-cleanup)
         runExit(oldStateTag);
 
         // Update snapshot
@@ -250,6 +271,8 @@ function interpret<
 
     // Process an event
     const processEvent = (event: E) => {
+      if (stopped) return; // Ignore events after stop
+
       const stateTag = snapshot.state._tag as S["_tag"];
       const stateConfig = config.states[stateTag] as StateConfig<S, C, E, R, Err> | undefined;
 
@@ -285,21 +308,48 @@ function interpret<
         return () => subscribers.delete(observer);
       },
       stop: () => {
+        if (stopped) return;
+        stopped = true;
+
+        // Collect all fibers to interrupt
+        const fibersToInterrupt: Fiber.RuntimeFiber<void, never>[] = [];
+
         if (runFiber) {
-          Runtime.runFork(runtime)(Fiber.interrupt(runFiber));
+          fibersToInterrupt.push(runFiber);
           runFiber = null;
         }
+
+        if (entryFiber) {
+          fibersToInterrupt.push(entryFiber);
+          entryFiber = null;
+        }
+
+        // Interrupt all active fibers (exit fibers are allowed to complete)
+        for (const fiber of fibersToInterrupt) {
+          Runtime.runFork(runtime)(Fiber.interrupt(fiber));
+        }
+
+        // Run final exit effect for current state
         const stateTag = snapshot.state._tag as S["_tag"];
         runExit(stateTag);
+
         subscribers.clear();
       },
       _syncSnapshot: (newSnapshot: MachineSnapshot<S, C>) => {
+        if (stopped) return;
+
         const oldStateTag = snapshot.state._tag as S["_tag"];
         const newStateTag = newSnapshot.state._tag as S["_tag"];
 
         if (oldStateTag !== newStateTag) {
           // State changed - run exit/entry effects
           const hadRunningStream = runFiber !== null;
+
+          // Cancel previous entry effect if still running
+          if (entryFiber) {
+            Runtime.runFork(runtime)(Fiber.interrupt(entryFiber));
+            entryFiber = null;
+          }
 
           if (runFiber) {
             const oldFiber = runFiber;
@@ -308,7 +358,9 @@ function interpret<
             // Ensure old stream is fully interrupted before starting new one
             Runtime.runFork(runtime)(
               Fiber.interrupt(oldFiber).pipe(
-                Effect.ensuring(Effect.sync(() => startRunStream()))
+                Effect.ensuring(Effect.sync(() => {
+                  if (!stopped) startRunStream();
+                }))
               )
             );
           }
