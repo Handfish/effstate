@@ -1081,15 +1081,15 @@ importers:
 
   apps/demo-spacetimedb:
     dependencies:
+      '@handfish/effstate-react':
+        specifier: workspace:*
+        version: link:../../packages/effstate-react
+      '@handfish/effstate-v4':
+        specifier: workspace:*
+        version: link:../../packages/effstate-v4
       effect:
         specifier: ^3.19.12
         version: 3.19.14
-      effstate-react:
-        specifier: workspace:*
-        version: link:../../packages/effstate-react
-      effstate-v4:
-        specifier: workspace:*
-        version: link:../../packages/effstate-v4
       react:
         specifier: ^18.2.0
         version: 18.3.1
@@ -1310,15 +1310,15 @@ importers:
 
   packages/effstate-react:
     devDependencies:
+      '@handfish/effstate-v4':
+        specifier: workspace:*
+        version: link:../effstate-v4
       '@types/react':
         specifier: ^18.2.0
         version: 18.3.27
       effect:
         specifier: ^3.19.12
         version: 3.19.14
-      effstate-v4:
-        specifier: workspace:*
-        version: link:../effstate-v4
       react:
         specifier: ^18.2.0
         version: 18.3.1

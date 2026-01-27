@@ -1,6 +1,6 @@
 {
-  "name": "effstate-react",
-  "version": "0.1.0",
+  "name": "@handfish/effstate-react",
+  "version": "0.0.5",
   "description": "React hooks for effstate-v4 state machines",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -31,13 +31,13 @@
   },
   "peerDependencies": {
     "effect": "^3.0.0",
-    "effstate-v4": "^0.1.0",
+    "@handfish/effstate-v4": "^0.0.5",
     "react": "^18.0.0 || ^19.0.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",
     "effect": "^3.19.12",
-    "effstate-v4": "workspace:*",
+    "@handfish/effstate-v4": "workspace:*",
     "react": "^18.2.0",
     "tsup": "^8.0.0",
     "typescript": "^5.2.2"

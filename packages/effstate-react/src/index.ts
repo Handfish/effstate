@@ -24,7 +24,7 @@ import type {
   MachineActor,
   MachineSnapshot,
   MachineDefinition,
-} from "effstate-v4";
+} from "@handfish/effstate-v4";
 
 // Re-export types for convenience
 export type {
@@ -34,7 +34,7 @@ export type {
   MachineActor,
   MachineSnapshot,
   MachineDefinition,
-} from "effstate-v4";
+} from "@handfish/effstate-v4";
 
 // ============================================================================
 // Core Hook: useActor

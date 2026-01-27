@@ -1,0 +1,1 @@
+{"root":["./src/api/server.ts","./src/frontend/App.tsx","./src/frontend/main.tsx","./src/lib/drizzle-adapter.ts","./src/lib/persistence.ts","./src/lib/schema.ts","./src/machines/order.ts"],"version":"5.9.3"}

@@ -6,5 +6,5 @@ export default defineConfig({
   dts: true,
   clean: true,
   sourcemap: true,
-  external: ["react", "effect", "effstate-v4"],
+  external: ["react", "effect", "@handfish/effstate-v4"],
 });

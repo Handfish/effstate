@@ -195,11 +195,19 @@ function interpret<
       if (hasGoto) {
         const oldStateTag = snapshot.state._tag as S["_tag"];
         const newStateTag = transition.goto._tag as S["_tag"];
+        const hadRunningStream = runFiber !== null;
 
-        // Cancel run stream
+        // Cancel run stream - if one exists, chain new stream start to interrupt completion
         if (runFiber) {
-          Runtime.runFork(runtime)(Fiber.interrupt(runFiber));
+          const oldFiber = runFiber;
           runFiber = null;
+
+          // Ensure old stream is fully interrupted before starting new one
+          Runtime.runFork(runtime)(
+            Fiber.interrupt(oldFiber).pipe(
+              Effect.ensuring(Effect.sync(() => startRunStream()))
+            )
+          );
         }
 
         // Run exit effect
@@ -211,9 +219,14 @@ function interpret<
           context: hasUpdate ? { ...snapshot.context, ...transition.update } : snapshot.context,
         };
 
-        // Run entry effect and start run stream
+        // Run entry effect
         runEntry(newStateTag);
-        startRunStream();
+
+        // Start run stream only if there was no previous stream to interrupt
+        // (otherwise it's chained to the interrupt completion above)
+        if (!hadRunningStream) {
+          startRunStream();
+        }
       } else if (hasUpdate) {
         snapshot = {
           state: snapshot.state,
@@ -286,14 +299,28 @@ function interpret<
 
         if (oldStateTag !== newStateTag) {
           // State changed - run exit/entry effects
+          const hadRunningStream = runFiber !== null;
+
           if (runFiber) {
-            Runtime.runFork(runtime)(Fiber.interrupt(runFiber));
+            const oldFiber = runFiber;
             runFiber = null;
+
+            // Ensure old stream is fully interrupted before starting new one
+            Runtime.runFork(runtime)(
+              Fiber.interrupt(oldFiber).pipe(
+                Effect.ensuring(Effect.sync(() => startRunStream()))
+              )
+            );
           }
+
           runExit(oldStateTag);
           snapshot = newSnapshot;
           runEntry(newStateTag);
-          startRunStream();
+
+          // Start run stream only if there was no previous stream to interrupt
+          if (!hadRunningStream) {
+            startRunStream();
+          }
         } else {
           // Just context update
           snapshot = newSnapshot;
