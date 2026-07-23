@@ -1,9 +1,9 @@
 ---
 title: effstate
-description: Effect-first state machine library for TypeScript
+description: Lean, schema-first state machines for Effect
 template: splash
 hero:
-  tagline: Type-safe state machines built on Effect
+  tagline: Lean, schema-first state machines built on Effect
   actions:
     - text: Get Started
       link: ./getting-started/introduction/
@@ -23,20 +23,44 @@ import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
   <p style="margin-top: 0.75rem; color: #888; font-size: 0.9rem;">Watch state machines sync across browser tabs!</p>
 </div>
 
+```ts
+import { State, Event, defineMachine } from "@handfish/effstate-v4";
+import { Schema } from "effect";
+
+const Idle = State("Idle", {});
+const Running = State("Running", { startedAt: Schema.DateFromSelf });
+
+const Start = Event("Start", {});
+const Stop = Event("Stop", {});
+
+const stopwatch = defineMachine({
+  initialState: Idle.make(),
+  initialContext: { elapsed: 0 },
+  states: {
+    Idle: { on: { Start: () => ({ goto: Running.make({ startedAt: new Date() }) }) } },
+    Running: { on: { Stop: () => ({ goto: Idle.make() }) } },
+  },
+});
+```
+
 ## Features
 
 <CardGrid stagger>
-  <Card title="Effect-First" icon="rocket">
-    Built on Effect for composable, type-safe side effects and resource management.
-  </Card>
   <Card title="Schema-First" icon="document">
-    Required Effect Schema for context enables serialization, cross-tab sync, and validation.
+    Define states and events once with Effect Schema. Constructors, type guards, and
+    serialization come for free — no separate context schema to keep in sync.
+  </Card>
+  <Card title="Effect-Native" icon="rocket">
+    Entry/exit effects and `run` streams have full access to Effect's requirements (`R`)
+    and error channels. Streams auto-cancel when you leave a state.
   </Card>
   <Card title="Type Safe" icon="approve-check">
-    Full TypeScript support with compile-time guarantees for events, states, and context.
+    States and events are discriminated unions. Handlers are narrowed by event tag;
+    transitions are checked against your state union at compile time.
   </Card>
-  <Card title="Actor Model" icon="puzzle">
-    Parent-child machine composition with proper lifecycle management.
+  <Card title="Lean" icon="puzzle">
+    ~500 lines, zero dependencies beyond Effect. Imperative actor API that drops
+    straight into React via `useSyncExternalStore`.
   </Card>
 </CardGrid>
 
@@ -44,13 +68,13 @@ import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 <CardGrid>
   <LinkCard
-    title="3.5x Smaller than XState"
-    description="~3.9 kB gzipped vs 13.7 kB. Perfect for bundle-conscious apps."
-    href="./getting-started/comparison/"
+    title="Schema-first, not config-first"
+    description="One definition per state/event yields the type, the constructor, the guard, and the codec."
+    href="./guides/states-and-events/"
   />
   <LinkCard
-    title="25x Faster Event Processing"
-    description="5x faster in realistic app lifecycles. See benchmarks."
-    href="./getting-started/comparison/"
+    title="Effects where they belong"
+    description="Side effects live in entry/exit/run — typed, cancellable, and provided via Effect layers."
+    href="./guides/effects/"
   />
 </CardGrid>

@@ -82,6 +82,22 @@ export interface InterpretOptions<S extends MachineState, C extends MachineConte
 
   /** Error handler for entry/exit/run effect failures */
   readonly onError?: (error: MachineEffectError<Err>) => void;
+
+  /**
+   * Whether to interrupt entry effects when transitioning away from a state
+   * before the entry effect completes.
+   *
+   * - `false` (default): Entry effects run to completion even if the machine
+   *   transitions away. Safer for animations and setup logic that must finish.
+   *
+   * - `true`: Entry effects are interrupted on rapid transitions. Use when
+   *   entry effects are expensive and shouldn't continue for states you've left.
+   *
+   * Note: Entry effects are always interrupted on `stop()` regardless of this setting.
+   *
+   * @default false
+   */
+  readonly interruptEntryOnTransition?: boolean;
 }
 
 // ============================================================================
@@ -125,11 +141,11 @@ function interpret<
     };
     const subscribers = new Set<(snap: MachineSnapshot<S, C>) => void>();
     let stopped = false;
+    const interruptEntry = options?.interruptEntryOnTransition ?? false;
 
-    // Fiber tracking for proper cleanup
+    // Fiber tracking for proper cleanup (exit fibers are fire-and-forget cleanup)
     let runFiber: Fiber.RuntimeFiber<void, never> | null = null;
     let entryFiber: Fiber.RuntimeFiber<void, never> | null = null;
-    const exitFibers = new Set<Fiber.RuntimeFiber<void, never>>();
 
     // Notify subscribers
     const notify = () => {
@@ -151,7 +167,7 @@ function interpret<
       entryFiber = Runtime.runFork(runtime)(program);
     };
 
-    // Run exit effect - tracked for cleanup, self-removes when complete
+    // Run exit effect - fire-and-forget cleanup for the old state
     const runExit = (stateTag: string) => {
       const stateConfig = config.states[stateTag as S["_tag"]] as StateConfig<S, C, E, R, Err> | undefined;
       if (!stateConfig?.exit) return;
@@ -161,15 +177,7 @@ function interpret<
           Effect.sync(() => handleError("exit", stateTag, cause))
         )
       );
-      const fiber = Runtime.runFork(runtime)(program);
-
-      // Track fiber and auto-remove when complete
-      exitFibers.add(fiber);
-      Runtime.runFork(runtime)(
-        Fiber.await(fiber).pipe(
-          Effect.ensuring(Effect.sync(() => exitFibers.delete(fiber)))
-        )
-      );
+      Runtime.runFork(runtime)(program);
     };
 
     // Run stream (returns fiber for cancellation)
@@ -210,20 +218,21 @@ function interpret<
         const newStateTag = transition.goto._tag as S["_tag"];
         const hadRunningStream = runFiber !== null;
 
-        // Cancel previous entry effect if still running (rapid transition)
+        // Handle previous entry effect based on interruptEntryOnTransition option
         if (entryFiber) {
-          Runtime.runFork(runtime)(Fiber.interrupt(entryFiber));
+          if (interruptEntry) {
+            Runtime.runFork(runtime)(Fiber.interrupt(entryFiber));
+          }
           entryFiber = null;
         }
 
-        // Cancel run stream - if one exists, chain new stream start to interrupt completion
+        // Interrupt run stream, then start new one after interrupt completes
         if (runFiber) {
-          const oldFiber = runFiber;
+          const oldRunFiber = runFiber;
           runFiber = null;
 
-          // Ensure old stream is fully interrupted before starting new one
           Runtime.runFork(runtime)(
-            Fiber.interrupt(oldFiber).pipe(
+            Fiber.interrupt(oldRunFiber).pipe(
               Effect.ensuring(Effect.sync(() => {
                 if (!stopped) startRunStream();
               }))
@@ -231,7 +240,7 @@ function interpret<
           );
         }
 
-        // Run exit effect (tracked, will self-cleanup)
+        // Run exit effect
         runExit(oldStateTag);
 
         // Update snapshot
@@ -324,9 +333,11 @@ function interpret<
           entryFiber = null;
         }
 
-        // Interrupt all active fibers (exit fibers are allowed to complete)
-        for (const fiber of fibersToInterrupt) {
-          Runtime.runFork(runtime)(Fiber.interrupt(fiber));
+        // Batch interrupt all active fibers in a single fork (exit fibers allowed to complete)
+        if (fibersToInterrupt.length > 0) {
+          Runtime.runFork(runtime)(
+            Effect.forEach(fibersToInterrupt, (fiber) => Fiber.interrupt(fiber), { discard: true })
+          );
         }
 
         // Run final exit effect for current state
@@ -345,19 +356,21 @@ function interpret<
           // State changed - run exit/entry effects
           const hadRunningStream = runFiber !== null;
 
-          // Cancel previous entry effect if still running
+          // Handle previous entry effect based on interruptEntryOnTransition option
           if (entryFiber) {
-            Runtime.runFork(runtime)(Fiber.interrupt(entryFiber));
+            if (interruptEntry) {
+              Runtime.runFork(runtime)(Fiber.interrupt(entryFiber));
+            }
             entryFiber = null;
           }
 
+          // Interrupt run stream, then start new one after interrupt completes
           if (runFiber) {
-            const oldFiber = runFiber;
+            const oldRunFiber = runFiber;
             runFiber = null;
 
-            // Ensure old stream is fully interrupted before starting new one
             Runtime.runFork(runtime)(
-              Fiber.interrupt(oldFiber).pipe(
+              Fiber.interrupt(oldRunFiber).pipe(
                 Effect.ensuring(Effect.sync(() => {
                   if (!stopped) startRunStream();
                 }))

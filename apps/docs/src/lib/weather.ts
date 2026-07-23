@@ -1,4 +1,4 @@
-import { Data, Effect, Schema } from "effect";
+import { Schema } from "effect";
 
 // ============================================================================
 // Types
@@ -16,20 +16,6 @@ export interface Weather {
   readonly description: string;
   readonly icon: string;
 }
-
-// ============================================================================
-// Errors
-// ============================================================================
-
-export class WeatherNetworkError extends Data.TaggedError("WeatherNetworkError")<{
-  readonly message: string;
-}> {}
-
-export class WeatherParseError extends Data.TaggedError("WeatherParseError")<{
-  readonly message: string;
-}> {}
-
-export type WeatherError = WeatherNetworkError | WeatherParseError;
 
 // ============================================================================
 // Weather Code to Description
@@ -63,46 +49,24 @@ const getWeatherInfo = (code: number) =>
   weatherCodes[code] ?? { description: "Unknown", icon: "❓" };
 
 // ============================================================================
-// Service
+// Fetch
 // ============================================================================
 
-export class WeatherService extends Effect.Service<WeatherService>()("WeatherService", {
-  effect: Effect.gen(function* () {
-    yield* Effect.log("Created WeatherService");
+export async function fetchWeather(lat = 37.7749, lon = -122.4194): Promise<Weather> {
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&temperature_unit=fahrenheit`;
 
-    const getWeather = (lat: number, lon: number): Effect.Effect<Weather, WeatherError> =>
-      Effect.gen(function* () {
-        const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&temperature_unit=fahrenheit`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
 
-        const response = yield* Effect.tryPromise({
-          try: () => fetch(url),
-          catch: (error) => new WeatherNetworkError({ message: String(error) }),
-        });
+  const json = await response.json();
+  const parsed = Schema.decodeUnknownSync(WeatherResponseSchema)(json);
+  const weatherInfo = getWeatherInfo(parsed.current.weather_code);
 
-        if (!response.ok) {
-          return yield* Effect.fail(
-            new WeatherNetworkError({ message: `HTTP ${response.status}` })
-          );
-        }
-
-        const json = yield* Effect.tryPromise({
-          try: () => response.json(),
-          catch: (error) => new WeatherParseError({ message: String(error) }),
-        });
-
-        const parsed = yield* Schema.decodeUnknown(WeatherResponseSchema)(json).pipe(
-          Effect.mapError((error) => new WeatherParseError({ message: String(error) }))
-        );
-
-        const weatherInfo = getWeatherInfo(parsed.current.weather_code);
-
-        return {
-          temperature: Math.round(parsed.current.temperature_2m),
-          description: weatherInfo.description,
-          icon: weatherInfo.icon,
-        };
-      });
-
-    return { getWeather };
-  }),
-}) {}
+  return {
+    temperature: Math.round(parsed.current.temperature_2m),
+    description: weatherInfo.description,
+    icon: weatherInfo.icon,
+  };
+}

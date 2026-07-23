@@ -1,0 +1,132 @@
+---
+title: React Integration
+description: Drive effstate v4 machines from React with useActor and the companion hooks.
+sidebar:
+  order: 5
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+`@handfish/effstate-react` connects a v4 machine definition to React. The
+`useActor` hook creates and owns an actor for you, subscribes to it, and stops it
+on unmount — so a component gets a live view of machine state with no manual
+wiring.
+
+```bash
+npm install @handfish/effstate-react
+```
+
+## useActor
+
+```ts
+const { snapshot, state, context, stateTag, send, actor } = useActor(definition, options?);
+```
+
+`useActor` interprets the definition (via `Effect.runSync`), subscribes with
+`useSyncExternalStore`, and returns:
+
+- `snapshot` — the full `{ state, context }`
+- `state` — `snapshot.state`, the `{ _tag, ... }` object
+- `context` — `snapshot.context`
+- `stateTag` — `snapshot.state._tag`, ideal for a `switch`
+- `send(event)` — a stable dispatch callback
+- `actor` — the underlying `MachineActor`, for sync/bridge/advanced use
+
+Using the canonical [Stopwatch](/effstate/getting-started/quick-start/), a
+component just branches on `stateTag`:
+
+```tsx
+import { useActor } from "@handfish/effstate-react";
+import { stopwatch, Start, Stop, Reset } from "./stopwatch";
+
+function Stopwatch() {
+  const { stateTag, context, send } = useActor(stopwatch);
+
+  return (
+    <div>
+      <h1>{context.elapsed}s</h1>
+      {stateTag === "Idle" ? (
+        <button onClick={() => send(Start.make())}>Start</button>
+      ) : (
+        <button onClick={() => send(Stop.make())}>Stop</button>
+      )}
+      <button onClick={() => send(Reset.make())}>Reset</button>
+    </div>
+  );
+}
+```
+
+<Aside type="caution" title="No service requirements">
+`useActor` interprets the machine with `Effect.runSync`, so it only works for
+machines with **`R = never`** (no Effect service requirements). A machine that
+needs services must be pre-provided — interpret it once with `Effect.provide`
+outside React and pass the resulting actor to the tree via context or props.
+</Aside>
+
+### Restoring saved state
+
+Pass `options.initialSnapshot` to start the actor from a previously captured
+snapshot instead of the machine's initial state:
+
+```tsx
+const { context } = useActor(stopwatch, {
+  initialSnapshot: savedSnapshot, // MachineSnapshot<S, C>
+});
+```
+
+This is the entry point for [persistence](/effstate/guides/persistence/) — hydrate
+`initialSnapshot` from storage on first render, then keep it current with
+`useActorSync`.
+
+## Companion hooks
+
+These hooks operate on the `actor` returned by `useActor` (or any actor you own).
+
+### useActorEffect
+
+Run a side effect on every snapshot change (and once initially). Return a
+function to clean up:
+
+```tsx
+useActorEffect(actor, (snapshot) => {
+  document.title = `${snapshot.context.elapsed}s`;
+  return () => { document.title = "app"; };
+});
+```
+
+### useActorWatch
+
+Fire `onChange(value, prevValue)` only when a **selected** value changes
+(reference-compared). It does not fire for the initial value:
+
+```tsx
+useActorWatch(
+  actor,
+  (snap) => snap.state._tag,
+  (tag, prev) => console.log(`transition ${prev} -> ${tag}`),
+);
+```
+
+### useActorBridge
+
+The idiomatic way to wire one actor to another: when a derived value changes,
+send an event to a target actor. It is built on `useActorWatch`:
+
+```tsx
+useActorBridge(
+  source.actor,
+  target.actor,
+  (snap) => snap.context.electricityLevel > 0,
+  (isPowered) => (isPowered ? PowerOn.make() : PowerOff.make()),
+);
+```
+
+`useActorBridge` is the backbone of cross-actor apps — see
+[cross-tab sync](/effstate/guides/cross-tab-sync/) for wiring multiple synced
+actors, and [persistence](/effstate/guides/persistence/) for keeping each one
+durable.
+
+## Full signatures
+
+See [React Hooks](/effstate/api/react-hooks/) for the complete signature of every
+hook, including `useActorSync`.

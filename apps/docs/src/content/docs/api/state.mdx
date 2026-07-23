@@ -1,0 +1,108 @@
+---
+title: State, Event & Union
+description: Schema-first state and event definitions, plus the discriminated-union schema builder.
+sidebar:
+  order: 1
+---
+
+States and events are defined the same way: a literal tag plus a set of Schema
+fields. `Event` is a semantic alias of `State`.
+
+## State / Event
+
+```ts
+function State<TTag extends string, TFields extends SchemaFields>(
+  tag: TTag,
+  fields: TFields,
+): StateDefinition<TTag, TFields>;
+
+const Event = State; // same function, semantic alias
+```
+
+Create a tagged variant. The returned `StateDefinition` describes a value of shape
+`{ _tag: TTag, ...fields }`.
+
+**Params**
+
+- `tag` — the literal discriminator string.
+- `fields` — a `SchemaFields` object (`Schema.Struct.Fields`). Pass `{}` for a
+  variant with no data.
+
+**Returns** — a `StateDefinition<TTag, TFields>` with:
+
+- `.tag` — the literal tag string.
+- `.schema` — the `Schema` for `{ _tag: tag, ...fields }`.
+- `.make(data?)` — construct an instance. No fields → `.make()`; fields → `.make({...})`.
+- `.safeMake(data?)` — validated construction, returns `Either<T, ParseError>`.
+- `.is(value)` — a type guard narrowing `value` to this variant.
+
+```ts
+import { State, Event } from "@handfish/effstate-v4";
+import { Schema, Either } from "effect";
+
+const Idle = State("Idle", {});
+const Running = State("Running", { startedAt: Schema.DateFromSelf });
+
+Idle.make();                             // { _tag: "Idle" }
+Running.make({ startedAt: new Date() }); // { _tag: "Running", startedAt: Date }
+
+Running.is(value);                       // value is StateType<typeof Running>
+
+const result = Running.safeMake({ startedAt: new Date() });
+if (Either.isRight(result)) {
+  result.right; // validated instance
+}
+
+// Events are defined identically
+const Start = Event("Start", {});
+Start.make();                            // { _tag: "Start" }
+```
+
+## Union
+
+```ts
+function Union<Members extends readonly [StateDefinition, StateDefinition, ...StateDefinition[]]>(
+  ...members: Members
+): Schema.Union<...>;
+```
+
+Build a `Schema.Union` from two or more member definitions — the schema for the
+whole discriminated state or event set. Use it for serialization and validation.
+
+**Params** — two or more `StateDefinition`s (at least 2 required).
+
+**Returns** — a `Schema.Union` of the members' `.schema` values.
+
+```ts
+import { Union } from "@handfish/effstate-v4";
+
+const StateSchema = Union(Idle, Running); // Schema for the state union
+```
+
+## Types
+
+```ts
+import type {
+  StateType,
+  EventType,
+  UnionType,
+  SchemaFields,
+  StateDefinition,
+} from "@handfish/effstate-v4";
+
+type IdleState = StateType<typeof Idle>;    // { readonly _tag: "Idle" }
+type StartEvent = EventType<typeof Start>;  // EventType is an alias of StateType
+
+// The machine's state/event type is a plain TS union of members:
+type StopwatchState = StateType<typeof Idle> | StateType<typeof Running>;
+
+type AnyState = UnionType<[typeof Idle, typeof Running]>; // the union instance type
+```
+
+- `StateType<T>` — extracts the instance type from a `StateDefinition`.
+- `EventType<T>` — alias of `StateType<T>`.
+- `UnionType<T>` — the union instance type for a tuple of definitions.
+- `SchemaFields` — `Schema.Struct.Fields`; the shape of the `fields` argument.
+- `StateDefinition<TTag, TFields>` — the object returned by `State` / `Event`.
+
+See [defineMachine](/effstate/api/define-machine/) to wire states and events into a machine.

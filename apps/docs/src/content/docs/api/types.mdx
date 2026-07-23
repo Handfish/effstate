@@ -1,167 +1,79 @@
 ---
 title: Types
-description: Core type definitions
+description: Reference for the exported machine type helpers and extractors.
+sidebar:
+  order: 5
 ---
 
+The type-level building blocks exported by `@handfish/effstate-v4`. Import them
+with `import type`.
 
-Key types you'll work with when using effstate.
+## Constraint types
 
-## MachineEvent
+These are the base shapes the machine generics extend.
 
-Base interface for all events. Events must have a `_tag` discriminator.
-
-```typescript
-interface MachineEvent {
-  readonly _tag: string;
-}
+```ts
+import type { MachineState, MachineEvent, MachineContext } from "@handfish/effstate-v4";
 ```
 
-**Define events with Data.TaggedClass:**
+- `MachineState` — `{ readonly _tag: string }`; the minimum shape of a state.
+- `MachineEvent` — the minimum shape of an event (a tagged object).
+- `MachineContext` — `object`; the constraint on a context type.
 
-```typescript
-import { Data } from "effect";
+## Tag helpers
 
-class Increment extends Data.TaggedClass("INCREMENT")<{
-  amount: number;
-}> {}
+```ts
+import type { StateTag, StateByTag, EventByTag } from "@handfish/effstate-v4";
 
-class Reset extends Data.TaggedClass("RESET")<{}> {}
-
-type CounterEvent = Increment | Reset;
+type Tags = StateTag<StopwatchState>;              // "Idle" | "Running"
+type RunningState = StateByTag<StopwatchState, "Running">;
+type StartEvent = EventByTag<StopwatchEvent, "Start">;
 ```
 
----
+- `StateTag<S>` — the union of state `_tag` literals in `S`.
+- `StateByTag<S, K>` — the state member of `S` whose tag is `K`.
+- `EventByTag<E, K>` — the event member of `E` whose tag is `K`.
 
-## MachineSnapshot
+## Snapshot & runtime types
 
-The current state of a machine.
-
-```typescript
-interface MachineSnapshot<TStateValue extends string, TContext> {
-  /** Current state value */
-  readonly value: TStateValue;
-  /** Current context */
-  readonly context: TContext;
-  /** Last processed event (null initially) */
-  readonly event: MachineEvent | null;
-}
-```
-
-**Usage:**
-
-```typescript
-const snapshot = actor.getSnapshot();
-console.log(snapshot.value);   // "idle"
-console.log(snapshot.context); // { count: 0 }
-```
-
----
-
-## MachineDefinition
-
-The machine definition returned by `createMachine()`.
-
-```typescript
-interface MachineDefinition<
-  TId extends string,
-  TStateValue extends string,
-  TContext,
-  TEvent extends MachineEvent,
-  R,      // Effect requirements
-  E,      // Effect error type
-  TContextEncoded,  // JSON-encoded context type
-> {
-  readonly _tag: "MachineDefinition";
-  readonly id: TId;
-  readonly initialSnapshot: MachineSnapshot<TStateValue, TContext>;
-  readonly contextSchema: Schema.Schema<TContext, TContextEncoded>;
-}
-```
-
-**Type helpers for extracting types:**
-
-```typescript
+```ts
 import type {
-  MachineDefinitionState,
-  MachineDefinitionContext,
-  MachineDefinitionEvent,
-  MachineDefinitionR,
-} from "effstate";
-
-type State = MachineDefinitionState<typeof myMachine>;
-type Context = MachineDefinitionContext<typeof myMachine>;
-type Event = MachineDefinitionEvent<typeof myMachine>;
-type Requirements = MachineDefinitionR<typeof myMachine>;
+  MachineSnapshot,
+  MachineActor,
+  MachineDefinition,
+} from "@handfish/effstate-v4";
 ```
 
----
+- `MachineSnapshot<S, C>` — `{ state: S; context: C }`; the observable machine value.
+- `MachineActor<S, C, E>` — the running actor. See [MachineActor](/effstate/api/interpret/#machineactor).
+- `MachineDefinition<S, C, E, R, Err>` — the definition returned by
+  [`defineMachine`](/effstate/api/define-machine/).
 
-## StateMachineError
+## Extractors
 
-Error types emitted via `actor.onError()`.
+Recover the generic parameters from a `MachineDefinition` type — useful when
+sharing a machine across modules.
 
-```typescript
-// Effect action failed
-class EffectActionError {
-  readonly _tag = "EffectActionError";
-  readonly message: string;
-  readonly cause: Cause.Cause<unknown>;
-}
+```ts
+import type {
+  MachineStateType,
+  MachineContextType,
+  MachineEventType,
+  MachineRequirements,
+  MachineError,
+} from "@handfish/effstate-v4";
 
-// Activity threw an error
-class ActivityError {
-  readonly _tag = "ActivityError";
-  readonly message: string;
-  readonly activityId: string;
-  readonly cause: Cause.Cause<unknown>;
-}
+type M = typeof stopwatch;
 
-type StateMachineError = EffectActionError | ActivityError;
+type S = MachineStateType<M>;    // StopwatchState
+type C = MachineContextType<M>;  // StopwatchContext
+type E = MachineEventType<M>;    // StopwatchEvent
+type R = MachineRequirements<M>; // Effect requirements (never here)
+type Err = MachineError<M>;      // entry/exit/run error channel (never here)
 ```
 
-**Handling errors:**
-
-```typescript
-actor.onError((error) => {
-  switch (error._tag) {
-    case "EffectActionError":
-      console.error("Effect failed:", error.message);
-      break;
-    case "ActivityError":
-      console.error(`Activity ${error.activityId} failed:`, error.message);
-      break;
-  }
-});
-```
-
----
-
-## EmittedEvent
-
-Events emitted via the `emit` action and received via `actor.on()`.
-
-```typescript
-interface EmittedEvent {
-  type: string;
-  [key: string]: unknown;
-}
-```
-
-**Example:**
-
-```typescript
-// In machine config
-emit({ type: "notification", message: "Done!" })
-
-// Listening
-actor.on<{ type: "notification"; message: string }>("notification", (event) => {
-  showToast(event.message);
-});
-```
-
----
-
-## See Also
-
-- [createMachine](/api/create-machine/) - Creating machine definitions
-- [MachineActor](/api/machine-actor/) - The actor interface
+- `MachineStateType<T>` — the state union `S`.
+- `MachineContextType<T>` — the context type `C`.
+- `MachineEventType<T>` — the event union `E`.
+- `MachineRequirements<T>` — the Effect requirements `R`.
+- `MachineError<T>` — the error channel `Err`.

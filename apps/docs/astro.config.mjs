@@ -9,7 +9,7 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'effstate',
-      description: 'Effect-first state machine library for TypeScript',
+      description: 'Lean, schema-first state machines for Effect',
       favicon: '/logo.png',
       logo: {
         src: './public/logo.png',

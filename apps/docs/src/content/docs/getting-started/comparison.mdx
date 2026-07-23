@@ -1,123 +1,113 @@
 ---
-title: Comparison with XState
-description: Bundle size and performance comparison between effstate and XState
+title: Coming from XState
+description: A conceptual map from XState concepts to effstate v4 equivalents.
+sidebar:
+  order: 4
 ---
 
-## Bundle Size
+import { Aside, LinkCard } from '@astrojs/starlight/components';
 
-effstate is significantly smaller than XState, making it ideal for bundle-conscious applications.
+If you know [XState](https://stately.ai/docs/xstate), most concepts carry over — the spelling
+and the mechanics change. This page maps them, then explains where the two libraries differ
+in spirit. It's a conceptual guide, not a benchmark.
 
-| Library | Minified | Minified + Gzipped |
-|---------|----------|-------------------|
-| **effstate** | **~14 kB** | **~3.9 kB** |
-| XState | 45.3 kB | 13.7 kB |
+## Concept mapping
 
-effstate is **~3.5x smaller** than XState (gzipped).
+| XState | effstate v4 |
+|---|---|
+| `createMachine(config)` | `defineMachine(config)` |
+| String state values (`"running"`) | `State("Running", { ... })` variants — a discriminated union whose data lives on the state |
+| `context` + `assign(...)` | A plain context object patched via `{ update: { ... } }` from a handler |
+| Guards (`guard`, `and`, `or`, `not`) | Plain conditionals in the handler — return the transition when it holds, else `null` |
+| `actions` | `{ actions: [() => {...}] }` for fire-and-forget sync work, or `{ update }` to change context |
+| `activities` and `invoke` | `run` streams — emit events while in the state, auto-cancelled on exit |
+| Injected services / actor logic | Effect requirements (`R`) provided via layers, consumed in `entry`/`run` |
+| `interpret(machine)` / `createActor` | `machine.interpret()` — a method returning an `Effect` |
+| `sendTo` / `sendParent` | `useActorBridge` — React owns actor refs and wires them together |
 
-:::note
-effstate requires `effect` as a peer dependency. The Effect library adds to your bundle, but if you're already using Effect in your application, effstate adds minimal overhead.
-:::
+### States hold their own data
 
-## Performance Benchmarks
+In XState a state is a string and everything variable lives in `context`. In effstate a
+state is a tagged variant that can carry data intrinsic to it:
 
-We benchmark both libraries with equivalent state machine implementations to ensure fair comparison.
-
-### Machine Creation
-
-Creating a new state machine definition.
-
-| Library | ops/sec | Mean (μs) |
-|---------|---------|-----------|
-| **effstate** | **13,723,258** | **0.073** |
-| XState | 268,803 | 3.720 |
-
-effstate is **~51x faster** at machine creation.
-
-### Actor Lifecycle
-
-Creating, starting, and stopping an actor.
-
-| Library | ops/sec | Mean (μs) |
-|---------|---------|-----------|
-| effstate | 57,627 | 17.353 |
-| **XState** | **307,461** | **3.252** |
-
-XState is ~5x faster at actor lifecycle. This is the cost of effstate's Effect-first architecture - actor creation captures the runtime for dependency injection. Use `interpretManual()` if you need maximum performance and manage cleanup yourself.
-
-### Event Sending (1000 events)
-
-Sending 1000 events to a running actor.
-
-| Library | ops/sec | Mean (μs) |
-|---------|---------|-----------|
-| **effstate** | **15,166** | **65.9** |
-| XState | 610 | 1640.7 |
-
-effstate is **~25x faster** at event processing.
-
-### With Subscribers (5 subscribers, 100 events)
-
-Processing events with multiple subscribers attached.
-
-| Library | ops/sec | Mean (μs) |
-|---------|---------|-----------|
-| **effstate** | **44,536** | **22.5** |
-| XState | 5,728 | 174.6 |
-
-effstate is **~8x faster** with subscribers.
-
-### Realistic App Lifecycle
-
-Complete workflow simulating real app usage: create actor → subscribe (like React component) → 50 user interactions → unsubscribe → stop.
-
-| Library | ops/sec | Mean (μs) |
-|---------|---------|-----------|
-| **effstate** | **54,743** | **18.3** |
-| XState | 11,323 | 88.3 |
-
-effstate is **~5x faster** for realistic app lifecycles.
-
-## Summary
-
-| Benchmark | Winner | Factor |
-|-----------|--------|--------|
-| Machine Creation | effstate | 51x faster |
-| Actor Lifecycle | XState | 5x faster |
-| Event Sending | effstate | 25x faster |
-| With Subscribers | effstate | 8x faster |
-| Realistic Lifecycle | effstate | 5x faster |
-
-**Final Score: effstate 4 - 1 XState**
-
-### Why the Difference?
-
-**XState has additional overhead from:**
-- DevTools/inspection support (always-on)
-- Actor system relay for distributed event routing
-- Full Observable protocol (next/error/complete)
-
-**effstate is optimized for:**
-- Minimal runtime overhead for event processing
-- Simple callbacks with error isolation
-- Effect ecosystem integration
-- Hierarchical parent/child actor communication
-
-### Performance Tips
-
-For maximum performance:
-- Use `interpretManual()` instead of `interpret()` when you manage actor lifecycle manually
-- Pre-create event instances instead of creating new ones each time
-- effstate's event processing is 25x faster, so focus on minimizing actor creation if needed
-
-## Running the Benchmarks
-
-You can run the benchmarks yourself:
-
-```bash
-git clone https://github.com/handfish/effstate
-cd effstate
-pnpm install
-pnpm --filter effstate bench
+```ts
+const Running = State("Running", { startedAt: Schema.DateFromSelf });
+// ...
+Start: () => ({ goto: Running.make({ startedAt: new Date() }) }),
 ```
 
-The benchmark code is in `packages/core/bench/machine.bench.ts`.
+Data that isn't part of the state's identity (the elapsed count) stays in context.
+
+### assign becomes update
+
+```ts
+// XState: actions: assign({ elapsed: ({ context }) => context.elapsed + 1 })
+Tick: (ctx) => ({ update: { elapsed: ctx.elapsed + 1 } }),
+```
+
+`update` is a shallow `Partial<C>` merge — no `assign`, no updater objects.
+
+### Guards become conditionals
+
+There is no separate guard function or `and`/`or`/`not` combinators. A handler is just a
+function; return `null` to stay put.
+
+```ts
+Tick: (ctx) =>
+  ctx.elapsed < 60 ? { update: { elapsed: ctx.elapsed + 1 } } : null,
+```
+
+### Activities and invoke become run streams
+
+A `run` stream replaces both long-running activities and invoked sources. It's a typed
+`Stream` of events that starts on entry and is interrupted on exit:
+
+```ts
+Running: {
+  run: ticks, // Stream<StopwatchEvent> — emits Tick every second
+  on: { Tick: (ctx) => ({ update: { elapsed: ctx.elapsed + 1 } }) },
+},
+```
+
+### Services become Effect requirements
+
+Instead of injecting actor logic, entry effects and run streams are ordinary `Effect`s whose
+requirement channel (`R`) is satisfied with a layer at interpret time:
+
+```ts
+Effect.runSync(machine.interpret().pipe(Effect.provide(MyServiceLayer)));
+```
+
+### Cross-actor communication is a React concern
+
+There's no `sendTo`/`sendParent` inside the machine. In React, `useActorBridge` watches one
+actor and forwards derived values as events to another:
+
+```tsx
+useActorBridge(
+  source.actor, target.actor,
+  (snap) => snap.context.electricityLevel > 0,
+  (isPowered) => (isPowered ? PowerOn.make() : PowerOff.make()),
+);
+```
+
+## What's different in spirit
+
+- **Schema-first.** One `State`/`Event` definition is simultaneously the type, the
+  constructor, the guard (`.is`), and the codec (`.schema`). There's no separate typegen step.
+- **Effect-native effects.** Side effects aren't strings resolved against an implementation
+  map — they're `Effect`s and `Stream`s with real requirements and error channels. Failures
+  surface through `onError` as structured `MachineEffectError`s rather than being swallowed.
+- **A lean, imperative actor.** The actor is a small object with `send`, `getSnapshot`,
+  `subscribe`, and `stop`. No always-on inspector, no observable protocol — the whole core is
+  roughly ~500 LOC.
+
+<Aside type="tip">
+Migrating incrementally? Start by translating one XState machine's states into `State(...)`
+variants, move `context` fields over, and rewrite `assign` calls as `{ update }`. Guards and
+actions fall out naturally once the handlers are plain functions.
+</Aside>
+
+## Next steps
+
+<LinkCard title="Quick Start" href="/effstate/getting-started/quick-start/" description="Build the Stopwatch machine end to end." />

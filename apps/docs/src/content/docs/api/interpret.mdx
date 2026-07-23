@@ -1,223 +1,108 @@
 ---
-title: interpret
-description: API reference for interpret and interpretSync
+title: interpret & MachineActor
+description: Start a machine and drive the running actor.
+sidebar:
+  order: 3
 ---
 
-
-Creates a running actor from a machine definition.
+`interpret` is a method on the [`MachineDefinition`](/effstate/api/define-machine/)
+that yields a running [`MachineActor`](#machineactor).
 
 ## interpret
 
-The primary API for Effect users. Returns an Effect that creates an actor with full service access and automatic cleanup.
-
-### Signature
-
-```typescript
-function interpret<TStateValue, TContext, TEvent, R, E>(
-  machine: MachineDefinition<..., R, E, ...>,
-  options?: InterpretOptions,
-): Effect.Effect<MachineActor<TStateValue, TContext, TEvent>, never, R | Scope.Scope>
+```ts
+machine.interpret(
+  options?: InterpretOptions<S, C, Err>,
+): Effect.Effect<MachineActor<S, C, E>, never, R>;
 ```
 
-### Options
+Returns an Effect that produces the actor. It **never fails** — effect errors
+during `entry` / `exit` / `run` surface through `onError` instead of the error
+channel.
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `parent` | `MachineActor` | Parent actor for child machines |
-| `snapshot` | `MachineSnapshot` | Initial snapshot for state restoration |
-| `childSnapshots` | `Map<string, MachineSnapshot>` | Child snapshots for restoration |
+The Effect requires `R`. When `R = never`, run it synchronously with
+`Effect.runSync`; when the machine needs services, provide a `Layer` first.
 
-### Returns
+```ts
+import { Effect } from "effect";
 
-An Effect that yields a `MachineActor`. The actor is automatically stopped when the Effect's scope closes.
+// R = never
+const actor = Effect.runSync(stopwatch.interpret());
 
-### Example
+// R needs services
+const actor2 = Effect.runSync(machine.interpret().pipe(Effect.provide(SomeLayer)));
+```
 
-```typescript
-import { interpret, createMachine } from "effstate";
-import { Effect, Scope } from "effect";
+## InterpretOptions
 
-const program = Effect.gen(function* () {
-  const actor = yield* interpret(machine);
+```ts
+interface InterpretOptions<S, C, Err = never> {
+  snapshot?: MachineSnapshot<S, C>;
+  onError?: (error: MachineEffectError<Err>) => void;
+  interruptEntryOnTransition?: boolean; // default false
+}
+```
 
-  // Subscribe to state changes
-  actor.subscribe((snapshot) => {
-    console.log("State:", snapshot.value);
-  });
+- `snapshot?` — restore from a saved `MachineSnapshot` instead of the initial state/context.
+- `onError?` — called when an `entry` / `exit` / `run` effect fails. Without it,
+  errors are `console.error`'d.
+- `interruptEntryOnTransition?` — default `false`: entry effects run to completion
+  even when the machine transitions away. `true`: interrupt them on transition.
+  (Entry effects are always interrupted on `stop()`; run streams are always
+  interrupted on exit; exit effects are fire-and-forget.)
 
-  // Send events
-  actor.send(new MyEvent());
+## MachineEffectError
 
-  // Wait for a specific state
-  const result = yield* actor.waitFor((s) => s.value === "done");
+```ts
+interface MachineEffectError<Err = never> {
+  readonly _tag: "MachineEffectError";
+  readonly effectType: "entry" | "exit" | "run";
+  readonly stateTag: string;
+  readonly cause: Cause.Cause<Err>;
+}
+```
 
-  return result;
-});
+The value passed to `onError`, describing which effect failed and why.
 
-// Run with automatic cleanup
-Effect.runPromise(
-  program.pipe(
-    Effect.scoped, // Scope ensures cleanup
-    Effect.provide(MyService.Default), // Provide services
-  )
+## MachineActor
+
+```ts
+interface MachineActor<S, C, E> {
+  send(event: E): void;
+  getSnapshot(): MachineSnapshot<S, C>;
+  subscribe(observer: (snapshot: MachineSnapshot<S, C>) => void): () => void;
+  stop(): void;
+  _syncSnapshot(snapshot: MachineSnapshot<S, C>): void;
+}
+```
+
+- `send(event)` — dispatch an event.
+- `getSnapshot()` — read the current `{ state, context }`.
+- `subscribe(observer)` — observe snapshot changes; returns an unsubscribe function.
+- `stop()` — interrupt fibers, run the final exit, and clear subscribers.
+- `_syncSnapshot(snapshot)` — **advanced.** Set the snapshot from an external source
+  (persistence / cross-tab). Triggers `exit` / `entry` effects if the state tag changed.
+
+## Example
+
+```ts
+import { Effect } from "effect";
+import { stopwatch, Start, Stop, Reset } from "./stopwatch";
+
+const actor = Effect.runSync(
+  stopwatch.interpret({
+    onError: (err) => console.error(err.effectType, err.stateTag, err.cause),
+  }),
 );
-```
 
-### With Service Dependencies
-
-```typescript
-import { createMachine, invoke, interpret } from "effstate";
-
-class ApiClient extends Effect.Service<ApiClient>()("ApiClient", {
-  succeed: {
-    fetchUser: (id: string) => Effect.tryPromise(() => fetch(`/api/users/${id}`)),
-  },
-}) {}
-
-// Machine uses ApiClient in invoke.src
-const userMachine = createMachine({
-  states: {
-    loading: {
-      invoke: invoke({
-        src: ({ context }) =>
-          Effect.gen(function* () {
-            const api = yield* ApiClient;
-            return yield* api.fetchUser(context.userId);
-          }),
-        onSuccess: { target: "ready" },
-      }),
-    },
-  },
-});
-
-// Provide the service when running
-const program = Effect.gen(function* () {
-  const actor = yield* interpret(userMachine);
-  actor.send(new Load());
-});
-
-Effect.runPromise(
-  program.pipe(
-    Effect.scoped,
-    Effect.provide(ApiClient.Default),
-  )
+const unsubscribe = actor.subscribe((snap) =>
+  console.log(snap.state._tag, snap.context.elapsed),
 );
-```
 
-### With State Restoration
+actor.send(Start.make()); // ticks begin; elapsed increments each second
+actor.send(Stop.make());  // ticks auto-cancel
+actor.send(Reset.make()); // global handler → Idle, elapsed 0
 
-```typescript
-// Load persisted state
-const persisted = loadFromStorage();
-
-const program = Effect.gen(function* () {
-  const actor = yield* interpret(machine, {
-    snapshot: persisted.snapshot,
-    childSnapshots: persisted.childSnapshots,
-  });
-
-  return actor;
-});
-```
-
----
-
-## interpretSync
-
-Synchronously creates an actor without Effect context. Use this for simple cases or when managing lifecycle manually.
-
-### Signature
-
-```typescript
-function interpretSync<TStateValue, TContext, TEvent, R, E>(
-  machine: MachineDefinition<..., R, E, ...>,
-  options?: { parent?: MachineActor },
-): MachineActor<TStateValue, TContext, TEvent>
-```
-
-### Returns
-
-A `MachineActor` directly (not wrapped in Effect).
-
-### Example
-
-```typescript
-import { interpretSync, createMachine } from "effstate";
-
-const actor = interpretSync(machine);
-
-actor.subscribe((snapshot) => {
-  console.log("State:", snapshot.value);
-});
-
-actor.send(new MyEvent());
-
-// Important: manually clean up when done
+unsubscribe();
 actor.stop();
 ```
-
-### When to Use
-
-Use `interpretSync` when:
-
-- You're in a non-Effect context (e.g., vanilla JS)
-- Your machine doesn't need service dependencies (R = never)
-- You're managing lifecycle manually (e.g., in a React useEffect)
-
-Use `interpret` when:
-
-- Your machine uses services (via Effect.Service)
-- You want automatic cleanup via Scope
-- You're already in an Effect context
-
-### Warning
-
-If your machine has service dependencies (R !== never) and you use `interpretSync`, effect actions that require those services will fail at runtime.
-
----
-
-## withRequirements
-
-Type helper to narrow the R channel of a machine definition.
-
-### Signature
-
-```typescript
-function withRequirements<R>(): <...>(
-  machine: MachineDefinition<...>
-) => MachineDefinition<..., R, ...>
-```
-
-### Example
-
-```typescript
-import { withRequirements, createMachine, invoke } from "effstate";
-
-// Machine that uses WeatherService in its invoke
-const garageDoorMachine = withRequirements<WeatherService>()(
-  createMachine({
-    id: "garageDoor",
-    states: {
-      checking: {
-        invoke: invoke({
-          src: () =>
-            Effect.gen(function* () {
-              const weather = yield* WeatherService;
-              return yield* weather.getCurrentWeather();
-            }),
-          onSuccess: { target: "ready" },
-        }),
-      },
-    },
-  })
-);
-
-// Now TypeScript knows this machine requires WeatherService
-// type R = MachineDefinitionR<typeof garageDoorMachine>
-// => WeatherService
-```
-
-## See Also
-
-- [createMachine](/api/create-machine/) - Create a machine definition
-- [MachineActor](/api/machine-actor/) - The actor interface
