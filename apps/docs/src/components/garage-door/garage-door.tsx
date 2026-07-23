@@ -1,113 +1,77 @@
 import { Button } from "@/components/ui/button";
-import {
-  type GarageDoorState,
-  type WeatherStatus,
-  AnimationComplete,
-  BangHammer,
-  Click,
-  getButtonLabel,
-  getStateLabel,
-  getWeatherStatus,
-} from "@/data-access/garage-door-operations";
-import { useGarageDoorLeft } from "@/data-access/hamster-wheel-operations";
+import { getDoorStateLabel, getDoorButtonLabel } from "@/hooks/useDemoState";
+import type { DoorState, DoorContext } from "@/machines";
 import { cn } from "@/lib/utils";
 
-type GarageDoorHook = typeof useGarageDoorLeft;
+const isPaused = (stateTag: DoorState["_tag"]): boolean =>
+  stateTag === "PausedOpening" || stateTag === "PausedClosing";
 
-const isPaused = (state: GarageDoorState): boolean =>
-  state === "paused-while-opening" || state === "paused-while-closing";
+const isAnimating = (stateTag: DoorState["_tag"]): boolean =>
+  stateTag === "Opening" || stateTag === "Closing";
 
-const isAnimatingState = (state: GarageDoorState): boolean =>
-  state === "opening" || state === "closing";
+type Weather = DoorContext["weather"];
 
-const WeatherDisplay = ({ weather }: { weather: WeatherStatus }) => {
-  switch (weather._tag) {
+const WeatherDisplay = ({ weather }: { weather: Weather }) => {
+  switch (weather.status) {
     case "loading":
-      return (
-        <div className="text-gray-400 text-sm animate-pulse">
-          Loading weather...
-        </div>
-      );
+      return <div className="text-gray-400 text-sm animate-pulse">Loading weather...</div>;
     case "loaded":
       return (
         <div className="flex flex-col items-center gap-1">
-          <div className="text-3xl">{weather.weather.icon}</div>
-          <div className="text-white text-lg font-bold">
-            {weather.weather.temperature}°F
-          </div>
-          <div className="text-gray-300 text-xs">
-            {weather.weather.description}
-          </div>
+          <div className="text-3xl">{weather.icon}</div>
+          <div className="text-white text-lg font-bold">{weather.temp}°F</div>
+          <div className="text-gray-300 text-xs">{weather.desc}</div>
         </div>
       );
     case "error":
       return (
         <div className="flex flex-col items-center gap-1">
           <div className="text-2xl">⚠️</div>
-          <div className="text-red-400 text-xs text-center px-2">
-            {weather.error}
-          </div>
+          <div className="text-red-400 text-xs text-center px-2">{weather.message}</div>
         </div>
       );
     default:
-      return (
-        <div className="text-gray-600 text-sm">Garage Interior</div>
-      );
+      return <div className="text-gray-600 text-sm">Garage Interior</div>;
   }
 };
 
 interface GarageDoorProps {
-  useHook?: GarageDoorHook;
-  title?: string;
+  doorState: DoorState;
+  doorContext: DoorContext;
+  hasPower: boolean;
+  title: string;
   mobileTitle?: string;
+  onClick: () => void;
+  onWakeHamster: () => void;
 }
 
-export const GarageDoor = ({ useHook = useGarageDoorLeft, title = "Garage Door", mobileTitle }: GarageDoorProps) => {
-  const { send, isLoading, context, state } = useHook();
-
-  // Handle animation completion
-  const isOpening = state === "opening";
-  const isClosing = state === "closing";
-
-  if (context.position >= 100 && isOpening) {
-    send(new AnimationComplete());
-  } else if (context.position <= 0 && isClosing) {
-    send(new AnimationComplete());
-  }
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center p-8">
-        <div className="text-muted-foreground">Initializing...</div>
-      </div>
-    );
-  }
-
-  // Derive status from context
-  const hasElectricity = context.isPowered;
-  const isAnimating = isOpening || isClosing;
-  const isPausedDueToNoPower = !hasElectricity && isAnimating;
-  const status = {
-    state,
-    position: context.position,
-    weather: getWeatherStatus(context),
-  };
-
-  const handleButtonClick = () => send(new Click());
-
-  // Door panel height based on position (0 = fully covering, 100 = fully retracted)
-  const doorHeight = 100 - status.position;
+export const GarageDoor = ({
+  doorState,
+  doorContext,
+  hasPower,
+  title,
+  mobileTitle,
+  onClick,
+  onWakeHamster,
+}: GarageDoorProps) => {
+  const stateTag = doorState._tag;
+  const doorHeight = 100 - doorContext.position;
+  const isPausedDueToNoPower = !hasPower && isAnimating(stateTag);
 
   return (
-    <div className={cn(
-      "flex flex-col items-center gap-4 md:gap-6 p-4 md:p-8 rounded-lg transition-all duration-500",
-      !hasElectricity && "opacity-70"
-    )}>
+    <div
+      className={cn(
+        "flex flex-col items-center gap-4 md:gap-6 p-4 md:p-8 rounded-lg transition-all duration-500",
+        !hasPower && "opacity-70",
+      )}
+    >
       <div className="flex items-center gap-2">
-        <h2 className={cn(
-          "text-xl md:text-2xl font-bold transition-colors duration-500",
-          hasElectricity ? "text-gray-100" : "text-gray-300"
-        )}>
+        <h2
+          className={cn(
+            "text-xl md:text-2xl font-bold transition-colors duration-500",
+            hasPower ? "text-gray-100" : "text-gray-300",
+          )}
+        >
           {mobileTitle ? (
             <>
               <span className="lg:hidden">{mobileTitle}</span>
@@ -117,16 +81,18 @@ export const GarageDoor = ({ useHook = useGarageDoorLeft, title = "Garage Door",
             title
           )}
         </h2>
-        {!hasElectricity && (
-          <span className="text-red-500 text-lg md:text-xl" title="No Power">🔌</span>
+        {!hasPower && (
+          <span className="text-red-500 text-lg md:text-xl" title="No Power">
+            🔌
+          </span>
         )}
       </div>
 
       {/* Garage Frame */}
       <div className="relative w-48 h-36 md:w-64 md:h-48 border-4 border-gray-700 rounded-t-lg bg-gray-900 overflow-hidden">
-        {/* Inside of garage (visible when door opens) */}
+        {/* Inside of garage */}
         <div className="absolute inset-0 bg-gray-800 flex items-center justify-center">
-          <WeatherDisplay weather={status.weather} />
+          <WeatherDisplay weather={doorContext.weather} />
         </div>
 
         {/* Door Panels */}
@@ -134,16 +100,9 @@ export const GarageDoor = ({ useHook = useGarageDoorLeft, title = "Garage Door",
           className="absolute top-0 left-0 right-0 bg-gradient-to-b from-gray-400 to-gray-500 border-b-2 border-gray-600 transition-none"
           style={{ height: `${doorHeight}%` }}
         >
-          {/* Door panel lines */}
           {[0, 1, 2, 3].map((i) => (
-            <div
-              key={i}
-              className="border-b border-gray-600"
-              style={{ height: "25%" }}
-            />
+            <div key={i} className="border-b border-gray-600" style={{ height: "25%" }} />
           ))}
-
-          {/* Door handle */}
           <div className="absolute bottom-2 left-1/2 -translate-x-1/2 w-8 h-2 bg-gray-700 rounded" />
         </div>
 
@@ -153,15 +112,15 @@ export const GarageDoor = ({ useHook = useGarageDoorLeft, title = "Garage Door",
             <div
               className={cn(
                 "h-full transition-none rounded-full",
-                status.state === "opening" || status.state === "paused-while-opening"
+                stateTag === "Opening" || stateTag === "PausedOpening"
                   ? "bg-green-500"
-                  : status.state === "closing" || status.state === "paused-while-closing"
+                  : stateTag === "Closing" || stateTag === "PausedClosing"
                     ? "bg-orange-500"
-                    : status.state === "open"
+                    : stateTag === "Open"
                       ? "bg-green-500"
-                      : "bg-gray-500"
+                      : "bg-gray-500",
               )}
-              style={{ width: `${status.position}%` }}
+              style={{ width: `${doorContext.position}%` }}
             />
           </div>
         </div>
@@ -171,42 +130,34 @@ export const GarageDoor = ({ useHook = useGarageDoorLeft, title = "Garage Door",
       <div className="w-48 md:w-64 h-3 md:h-4 bg-gray-600 -mt-4 md:-mt-6 rounded-b" />
 
       {/* Status Display */}
-      <div className={cn(
-        "text-center space-y-1 transition-colors duration-500",
-        hasElectricity ? "text-gray-100" : "text-gray-300"
-      )}>
-        <div className="text-base md:text-lg font-medium">{getStateLabel(status.state)}</div>
-        <div className="text-xs md:text-sm opacity-70">
-          Position: {status.position.toFixed(0)}%
-        </div>
+      <div
+        className={cn(
+          "text-center space-y-1 transition-colors duration-500",
+          hasPower ? "text-gray-100" : "text-gray-300",
+        )}
+      >
+        <div className="text-base md:text-lg font-medium">{getDoorStateLabel(doorState)}</div>
+        <div className="text-xs md:text-sm opacity-70">Position: {doorContext.position.toFixed(0)}%</div>
         {isPausedDueToNoPower && (
-          <div className="text-xs md:text-sm text-orange-500 animate-pulse">
-            Paused - No Power
-          </div>
+          <div className="text-xs md:text-sm text-orange-500 animate-pulse">Paused - No Power</div>
         )}
       </div>
 
       {/* Control Button */}
       <Button
-        onClick={handleButtonClick}
+        onClick={onClick}
         size="lg"
-        variant={
-          isPaused(status.state)
-            ? "secondary"
-            : isAnimatingState(status.state)
-              ? "destructive"
-              : "default"
-        }
+        variant={isPaused(stateTag) ? "secondary" : isAnimating(stateTag) ? "destructive" : "default"}
         className="min-w-28 md:min-w-32"
-        disabled={!hasElectricity}
+        disabled={!hasPower}
       >
-        {!hasElectricity ? "No Power" : getButtonLabel(status.state)}
+        {!hasPower ? "No Power" : getDoorButtonLabel(doorState)}
       </Button>
 
-      {/* Bang Hammer Button - Wake the hamster when there's no power! */}
-      {!hasElectricity && (
+      {/* Wake Hamster Button — when there's no power, bang to wake the hamster */}
+      {!hasPower && (
         <Button
-          onClick={() => send(new BangHammer())}
+          onClick={onWakeHamster}
           size="lg"
           variant="outline"
           className="min-w-28 md:min-w-32 border-orange-500 text-orange-500 hover:bg-orange-500 hover:text-white text-xs md:text-sm"
@@ -215,23 +166,25 @@ export const GarageDoor = ({ useHook = useGarageDoorLeft, title = "Garage Door",
         </Button>
       )}
 
-      {/* State Machine Debug Info */}
-      <div className={cn(
-        "text-[10px] md:text-xs mt-2 md:mt-4 p-3 md:p-4 rounded-lg font-mono transition-colors duration-500 w-full max-w-[200px] md:max-w-none",
-        hasElectricity ? "bg-gray-700 text-gray-100" : "bg-gray-800 text-gray-300"
-      )}>
-        <div>State: {status.state}</div>
-        <div>Position: {status.position.toFixed(2)}%</div>
-        <div>Power: {hasElectricity ? "On" : "Off"}</div>
+      {/* Debug Info */}
+      <div
+        className={cn(
+          "text-[10px] md:text-xs mt-2 md:mt-4 p-3 md:p-4 rounded-lg font-mono transition-colors duration-500 w-full max-w-[200px] md:max-w-none",
+          hasPower ? "bg-gray-700 text-gray-100" : "bg-gray-800 text-gray-300",
+        )}
+      >
+        <div>State: {stateTag}</div>
+        <div>Position: {doorContext.position.toFixed(2)}%</div>
+        <div>Power: {hasPower ? "On" : "Off"}</div>
         {isPausedDueToNoPower && <div className="text-orange-400">Animation Paused (no power)</div>}
         <div className="mt-2 text-[8px] md:text-[10px]">
           Click behavior:
-          {status.state === "closed" && " Start opening"}
-          {status.state === "opening" && " Pause (will close on resume)"}
-          {status.state === "paused-while-opening" && " Close door"}
-          {status.state === "open" && " Start closing"}
-          {status.state === "closing" && " Pause (will open on resume)"}
-          {status.state === "paused-while-closing" && " Open door"}
+          {stateTag === "Closed" && " Start opening"}
+          {stateTag === "Opening" && " Pause (will close on resume)"}
+          {stateTag === "PausedOpening" && " Close door"}
+          {stateTag === "Open" && " Start closing"}
+          {stateTag === "Closing" && " Pause (will open on resume)"}
+          {stateTag === "PausedClosing" && " Open door"}
         </div>
       </div>
     </div>

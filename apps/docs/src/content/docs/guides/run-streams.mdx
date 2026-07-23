@@ -1,0 +1,102 @@
+---
+title: Run Streams
+description: Emit events into the machine from a stream while in a state, with automatic cancellation on exit.
+sidebar:
+  order: 4
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A state's `run` is a `Stream` that emits events into the machine for as long as the machine stays in that state. It is:
+
+```ts
+run?: Stream.Stream<E, Err, R> | ((snapshot) => Stream.Stream<E, Err, R>)
+```
+
+Every value the stream produces is an event, sent as if you had called `send`. When the machine leaves the state, the stream is **auto-cancelled** — no manual teardown. This one primitive covers both the long-lived and one-shot cases below.
+
+## Example 1 — a periodic timer
+
+Emit one `Tick` per second while `Running`. Building the stream from a schedule keeps it running until the state is exited, at which point it is cancelled:
+
+```ts
+import { State, Event, defineMachine } from "@handfish/effstate-v4";
+import type { StateType, EventType } from "@handfish/effstate-v4";
+import { Schema, Effect, Stream, Duration, Schedule } from "effect";
+
+const Idle = State("Idle", {});
+const Running = State("Running", { startedAt: Schema.DateFromSelf });
+const Tick = Event("Tick", {});
+
+// one Tick per second, auto-cancelled when leaving Running
+const ticks = Stream.fromSchedule(Schedule.spaced(Duration.seconds(1))).pipe(
+  Stream.map(() => Tick.make()),
+);
+
+// ...in the machine config
+Running: {
+  run: ticks,
+  on: {
+    Tick: (ctx) => ({ update: { elapsed: ctx.elapsed + 1 } }),
+    Stop: () => ({ goto: Idle.make() }),
+  },
+},
+```
+
+## Example 2 — a one-shot async fetch
+
+Wrap a promise in `Stream.fromEffect(Effect.tryPromise(...))`, map success to one event, and use `Effect.catchAll` to turn a failure into a different event. The stream emits exactly one of `Loaded` / `LoadError`, then completes.
+
+```ts
+const Loaded = Event("Loaded", { data: Schema.String });
+const LoadError = Event("LoadError", { message: Schema.String });
+
+const load = Stream.fromEffect(
+  Effect.tryPromise({
+    try: () => fetch("/api/thing").then((r) => r.text()),
+    catch: (e) => new Error(String(e)),
+  }).pipe(
+    Effect.map((data) => Loaded.make({ data })),
+    Effect.catchAll((e) => Effect.succeed(LoadError.make({ message: e.message }))),
+  ),
+);
+
+// ...in the machine config
+Loading: {
+  run: load,
+  on: {
+    Loaded: (_ctx, event) => ({ goto: Ready.make(), update: { data: event.data } }),
+    LoadError: (_ctx, event) => ({ goto: Failed.make(), update: { error: event.message } }),
+  },
+},
+```
+
+## Example 3 — the function form
+
+Give `run` a function `(snapshot) => Stream` to choose the stream from the current snapshot. Return `Stream.empty` to emit nothing — useful as a guard, e.g. skip the fetch when the data is already loaded:
+
+```ts
+Loading: {
+  run: (snap) =>
+    snap.context.loaded
+      ? Stream.empty
+      : load,
+},
+```
+
+## Replaces XState `activities` and `invoke`
+
+A single `run` covers both roles from XState:
+
+| XState | effstate v4 |
+| --- | --- |
+| `activities` (long-lived side effect) | a long-running `run` stream (Example 1) |
+| `invoke` (one-shot async, done/error) | a one-shot `run` stream (Example 2) |
+
+Both are just streams that emit events and are cancelled on exit — no separate concept, no manual cleanup.
+
+<Aside type="note">
+Errors in a run stream surface through `onError` with `effectType: "run"` and the failing `stateTag`. See [Entry & Exit Effects](/effstate/guides/effects/) for the `MachineEffectError` shape and how to supply `onError`.
+</Aside>
+
+For point-in-time work on enter/leave rather than a continuous source, use [entry and exit effects](/effstate/guides/effects/) instead.

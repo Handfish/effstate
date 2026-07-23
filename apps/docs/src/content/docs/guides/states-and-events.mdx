@@ -1,0 +1,170 @@
+---
+title: States & Events
+description: Define schema-first states and events, build their union types, and keep context as a separate plain object.
+sidebar:
+  order: 1
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+States and events in effstate v4 are the same shape: a schema-first, tagged variant. You declare both with `State` — `Event` is a semantic alias for the identical function.
+
+## Defining a state
+
+`State(tag, fields)` takes a literal tag and an object of Effect `Schema` fields. Pass `{}` for a variant with no data.
+
+```ts
+import { State } from "@handfish/effstate-v4";
+import { Schema } from "effect";
+
+const Idle = State("Idle", {});
+const Running = State("Running", { startedAt: Schema.DateFromSelf });
+```
+
+The returned `StateDefinition` gives you everything you need to construct, validate, and narrow the variant:
+
+| Member | Purpose |
+| --- | --- |
+| `.tag` | the literal tag string (`"Running"`) |
+| `.schema` | the Effect `Schema` for `{ _tag: tag, ...fields }` |
+| `.make(data?)` | construct an instance (fields → `.make({...})`, none → `.make()`) |
+| `.safeMake(data?)` | validated construction, returns `Either<instance, ParseError>` |
+| `.is(value)` | type guard that narrows to this variant |
+
+```ts
+Running.make({ startedAt: new Date() }); // { _tag: "Running", startedAt: Date }
+Idle.make();                             // { _tag: "Idle" }
+
+Running.tag;                             // "Running"
+Running.is(someValue);                   // someValue is { _tag: "Running", startedAt: Date }
+```
+
+Use `.safeMake` when the input is untrusted (e.g. deserialized data) and you want to handle parse failures explicitly:
+
+```ts
+import { Either } from "effect";
+
+const result = Running.safeMake({ startedAt: new Date() });
+if (Either.isRight(result)) {
+  const running = result.right; // validated instance
+}
+```
+
+## Events
+
+`Event` is `State`. Declare events exactly the same way:
+
+```ts
+import { Event } from "@handfish/effstate-v4";
+import { Schema } from "effect";
+
+const Start = Event("Start", {});
+const Stop = Event("Stop", {});
+const Tick = Event("Tick", {});
+const Reset = Event("Reset", {});
+```
+
+Events with a payload carry schema fields just like states — this is how handlers read data off an event (see [Transitions](/effstate/guides/transitions/)):
+
+```ts
+const SetValue = Event("SetValue", { value: Schema.Number });
+SetValue.make({ value: 42 }); // { _tag: "SetValue", value: 42 }
+```
+
+## Building the union types
+
+A machine's state type and event type are plain TypeScript unions of the individual variant instance types. Extract each instance type with `StateType<typeof X>` (and its alias `EventType<typeof X>`):
+
+```ts
+import type { StateType, EventType } from "@handfish/effstate-v4";
+
+type StopwatchState = StateType<typeof Idle> | StateType<typeof Running>;
+
+type StopwatchEvent =
+  | EventType<typeof Start>
+  | EventType<typeof Stop>
+  | EventType<typeof Tick>
+  | EventType<typeof Reset>;
+```
+
+## Choosing field schemas
+
+Fields are ordinary Effect schemas, so pick the one that matches the runtime value you want to hold and serialize:
+
+```ts
+const Session = State("Session", {
+  startedAt: Schema.DateFromSelf, // keeps a real Date instance in memory
+  attempts: Schema.Number,
+  user: Schema.String,
+});
+```
+
+`Schema.DateFromSelf` stores an actual `Date`; `Schema.Number` and `Schema.String` store primitives. Because every field is a schema, a state or event set can be validated and serialized end to end.
+
+## Combining schemas with `Union`
+
+`Union(...defs)` builds a single `Schema.Union` over the members' schemas — useful for validating or serializing an entire state or event set. It requires at least two members. `UnionType<[...]>` gives you the corresponding union type.
+
+```ts
+import { Union } from "@handfish/effstate-v4";
+import type { UnionType } from "@handfish/effstate-v4";
+
+const StateSchema = Union(Idle, Running);          // Schema<StopwatchState>
+type StopwatchStateU = UnionType<[typeof Idle, typeof Running]>;
+```
+
+## Context is a separate plain object
+
+State variants describe *where* the machine is; **context** holds the accumulated data that persists across states. Context is not a `State` — it is a plain object you type yourself.
+
+```ts
+interface StopwatchContext {
+  readonly elapsed: number;
+}
+```
+
+When you need to validate or persist context, define a `Schema` for it and use that schema explicitly with `Schema.encode` / `Schema.decode`:
+
+```ts
+import { Schema } from "effect";
+
+const StopwatchContextSchema = Schema.Struct({
+  elapsed: Schema.Number,
+});
+
+// Round-trip context through the schema when saving/restoring
+const encoded = Schema.encodeSync(StopwatchContextSchema)({ elapsed: 42 });
+```
+
+The [Persistence](/effstate/guides/persistence/) guide combines a context schema with `Union(...)` of your states to serialize a whole snapshot.
+
+<Aside type="note">
+Context and state are distinct axes. The `_tag` tells you the current state; the context object carries values (like `elapsed`) that survive transitions between states.
+</Aside>
+
+## Narrowing
+
+Two idiomatic ways to narrow a state value. Use the `.is` guard when you have a single variant to check:
+
+```ts
+declare const state: StopwatchState;
+
+if (Running.is(state)) {
+  state.startedAt; // Date — narrowed
+}
+```
+
+Or `switch` on the discriminant `_tag` for exhaustive handling:
+
+```ts
+switch (state._tag) {
+  case "Idle":
+    // state: { _tag: "Idle" }
+    break;
+  case "Running":
+    state.startedAt; // Date — narrowed
+    break;
+}
+```
+
+Next, wire these events into behavior in [Transitions](/effstate/guides/transitions/).

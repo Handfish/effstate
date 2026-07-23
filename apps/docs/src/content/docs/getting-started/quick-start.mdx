@@ -1,244 +1,177 @@
 ---
 title: Quick Start
-description: Build your first state machine with effstate
+description: Build the Stopwatch machine end to end, then drive it from Effect and React.
+sidebar:
+  order: 3
 ---
 
+import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
-This guide walks you through building a counter state machine using the recommended Effect.Service pattern.
+This guide builds a **Stopwatch** machine from scratch — states, events, a run stream,
+transitions — then interprets it and wires it into React.
 
-## 1. Define Your Events
+## 1. Define states
 
-Events are defined using Effect's `Data.TaggedClass`:
+States are a schema-first discriminated union. Each `State(tag, fields)` gives you a
+constructor, a guard, and a schema. Data that identifies the state (like `startedAt`) lives
+on the state itself.
 
-```typescript
-import { Data } from "effect";
-
-class Increment extends Data.TaggedClass("INCREMENT")<{}> {}
-class Decrement extends Data.TaggedClass("DECREMENT")<{}> {}
-class Reset extends Data.TaggedClass("RESET")<{}> {}
-
-type CounterEvent = Increment | Decrement | Reset;
-```
-
-## 2. Define Your Context Schema
-
-Context is defined using Effect Schema for type-safe serialization:
-
-```typescript
+```ts
+import { State } from "@handfish/effstate-v4";
+import type { StateType } from "@handfish/effstate-v4";
 import { Schema } from "effect";
 
-const CounterContextSchema = Schema.Struct({
-  count: Schema.Number,
-  lastUpdated: Schema.DateFromString,
-});
+const Idle = State("Idle", {});
+const Running = State("Running", { startedAt: Schema.DateFromSelf });
 
-type CounterContext = typeof CounterContextSchema.Type;
+type StopwatchState = StateType<typeof Idle> | StateType<typeof Running>;
 ```
 
-## 3. Create Your Machine Service
+## 2. Define events
 
-Wrap your machine in an `Effect.Service` for proper dependency injection:
+`Event` is a semantic alias of `State`. Events carry the data a transition needs; here they
+carry none.
 
-```typescript
-import { createMachine, interpret, assign, effect } from "effstate";
+```ts
+import { Event } from "@handfish/effstate-v4";
+import type { EventType } from "@handfish/effstate-v4";
+
+const Start = Event("Start", {});
+const Stop = Event("Stop", {});
+const Tick = Event("Tick", {});
+const Reset = Event("Reset", {});
+
+type StopwatchEvent =
+  | EventType<typeof Start>
+  | EventType<typeof Stop>
+  | EventType<typeof Tick>
+  | EventType<typeof Reset>;
+```
+
+## 3. Define the context
+
+Context is a plain object for data that isn't part of the state's identity — here, the
+elapsed second count.
+
+```ts
+interface StopwatchContext {
+  readonly elapsed: number;
+}
+```
+
+## 4. Create a run stream of Ticks
+
+A `run` stream emits events while its state is active and is **auto-cancelled on exit**.
+This one emits one `Tick` per second.
+
+```ts
+import { Stream, Duration, Schedule } from "effect";
+
+const ticks = Stream.fromSchedule(Schedule.spaced(Duration.seconds(1))).pipe(
+  Stream.map(() => Tick.make()),
+);
+```
+
+## 5. Define the machine
+
+`defineMachine` ties it together: the initial state and context, per-state config (`entry`,
+`run`, `on`), and `global` handlers that apply in any state.
+
+```ts
+import { defineMachine } from "@handfish/effstate-v4";
 import { Effect } from "effect";
 
-export class CounterMachine extends Effect.Service<CounterMachine>()(
-  "CounterMachine",
-  {
-    effect: Effect.gen(function* () {
-      const machine = createMachine<
-        "idle" | "active",
-        CounterEvent,
-        typeof CounterContextSchema
-      >({
-        id: "counter",
-        initial: "idle",
-        context: CounterContextSchema,
-        initialContext: {
-          count: 0,
-          lastUpdated: new Date(),
-        },
-        states: {
-          idle: {
-            on: {
-              INCREMENT: {
-                target: "active",
-                actions: [
-                  assign(({ context }) => ({
-                    count: context.count + 1,
-                    lastUpdated: new Date(),
-                  })),
-                ],
-              },
-            },
-          },
-          active: {
-            on: {
-              INCREMENT: {
-                actions: [
-                  assign(({ context }) => ({
-                    count: context.count + 1,
-                    lastUpdated: new Date(),
-                  })),
-                ],
-              },
-              DECREMENT: {
-                actions: [
-                  assign(({ context }) => ({
-                    count: context.count - 1,
-                    lastUpdated: new Date(),
-                  })),
-                ],
-              },
-              RESET: {
-                target: "idle",
-                actions: [assign({ count: 0 })],
-              },
-            },
-          },
-        },
-      });
-
-      return {
-        machine,
-        createActor: () => interpret(machine),
-      };
-    }),
-  }
-) {}
-```
-
-## 4. Use Your Machine
-
-```typescript
-const program = Effect.gen(function* () {
-  const counterService = yield* CounterMachine;
-  const actor = yield* counterService.createActor();
-
-  // Subscribe to state changes
-  actor.subscribe((snapshot) => {
-    console.log(`State: ${snapshot.value}, Count: ${snapshot.context.count}`);
-  });
-
-  // Send events
-  actor.send(new Increment()); // idle -> active, count: 1
-  actor.send(new Increment()); // active, count: 2
-  actor.send(new Decrement()); // active, count: 1
-  actor.send(new Reset());     // active -> idle, count: 0
-
-  return actor.getSnapshot();
-});
-
-// Run with dependencies
-Effect.runPromise(
-  program.pipe(
-    Effect.scoped,
-    Effect.provide(CounterMachine.Default)
-  )
-);
-```
-
-## 5. Add External Dependencies
-
-The power of Effect.Service is dependency injection. Add an API client:
-
-```typescript
-class AnalyticsService extends Effect.Service<AnalyticsService>()(
-  "AnalyticsService",
-  {
-    succeed: {
-      track: (event: string) => Effect.log(`Analytics: ${event}`),
+export const stopwatch = defineMachine<StopwatchState, StopwatchContext, StopwatchEvent>({
+  id: "stopwatch",
+  initialState: Idle.make(),
+  initialContext: { elapsed: 0 },
+  states: {
+    Idle: {
+      on: {
+        Start: () => ({ goto: Running.make({ startedAt: new Date() }) }),
+      },
     },
-  }
-) {}
-
-export class CounterMachine extends Effect.Service<CounterMachine>()(
-  "CounterMachine",
-  {
-    effect: Effect.gen(function* () {
-      const analytics = yield* AnalyticsService; // Inject dependency
-
-      const machine = createMachine({
-        // ... same config as before
-        states: {
-          active: {
-            entry: [
-              effect(() => analytics.track("counter_activated")),
-            ],
-            // ...
-          },
-        },
-      });
-
-      return {
-        machine,
-        createActor: () => interpret(machine),
-      };
-    }),
-    dependencies: [AnalyticsService.Default], // Declare dependencies
-  }
-) {}
+    Running: {
+      entry: (snap) => Effect.log(`Started at ${snap.state.startedAt.toISOString()}`),
+      run: ticks,
+      on: {
+        Tick: (ctx) => ({ update: { elapsed: ctx.elapsed + 1 } }),
+        Stop: () => ({ goto: Idle.make() }),
+      },
+    },
+  },
+  global: {
+    Reset: () => ({ goto: Idle.make(), update: { elapsed: 0 } }),
+  },
+});
 ```
 
-## 6. Use with React (Optional)
+<Aside type="note">
+A `global` handler runs only when the current state has no matching `on` handler for that
+event. That's why `Reset` works from both `Idle` and `Running`.
+</Aside>
 
-```typescript
-import { createUseMachineHook } from "@effstate/react";
-import { Atom } from "@effect-atom/atom-react";
-import { Layer, SubscriptionRef } from "effect";
+## 6. Interpret and use
 
-// Create app runtime with service layers
-const AppLayer = Layer.mergeAll(CounterMachine.Default);
-const appRuntime = Atom.runtime(AppLayer);
+`interpret()` is a method returning an `Effect`. With no service requirements (`R = never`)
+you can run it synchronously to get the actor.
 
-// Create atoms for the machine
-const actorAtom = appRuntime.atom(
-  Effect.gen(function* () {
-    const service = yield* CounterMachine;
-    return yield* service.createActor();
-  })
-).pipe(Atom.keepAlive);
+```ts
+import { Effect } from "effect";
 
-const snapshotAtom = appRuntime.subscriptionRef((get) =>
-  Effect.gen(function* () {
-    const actor = yield* get.result(actorAtom);
-    const ref = yield* SubscriptionRef.make(actor.getSnapshot());
-    actor.subscribe((snapshot) => {
-      Effect.runSync(SubscriptionRef.set(ref, snapshot));
-    });
-    return ref;
-  })
-).pipe(Atom.keepAlive);
+const actor = Effect.runSync(stopwatch.interpret());
 
-// Create the hook
-const useCounterMachine = createUseMachineHook(
-  actorAtom,
-  snapshotAtom,
-  { value: "idle", context: { count: 0, lastUpdated: new Date() }, event: null }
+const unsubscribe = actor.subscribe((snap) =>
+  console.log(snap.state._tag, snap.context.elapsed),
 );
 
-// Use in a component
-function Counter() {
-  const { snapshot, context, send, isLoading } = useCounterMachine();
+actor.send(Start.make()); // ticks begin; elapsed increments each second
+actor.send(Stop.make());  // ticks auto-cancel
+actor.send(Reset.make()); // global handler → Idle, elapsed 0
 
-  if (isLoading) return <div>Loading...</div>;
+unsubscribe();
+actor.stop();
+```
 
+<Aside type="tip">
+If the machine needs services (`R`), provide a `Layer` before running:
+`Effect.runSync(stopwatch.interpret().pipe(Effect.provide(MyLayer)))`.
+</Aside>
+
+## 7. Use with React
+
+`useActor` creates and owns the actor, subscribes via `useSyncExternalStore`, and stops it
+on unmount. It returns `snapshot`, `state`, `context`, `stateTag`, `send`, and `actor`.
+
+```tsx
+import { useActor } from "@handfish/effstate-react";
+import { stopwatch, Start, Stop, Reset } from "./stopwatch";
+
+function Stopwatch() {
+  const { stateTag, context, send } = useActor(stopwatch);
   return (
     <div>
-      <p>State: {snapshot.value}</p>
-      <p>Count: {context.count}</p>
-      <button onClick={() => send(new Increment())}>+</button>
-      <button onClick={() => send(new Decrement())}>-</button>
-      <button onClick={() => send(new Reset())}>Reset</button>
+      <h1>{context.elapsed}s</h1>
+      {stateTag === "Idle"
+        ? <button onClick={() => send(Start.make())}>Start</button>
+        : <button onClick={() => send(Stop.make())}>Stop</button>}
+      <button onClick={() => send(Reset.make())}>Reset</button>
     </div>
   );
 }
 ```
 
-## Next Steps
+<Aside type="caution">
+`useActor` runs `interpret()` with `Effect.runSync`, so it's for machines with `R = never`.
+Machines that need services must be pre-provided before they reach the component.
+</Aside>
 
-- Learn about [Guards](/guides/guards/) for conditional transitions
-- Explore [Activities](/guides/activities/) for long-running effects
-- See [Invoke](/guides/invoke/) for async operations
-- Read about [Parent-Child Machines](/guides/parent-child/) for composition
+## Next steps
+
+<CardGrid>
+  <LinkCard title="States & Events" href="/effstate/guides/states-and-events/" description="Schema-first variants in depth." />
+  <LinkCard title="Transitions" href="/effstate/guides/transitions/" description="goto, update, actions, and guards." />
+  <LinkCard title="Effects" href="/effstate/guides/effects/" description="Entry, exit, and error handling." />
+  <LinkCard title="Run streams" href="/effstate/guides/run-streams/" description="Emit events while in a state." />
+  <LinkCard title="React" href="/effstate/guides/react/" description="Hooks, bridging, and persistence." />
+</CardGrid>

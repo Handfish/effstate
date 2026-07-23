@@ -1,0 +1,127 @@
+---
+title: Persistence
+description: Serialize and restore machine snapshots with Effect Schema and useActorSync.
+sidebar:
+  order: 6
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A snapshot is `{ state, context }`. Because states are defined schema-first, you
+can serialize a snapshot with Effect `Schema` — encoding to a JSON-safe form and
+decoding back to live values, including tricky fields like `Date`.
+
+## A state schema
+
+Build a schema for the whole state union with `Union(...allStates)`. `Schema` is
+re-exported by `@handfish/effstate-v4` (or import it from `effect`):
+
+```ts
+import { Union, Schema } from "@handfish/effstate-v4";
+import { Idle, Running } from "./stopwatch";
+
+// Discriminated-union schema for every state variant
+const StopwatchStateSchema = Union(Idle, Running);
+
+// Snapshot = state + context
+const StopwatchSnapshotSchema = Schema.Struct({
+  state: StopwatchStateSchema,
+  context: Schema.Struct({ elapsed: Schema.Number }),
+});
+```
+
+## Encode and decode
+
+`Schema.encodeSync` turns a snapshot into its encoded (JSON-safe) form;
+`Schema.decodeSync` reverses it:
+
+```ts
+const encoded = Schema.encodeSync(StopwatchSnapshotSchema)(actor.getSnapshot());
+const json = JSON.stringify(encoded);
+
+const restored = Schema.decodeSync(StopwatchSnapshotSchema)(JSON.parse(json));
+```
+
+<Aside type="note" title="Why Schema for a snapshot?">
+`Running` carries `startedAt: Schema.DateFromSelf`, which keeps a real `Date` in
+memory. For JSON you want an encoded form (e.g. an ISO string) that survives
+`JSON.stringify`. Defining the field with the appropriate `Schema` lets a single
+`encode`/`decode` pair handle the `Date` boundary for you — no hand-written
+reviver.
+</Aside>
+
+## Restoring a snapshot
+
+Two entry points accept a decoded snapshot:
+
+```ts
+import { Effect } from "@handfish/effstate-v4";
+
+// Interpret straight from a snapshot
+const actor = Effect.runSync(stopwatch.interpret({ snapshot: restored }));
+
+// ...or push it into an already-running actor
+actor._syncSnapshot(restored);
+```
+
+In React, pass the decoded snapshot as
+[`useActor`'s `initialSnapshot`](/effstate/guides/react/#restoring-saved-state) on
+first render.
+
+## useActorSync
+
+`useActorSync` wraps this into a two-way persistence hook:
+
+```ts
+useActorSync(actor, externalSnapshot, {
+  isLeader,
+  serialize,
+  deserialize,
+  onSave,
+  saveDebounce?, // default 100ms
+});
+```
+
+- When `isLeader` is `true`, it subscribes to the actor and calls
+  `onSave(serialize(snapshot))` on every change (debounced).
+- When `isLeader` is `false` and `externalSnapshot` changes, it applies it via
+  `actor._syncSnapshot(deserialize(externalSnapshot))`.
+
+### localStorage example
+
+Serialize each snapshot to JSON and write it to `localStorage`:
+
+```tsx
+import { useActor, useActorSync } from "@handfish/effstate-react";
+import { Union, Schema } from "@handfish/effstate-v4";
+import { Idle, Running, stopwatch } from "./stopwatch";
+
+const SnapshotSchema = Schema.Struct({
+  state: Union(Idle, Running),
+  context: Schema.Struct({ elapsed: Schema.Number }),
+});
+
+const KEY = "stopwatch";
+
+function PersistentStopwatch() {
+  const { actor, context } = useActor(stopwatch);
+
+  useActorSync(actor, null, {
+    isLeader: true,
+    serialize: (snap) =>
+      JSON.stringify(Schema.encodeSync(SnapshotSchema)(snap)),
+    deserialize: (saved: string) =>
+      Schema.decodeSync(SnapshotSchema)(JSON.parse(saved)),
+    onSave: (json) => localStorage.setItem(KEY, json),
+  });
+
+  return <h1>{context.elapsed}s</h1>;
+}
+```
+
+To also restore on load, read `localStorage.getItem(KEY)`, `deserialize` it, and
+pass the result as `useActor`'s `initialSnapshot`.
+
+For sharing state live between browser tabs — where a follower feeds
+`externalSnapshot` from a `storage` event — see
+[Cross-Tab Sync](/effstate/guides/cross-tab-sync/).

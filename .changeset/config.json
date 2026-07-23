@@ -3,9 +3,31 @@
   "changelog": "@changesets/cli/changelog",
   "commit": false,
   "fixed": [],
-  "linked": [["effstate", "@effstate/react"]],
+  "linked": [
+    ["effstate", "@effstate/react"],
+    ["@handfish/effstate-v4", "@handfish/effstate-react"]
+  ],
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": ["demo", "demo-advanced", "demo-dexie", "docs"]
+  "ignore": [
+    "demo",
+    "demo-advanced",
+    "demo-convex-order",
+    "demo-convex-order-v4",
+    "demo-dexie",
+    "demo-dexie-v2",
+    "demo-dexie-v3",
+    "demo-dexie-v3-deeply-nested",
+    "demo-dexie-v3-loro",
+    "demo-dexie-v4",
+    "demo-hono-order",
+    "demo-multi-door",
+    "demo-redux-toolkit",
+    "demo-simple-react",
+    "demo-spacetimedb",
+    "demo-zustand",
+    "demo-zustand-clean",
+    "docs"
+  ]
 }

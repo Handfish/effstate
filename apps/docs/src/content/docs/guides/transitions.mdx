@@ -1,0 +1,135 @@
+---
+title: Transitions
+description: How event handlers return transitions, express guards, read event payloads, and fall back to global handlers.
+sidebar:
+  order: 2
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+An event handler is a pure function `(ctx, event) => Transition`. It receives the current context and the incoming event, and returns a description of what should happen. Handlers live under a state's `on`, keyed by event tag.
+
+```ts
+Idle: {
+  on: {
+    Start: () => ({ goto: Running.make({ startedAt: new Date() }) }),
+  },
+},
+```
+
+## Return shapes
+
+A handler returns one of the following:
+
+| Return | Meaning |
+| --- | --- |
+| `{ goto }` | transition to a new state |
+| `{ goto, update }` | transition **and** patch context |
+| `{ update }` | stay, patch context |
+| `{ actions }` | stay, run fire-and-forget sync actions |
+| `null` | do nothing (stay, no change) |
+
+```ts
+// transition
+Stop: () => ({ goto: Idle.make() }),
+
+// transition + context patch
+Reset: () => ({ goto: Idle.make(), update: { elapsed: 0 } }),
+
+// stay, patch context
+Tick: (ctx) => ({ update: { elapsed: ctx.elapsed + 1 } }),
+
+// stay, run side effects
+Ping: () => ({ actions: [() => console.log("pong")] }),
+
+// do nothing
+Ignore: () => null,
+```
+
+### `update` is a shallow merge
+
+`update` is a `Partial<Context>` that is shallow-merged over the current context. Only the keys you list change; everything else is preserved. There is no `assign` and no updater function — compute the new values inline from `ctx`.
+
+```ts
+Tick: (ctx) => ({ update: { elapsed: ctx.elapsed + 1 } }),
+```
+
+### `actions` are fire-and-forget
+
+`actions` is an array of `() => void` synchronous callbacks run for their side effects. They do not change state or context, and any error thrown inside one is caught and logged rather than propagated. `actions` may be combined with the `goto`/`update` forms.
+
+```ts
+Save: (ctx) => ({
+  update: { dirty: false },
+  actions: [() => localStorage.setItem("elapsed", String(ctx.elapsed))],
+}),
+```
+
+<Aside type="caution">
+Because action errors are swallowed, `actions` are for best-effort side effects only. For work that must be observed, sequenced, or cleaned up, use an [entry/exit effect](/effstate/guides/effects/) or a [run stream](/effstate/guides/run-streams/).
+</Aside>
+
+## Guards are just conditionals
+
+There is no separate guard combinator. A guard is a plain `if` or ternary inside the handler: return the transition when the condition holds, otherwise return `null` to stay put.
+
+```ts
+Running: {
+  on: {
+    // only stop once at least one second has elapsed
+    Stop: (ctx) => (ctx.elapsed >= 1 ? { goto: Idle.make() } : null),
+
+    // or with an explicit branch
+    Tick: (ctx) => {
+      if (ctx.elapsed >= 60) return { goto: Idle.make(), update: { elapsed: 0 } };
+      return { update: { elapsed: ctx.elapsed + 1 } };
+    },
+  },
+},
+```
+
+## Reading the event payload
+
+The handler's second argument is the incoming event, already narrowed to the tag it is registered under. Fields declared on the `Event` are available directly:
+
+```ts
+const SetValue = Event("SetValue", { value: Schema.Number });
+
+// inside a state's `on`
+SetValue: (ctx, event) => ({ update: { elapsed: event.value } }),
+```
+
+Here `event` is `{ _tag: "SetValue", value: number }`, so `event.value` is fully typed.
+
+## Global handlers
+
+`global` handlers apply in **any** state. Resolution is layered: when an event arrives, the current state's own `on` handler runs first. Only if that handler is **absent** or returns `null` does the machine fall back to the matching `global` handler.
+
+```ts
+export const stopwatch = defineMachine<StopwatchState, StopwatchContext, StopwatchEvent>({
+  id: "stopwatch",
+  initialState: Idle.make(),
+  initialContext: { elapsed: 0 },
+  states: {
+    Idle: {
+      on: {
+        Start: () => ({ goto: Running.make({ startedAt: new Date() }) }),
+      },
+    },
+    Running: {
+      on: {
+        Tick: (ctx) => ({ update: { elapsed: ctx.elapsed + 1 } }),
+        Stop: () => ({ goto: Idle.make() }),
+      },
+    },
+  },
+  global: {
+    // works from Idle and Running alike
+    Reset: () => ({ goto: Idle.make(), update: { elapsed: 0 } }),
+  },
+});
+```
+
+`Reset` needs no per-state entry: neither `Idle` nor `Running` defines a `Reset` handler, so the `global` one always runs. If a state *did* define its own `Reset` returning a non-null transition, that would win; returning `null` from it would defer to `global`.
+
+Next: run [entry and exit effects](/effstate/guides/effects/) when states are entered and left.

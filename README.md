@@ -5,40 +5,58 @@
 <h1 align="center">effstate</h1>
 
 <p align="center">
-  <strong>Effect-first state machine library for TypeScript</strong>
+  <strong>Lean, schema-first state machines for Effect</strong>
 </p>
 
 <p align="center">
   <a href="https://handfish.github.io/effstate/"><img src="https://img.shields.io/badge/docs-website-blue.svg" alt="documentation" /></a>
-  <a href="https://www.npmjs.com/package/effstate"><img src="https://img.shields.io/npm/v/effstate.svg" alt="npm version" /></a>
-  <a href="https://www.npmjs.com/package/effstate"><img src="https://img.shields.io/npm/dm/effstate.svg" alt="npm downloads" /></a>
-  <a href="https://github.com/handfish/effstate/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/effstate.svg" alt="license" /></a>
+  <a href="https://www.npmjs.com/package/@handfish/effstate-v4"><img src="https://img.shields.io/npm/v/@handfish/effstate-v4.svg" alt="npm version" /></a>
+  <a href="https://www.npmjs.com/package/@handfish/effstate-v4"><img src="https://img.shields.io/npm/dm/@handfish/effstate-v4.svg" alt="npm downloads" /></a>
+  <a href="https://github.com/handfish/effstate/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/@handfish/effstate-v4.svg" alt="license" /></a>
 </p>
 
 ---
 
-**effstate** is a state machine library built on top of the [Effect](https://effect.website) ecosystem. It provides a type-safe, composable way to define and manage state machines with first-class support for effects, activities, and hierarchical (parent-child) machines.
+> [!IMPORTANT]
+> ## 🟢 Starting a new project? Use Effect's native `Machine`.
+>
+> **If you're greenfield, reach for [`effect/unstable/machine`](https://github.com/Effect-TS/effect/pull/6429) — the first-party Effect statechart engine — not effstate.** It's more capable (hierarchical & parallel states, child machines, cluster persistence) and it's where Effect's state-machine story is headed.
+>
+> **effstate is for teams who need a lean, flat FSM on `effect@^3` *today*, with synchronous React hooks and Convex/persistence sync** — before native `Machine` stabilizes on Effect 4.0. The two share the same Effect + Schema substrate, so effstate is designed to interoperate with (and graduate to) native `Machine` rather than lock you in. See [Relationship to Effect's native `Machine`](#relationship-to-effects-native-machine).
+
+**effstate** is a state machine library built on top of the [Effect](https://effect.website) ecosystem. The v4 API is schema-first: you define states and events once with [Effect Schema](https://effect.website/docs/schema/introduction/) and get constructors, type guards, discriminated-union types, and serialization for free. Entry/exit logic and long-running work are plain Effects and Streams, complete with the requirements (`R`) and error (`Err`) channels — so dependency injection, resource safety, and honest error handling come along for the ride.
 
 ## Features
 
-- **Effect-first**: Built on Effect for robust error handling, dependency injection, and composability
-- **Type-safe**: Full TypeScript support with inferred types for states, events, and context
-- **Activities**: Long-running effects that start/stop with state transitions
-- **Guards**: Conditional transitions based on context or event data
-- **Invocations**: Async operations with automatic result handling
-- **Parent-child machines**: Spawn child machines and communicate via events
-- **Cross-tab sync**: Built-in support for synchronizing state across browser tabs
-- **Schema-first**: Required Effect Schema for context - enables serialization, cross-tab sync, and validation
+- **Schema-first**: Define states and events with `State()` / `Event()` — one source of truth for types, runtime validation, and serialization
+- **Type-safe**: Full TypeScript inference over discriminated unions of states, events, and context
+- **Effect-native**: Entry/exit effects and run streams carry the full Effect `R` (requirements) and `Err` (error) channels
+- **Auto-cleanup**: `run` streams cancel automatically when the machine leaves a state
+- **Honest errors**: Effect failures surface through an `onError` callback instead of being swallowed
+- **Minimal**: ~500 lines, zero dependencies beyond Effect
+- **React-ready**: Imperative actor API with first-class hooks for React
 
 ## Why effstate over XState?
 
 | Metric | effstate | XState |
 |--------|----------|--------|
-| **Bundle size (gzip)** | **~3.9 kB** | 13.7 kB |
+| **Bundle size (gzip)** | **~6 kB** | 13.7 kB |
 | Event processing | **25x faster** | - |
 | Realistic app lifecycle | **5x faster** | - |
 
 [See full comparison →](https://handfish.github.io/effstate/getting-started/comparison/)
+
+## Relationship to Effect's native `Machine`
+
+Effect is adding a first-party statechart engine — [`effect/unstable/machine`](https://github.com/Effect-TS/effect/pull/6429) (currently **unstable**, targeting Effect 4.0). It is a larger, XState-class engine: hierarchical and parallel states, invoked/spawned child machines, first-class snapshot encode/decode, and an [`AtomMachine`](https://github.com/Effect-TS/effect/pull/6429) reactive adapter (built on `effect-atom`) plus a `ClusterMachine` persistence adapter.
+
+**effstate is not a competitor in a separate ecosystem — it shares Effect's.** Both model states and events as Effect Schema tagged unions, and both run `entry` / `exit` / effect logic on the Effect runtime with the same `R` (requirements) and `Err` (error) channels. That makes them *interoperable* rather than mutually exclusive:
+
+- **Same wire format.** effstate snapshots encode through Effect Schema, so a persisted or synced snapshot is the same tagged-union shape a native `Machine` state schema decodes — no adapter or impedance layer.
+- **Same runtime & dependency injection.** `entry` / `exit` / `run` are plain `Effect` / `Stream`; they share `ServiceMap` layers, resource scopes, and the fiber runtime with any native `Machine`.
+- **Client/edge vs. server/cluster.** Run effstate at the React edge (synchronous `useActor`, no `AsyncResult` ceremony) while a server-authoritative native `Machine` owns hierarchy and clustering — and sync snapshots between them via schema encode/decode.
+
+**Choose effstate when** you want a lean, flat FSM that ships **today on `effect@^3`**, with first-class React hooks and Convex/persistence sync. **Reach for native `Machine` when** you need hierarchical/parallel states, child machines, or Effect Cluster persistence — and because both speak Effect + Schema, graduating a machine later is a projection, not a rewrite.
 
 ## Live Demo
 
@@ -50,232 +68,273 @@ Watch state machines sync across browser tabs in real-time!
 
 | Package | Description |
 |---------|-------------|
-| [`effstate`](./packages/core) | Core state machine library |
-| [`@effstate/react`](./packages/react) | React integration with hooks |
+| [`@handfish/effstate-v4`](./packages/effstate-v4) | Core schema-first state machine library |
+| [`@handfish/effstate-react`](./packages/effstate-react) | React hooks for effstate-v4 |
 
 ## Quick Start
 
 ```bash
-npm install effstate effect
+npm install @handfish/effstate-v4 effect
 # or
-pnpm add effstate effect
+pnpm add @handfish/effstate-v4 effect
 ```
 
-### Defining a Machine as an Effect.Service
+### Defining a Machine
 
-The recommended pattern is to define your state machine inside an `Effect.Service`. This enables proper dependency injection, testability, and composition with other Effect services.
+States and events are defined with `State()` and `Event()`. Each definition bundles an Effect Schema, a `.make()` constructor, and an `.is()` type guard. Event handlers are pure functions `(context, event) => Transition`.
 
 ```typescript
-import { createMachine, interpret, assign, effect } from "effstate";
-import { Data, Effect, Schema, Scope } from "effect";
+import {
+  State,
+  Event,
+  Union,
+  defineMachine,
+  type StateType,
+  type EventType,
+} from "@handfish/effstate-v4";
+import { Duration, Effect, Schedule, Schema, Stream } from "effect";
 
 // =============================================================================
-// 1. Define your events using Data.TaggedClass
+// 1. Define states (schema-first discriminated union)
 // =============================================================================
 
-class Connect extends Data.TaggedClass("CONNECT")<{}> {}
-class Disconnect extends Data.TaggedClass("DISCONNECT")<{}> {}
-class Retry extends Data.TaggedClass("RETRY")<{}> {}
+const Disconnected = State("Disconnected", {});
+const Connecting = State("Connecting", { startedAt: Schema.DateFromSelf });
+const Connected = State("Connected", { connectedAt: Schema.DateFromSelf });
 
-type ConnectionEvent = Connect | Disconnect | Retry;
+const ConnectionStateSchema = Union(Disconnected, Connecting, Connected);
+type ConnectionState =
+  | StateType<typeof Disconnected>
+  | StateType<typeof Connecting>
+  | StateType<typeof Connected>;
 
 // =============================================================================
-// 2. Define context schema (required for all machines)
+// 2. Define events
 // =============================================================================
+
+const Connect = Event("Connect", { uri: Schema.String });
+const ConnectSuccess = Event("ConnectSuccess", {});
+const ConnectError = Event("ConnectError", { message: Schema.String });
+const Ping = Event("Ping", {});
+const Disconnect = Event("Disconnect", {});
+
+type ConnectionEvent =
+  | EventType<typeof Connect>
+  | EventType<typeof ConnectSuccess>
+  | EventType<typeof ConnectError>
+  | EventType<typeof Ping>
+  | EventType<typeof Disconnect>;
+
+// =============================================================================
+// 3. Define context (a plain type; add a Schema for serialization/sync)
+// =============================================================================
+
+interface ConnectionContext {
+  readonly uri: string;
+  readonly retryCount: number;
+  readonly lastPingAt: number;
+}
 
 const ConnectionContextSchema = Schema.Struct({
+  uri: Schema.String,
   retryCount: Schema.Number,
-  lastError: Schema.optionalWith(Schema.String, { as: "Option" }),
+  lastPingAt: Schema.Number,
 });
 
-type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
+// A `run` stream produces events while in a state and auto-cancels on exit.
+const healthCheckStream = Stream.fromSchedule(
+  Schedule.spaced(Duration.seconds(5))
+).pipe(Stream.map(() => Ping.make()));
 
 // =============================================================================
-// 3. Define your machine service with dependencies
+// 4. Define the machine
 // =============================================================================
 
-// Example dependency: an API client service
-class ApiClient extends Effect.Service<ApiClient>()("ApiClient", {
-  succeed: {
-    connect: () => Effect.tryPromise(() => fetch("/api/connect")),
+const connectionMachine = defineMachine<
+  ConnectionState,
+  ConnectionContext,
+  ConnectionEvent
+>({
+  id: "connection",
+  initialState: Disconnected.make(),
+  initialContext: { uri: "", retryCount: 0, lastPingAt: 0 },
+  context: ConnectionContextSchema, // optional — enables serialization & cross-tab sync
+
+  states: {
+    Disconnected: {
+      on: {
+        // Transition to a new state and update context in one step.
+        Connect: (_ctx, event) => ({
+          goto: Connecting.make({ startedAt: new Date() }),
+          update: { uri: event.uri },
+        }),
+      },
+    },
+
+    Connecting: {
+      // Entry effects have full access to the requirements & error channels.
+      entry: (snap) => Effect.log(`Connecting to ${snap.context.uri}...`),
+      on: {
+        ConnectSuccess: () => ({
+          goto: Connected.make({ connectedAt: new Date() }),
+        }),
+        // A guard is just a handler that returns `null` to stay put.
+        ConnectError: (ctx) =>
+          ctx.retryCount < 3
+            ? {
+                goto: Connecting.make({ startedAt: new Date() }),
+                update: { retryCount: ctx.retryCount + 1 },
+              }
+            : { goto: Disconnected.make() },
+      },
+    },
+
+    Connected: {
+      entry: () => Effect.log("Connected!"),
+      exit: () => Effect.log("Disconnecting..."),
+      run: healthCheckStream, // starts on entry, cancels on exit
+      on: {
+        // Stay in the current state, only update context.
+        Ping: (ctx) => ({ update: { lastPingAt: ctx.lastPingAt + 1 } }),
+        Disconnect: () => ({ goto: Disconnected.make() }),
+      },
+    },
   },
-}) {}
 
-// The machine service - captures dependencies at creation time
-export class ConnectionMachineService extends Effect.Service<ConnectionMachineService>()(
-  "ConnectionMachineService",
-  {
-    effect: Effect.gen(function* () {
-      // Yield dependencies - they're captured in the closure
-      const api = yield* ApiClient;
-
-      // Define the machine with access to dependencies
-      const machine = createMachine<
-        ConnectionState,
-        ConnectionEvent,
-        typeof ConnectionContextSchema
-      >({
-        id: "connection",
-        initial: "disconnected",
-        context: ConnectionContextSchema,
-        initialContext: {
-          retryCount: 0,
-          lastError: undefined,
-        },
-        states: {
-          disconnected: {
-            on: {
-              CONNECT: { target: "connecting" },
-            },
-          },
-
-          connecting: {
-            entry: [effect(() => Effect.log("Attempting to connect..."))],
-            invoke: {
-              id: "connect",
-              src: () => api.connect(), // Use the injected dependency
-              onDone: { target: "connected" },
-              onError: {
-                target: "error",
-                actions: [
-                  assign(({ context }) => ({
-                    retryCount: context.retryCount + 1,
-                    lastError: "Connection failed",
-                  })),
-                ],
-              },
-            },
-          },
-
-          connected: {
-            entry: [
-              effect(() => Effect.log("Connected successfully!")),
-              assign(() => ({ retryCount: 0, lastError: undefined })),
-            ],
-            on: {
-              DISCONNECT: { target: "disconnected" },
-            },
-          },
-
-          error: {
-            on: {
-              RETRY: {
-                target: "connecting",
-                guard: ({ context }) => context.retryCount < 3,
-              },
-              DISCONNECT: { target: "disconnected" },
-            },
-          },
-        },
-      });
-
-      return {
-        definition: machine,
-        createActor: () => interpret(machine),
-      };
-    }),
-    // Declare dependencies - they'll be automatically composed
-    dependencies: [ApiClient.Default],
-  }
-) {}
-
-// =============================================================================
-// 4. Use the service
-// =============================================================================
-
-const program = Effect.gen(function* () {
-  const connectionService = yield* ConnectionMachineService;
-  const actor = yield* connectionService.createActor();
-
-  // Subscribe to state changes
-  actor.subscribe((snapshot) => {
-    console.log(`State: ${snapshot.value}, Retries: ${snapshot.context.retryCount}`);
-  });
-
-  // Send events
-  actor.send(new Connect());
+  // Global handlers run in any state.
+  global: {
+    Disconnect: () => ({ goto: Disconnected.make() }),
+  },
 });
 
-// Run with all dependencies provided
-Effect.runPromise(
-  program.pipe(
-    Effect.scoped,
-    Effect.provide(ConnectionMachineService.Default)
-  )
-);
+// =============================================================================
+// 5. Interpret and use
+// =============================================================================
+
+// `interpret()` returns an Effect that requires the machine's R services.
+// With no dependencies, run it synchronously.
+const actor = Effect.runSync(connectionMachine.interpret());
+
+actor.subscribe((snap) => {
+  console.log(`State: ${snap.state._tag}, retries: ${snap.context.retryCount}`);
+});
+
+actor.send(Connect.make({ uri: "ws://localhost:3000" }));
+actor.send(ConnectSuccess.make());
+// Health checks now run automatically until the state changes.
+
+actor.send(Disconnect.make()); // health-check stream is cancelled on exit
+actor.stop(); // stop the actor and clean up all resources
 ```
 
-### Why Effect.Service?
+### Transitions
 
-1. **Dependency Injection**: Services can depend on other services (like `ApiClient` above)
-2. **Testability**: Swap implementations for testing by providing different layers
-3. **Composability**: Services automatically compose their dependency trees
-4. **Type Safety**: Full type inference for dependencies and effects
+Event handlers return a transition describing what should happen:
+
+```typescript
+{ goto: NewState.make() }                        // move to a new state
+{ goto: NewState.make(), update: { count: 0 } }  // move + update context
+{ update: { count: ctx.count + 1 } }             // stay, update context
+{ actions: [() => console.log("clicked")] }      // stay, run side-effect actions
+null                                             // stay, no changes (acts as a guard)
+```
+
+### Effects, dependencies, and errors
+
+`entry`, `exit`, and `run` are Effects/Streams, so they can require services and fail. Provide the services when you interpret the machine, and pass `onError` to observe failures:
+
+```typescript
+import { Effect } from "effect";
+
+const program = Effect.gen(function* () {
+  const actor = yield* machine.interpret({
+    snapshot: savedSnapshot, // optional: restore from a saved snapshot
+    onError: (error) => {
+      // error.effectType: "entry" | "exit" | "run"
+      console.error(error.effectType, error.stateTag, error.cause);
+    },
+    interruptEntryOnTransition: false, // default: entry effects run to completion
+  });
+
+  actor.send(SomeEvent.make());
+});
+
+// Provide the R services the entry/exit/run effects require, then run.
+Effect.runPromise(program.pipe(Effect.provide(SomeService.Default)));
+```
 
 ## React Integration
 
 ```bash
-npm install @effstate/react @effect-atom/atom-react
+npm install @handfish/effstate-react @handfish/effstate-v4 effect react
 ```
 
-```typescript
-import { createUseMachineHook } from "@effstate/react";
-import { Atom } from "@effect-atom/atom-react";
-import { Effect, Layer, SubscriptionRef } from "effect";
+`useActor` creates and manages the actor for a machine definition, re-rendering on every snapshot change:
 
-// Create your app runtime with all service layers
-const AppLayer = Layer.mergeAll(
-  ConnectionMachineService.Default,
-  // ... other services
-);
+```tsx
+import { State, Event, defineMachine, type StateType, type EventType } from "@handfish/effstate-v4";
+import { useActor } from "@handfish/effstate-react";
+import { Schema } from "effect";
 
-const appRuntime = Atom.runtime(AppLayer);
+const Idle = State("Idle", {});
+const Running = State("Running", {});
+type CounterState = StateType<typeof Idle> | StateType<typeof Running>;
 
-// Create atoms for the machine
-const actorAtom = appRuntime.atom(
-  Effect.gen(function* () {
-    const service = yield* ConnectionMachineService;
-    return yield* service.createActor();
-  })
-).pipe(Atom.keepAlive);
+const Start = Event("Start", {});
+const Stop = Event("Stop", {});
+const Tick = Event("Tick", {});
+type CounterEvent = EventType<typeof Start> | EventType<typeof Stop> | EventType<typeof Tick>;
 
-const snapshotAtom = appRuntime.subscriptionRef((get) =>
-  Effect.gen(function* () {
-    const actor = yield* get.result(actorAtom);
-    const ref = yield* SubscriptionRef.make(actor.getSnapshot());
-    actor.subscribe((snapshot) => {
-      Effect.runSync(SubscriptionRef.set(ref, snapshot));
-    });
-    return ref;
-  })
-).pipe(Atom.keepAlive);
+interface CounterContext {
+  count: number;
+}
 
-// Create the hook
-const useConnectionMachine = createUseMachineHook(actorAtom, snapshotAtom, initialSnapshot);
+const counterMachine = defineMachine<CounterState, CounterContext, CounterEvent>({
+  initialState: Idle.make(),
+  initialContext: { count: 0 },
+  states: {
+    Idle: {
+      on: { Start: () => ({ goto: Running.make() }) },
+    },
+    Running: {
+      on: {
+        Stop: () => ({ goto: Idle.make() }),
+        Tick: (ctx) => ({ update: { count: ctx.count + 1 } }),
+      },
+    },
+  },
+});
 
-// Use in component
-function ConnectionStatus() {
-  const { snapshot, send, context, isLoading } = useConnectionMachine();
-
-  if (isLoading) return <div>Loading...</div>;
+function Counter() {
+  const { state, context, send } = useActor(counterMachine);
 
   return (
     <div>
-      <p>Status: {snapshot.value}</p>
-      {snapshot.value === "error" && (
-        <p>Retries: {context.retryCount}/3</p>
+      <p>State: {state._tag} — Count: {context.count}</p>
+      {Idle.is(state) ? (
+        <button onClick={() => send(Start.make())}>Start</button>
+      ) : (
+        <>
+          <button onClick={() => send(Tick.make())}>Tick</button>
+          <button onClick={() => send(Stop.make())}>Stop</button>
+        </>
       )}
-      <button
-        onClick={() => send(
-          snapshot.value === "connected" ? new Disconnect() : new Connect()
-        )}
-      >
-        {snapshot.value === "connected" ? "Disconnect" : "Connect"}
-      </button>
     </div>
   );
 }
 ```
+
+### Hooks
+
+| Hook | Purpose |
+|------|---------|
+| `useActor(definition, options?)` | Create and manage an actor; returns `{ state, context, stateTag, send, actor, snapshot }` |
+| `useActorEffect(actor, effect, deps?)` | Run a side effect whenever the snapshot changes |
+| `useActorWatch(actor, selector, onChange, deps?)` | Fire a callback when a derived value changes |
+| `useActorSync(actor, externalSnapshot, options)` | Sync with an external source (persistence, cross-tab sync) |
+| `useActorBridge(source, target, selector, toEvent, deps?)` | Send events to a target actor when a source actor changes |
+
+See the [`@handfish/effstate-react` README](./packages/effstate-react/README.md) for full hook signatures.
 
 ## Documentation
 
@@ -300,8 +359,8 @@ pnpm build
 # Run tests
 pnpm test
 
-# Run the demo app
-pnpm --filter demo dev
+# Run a demo app
+pnpm --filter demo-dexie-v4 dev
 
 # Run the docs site
 pnpm --filter docs dev
@@ -312,12 +371,13 @@ pnpm --filter docs dev
 ```
 .
 ├── packages/
-│   ├── core/          # effstate - core state machine library
-│   └── react/         # @effstate/react - React integration
+│   ├── effstate-v4/       # @handfish/effstate-v4 - core state machine library
+│   └── effstate-react/    # @handfish/effstate-react - React integration
 ├── apps/
-│   ├── demo/          # Interactive demo application
-│   └── docs/          # Astro Starlight documentation site
-└── assets/            # Shared assets (logo, etc.)
+│   ├── demo-dexie-v4/     # v4 demo with Dexie persistence & cross-tab sync
+│   ├── demo-convex-order-v4/ # v4 demo backed by Convex
+│   └── docs/              # Astro Starlight documentation site
+└── assets/                # Shared assets (logo, etc.)
 ```
 
 ## Contributing

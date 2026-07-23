@@ -1,0 +1,143 @@
+---
+title: React Hooks
+description: Signature reference for the @handfish/effstate-react hooks.
+sidebar:
+  order: 4
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Reference for every hook exported by `@handfish/effstate-react`. The package also
+re-exports the core `Machine*` types. For guided usage see
+[React Integration](/effstate/guides/react/).
+
+## useActor
+
+```ts
+useActor(
+  definition: MachineDefinition<S, C, E, never, Err>,
+  options?: { initialSnapshot?: MachineSnapshot<S, C> },
+): {
+  snapshot: MachineSnapshot<S, C>;
+  state: S;
+  context: C;
+  stateTag: S["_tag"];
+  send: (event: E) => void;
+  actor: MachineActor<S, C, E>;
+};
+```
+
+Creates and owns an actor (via `Effect.runSync(definition.interpret(...))`),
+subscribes with `useSyncExternalStore`, and stops it on unmount. Pass
+`options.initialSnapshot` to restore a saved snapshot instead of starting from
+the machine's initial state.
+
+<Aside type="caution">
+Because it uses `Effect.runSync`, `useActor` requires **`R = never`** — the
+machine may not have Effect service requirements. Pre-provide services outside
+React if the machine needs them.
+</Aside>
+
+```tsx
+const { stateTag, context, send } = useActor(stopwatch);
+```
+
+## useActorEffect
+
+```ts
+useActorEffect(
+  actor: MachineActor<S, C, E>,
+  effect: (snapshot: MachineSnapshot<S, C>) => void | (() => void),
+  deps?: React.DependencyList,
+): void;
+```
+
+Runs `effect(snapshot)` on every snapshot change and once initially. If `effect`
+returns a function, it is used as cleanup. For side effects, not rendering.
+
+```tsx
+useActorEffect(actor, (snap) => {
+  document.title = `${snap.context.elapsed}s`;
+});
+```
+
+## useActorWatch
+
+```ts
+useActorWatch<V>(
+  actor: MachineActor<S, C, E>,
+  selector: (snapshot: MachineSnapshot<S, C>) => V,
+  onChange: (value: V, prevValue: V) => void,
+  deps?: React.DependencyList,
+): void;
+```
+
+Watches `selector(snapshot)` and calls `onChange(value, prevValue)` when the
+selected value changes (reference-compared). Does not fire for the initial value.
+
+```tsx
+useActorWatch(
+  actor,
+  (snap) => snap.state._tag,
+  (tag, prev) => console.log(`${prev} -> ${tag}`),
+);
+```
+
+## useActorBridge
+
+```ts
+useActorBridge<V>(
+  source: MachineActor<SS, SC, SE>,
+  target: MachineActor<TS, TC, TE>,
+  selector: (snapshot: MachineSnapshot<SS, SC>) => V,
+  toEvent: (value: V) => TE,
+  deps?: React.DependencyList,
+): void;
+```
+
+When `selector(sourceSnapshot)` changes, sends `toEvent(value)` to `target`.
+Built on `useActorWatch`; the idiomatic cross-actor wiring.
+
+```tsx
+useActorBridge(
+  hamster.actor,
+  leftDoor.actor,
+  (snap) => snap.context.electricityLevel > 0,
+  (isPowered) => (isPowered ? PowerOn.make() : PowerOff.make()),
+);
+```
+
+## useActorSync
+
+```ts
+useActorSync<T>(
+  actor: MachineActor<S, C, E>,
+  externalSnapshot: T | null,
+  options: {
+    isLeader: boolean;
+    serialize: (snapshot: MachineSnapshot<S, C>) => T;
+    deserialize: (saved: T) => MachineSnapshot<S, C>;
+    onSave: (serialized: T) => void | Promise<void>;
+    saveDebounce?: number; // default 100ms
+  },
+): void;
+```
+
+Two-way persistence / cross-tab sync.
+
+- When `isLeader` is `true`: subscribes to the actor and calls
+  `onSave(serialize(snapshot))` on every change, debounced.
+- When `isLeader` is `false` and `externalSnapshot` changes: calls
+  `actor._syncSnapshot(deserialize(externalSnapshot))`.
+
+```tsx
+useActorSync(actor, external, {
+  isLeader,
+  serialize: (snap) => JSON.stringify(Schema.encodeSync(SnapshotSchema)(snap)),
+  deserialize: (saved) => Schema.decodeSync(SnapshotSchema)(JSON.parse(saved)),
+  onSave: (json) => localStorage.setItem("snapshot", json),
+});
+```
+
+See [Persistence](/effstate/guides/persistence/) and
+[Cross-Tab Sync](/effstate/guides/cross-tab-sync/) for end-to-end examples.

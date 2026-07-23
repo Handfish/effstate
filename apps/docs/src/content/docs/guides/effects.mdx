@@ -1,0 +1,120 @@
+---
+title: Entry & Exit Effects
+description: Run Effect programs on state enter and leave, handle their errors, control interruption, and guarantee cleanup.
+sidebar:
+  order: 3
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A state may declare `entry` and `exit` effects. Each is a function `(snapshot) => Effect.Effect<void, Err, R>` that runs when the machine enters or leaves that state. The `snapshot` is `{ state, context }`, so the effect can read the state it is entering.
+
+```ts
+Running: {
+  entry: (snap) => Effect.log(`Started at ${snap.state.startedAt.toISOString()}`),
+  on: {
+    Tick: (ctx) => ({ update: { elapsed: ctx.elapsed + 1 } }),
+    Stop: () => ({ goto: Idle.make() }),
+  },
+},
+```
+
+## The requirements channel `R`
+
+Because entry and exit are real Effects, they can `yield*` services from the Effect context. Any service they use widens the machine's requirements channel `R` (the fourth `defineMachine` generic), and must be provided when you interpret the machine.
+
+```ts
+class Clock extends Effect.Service<Clock>()("Clock", {
+  succeed: { now: () => Effect.sync(() => Date.now()) },
+}) {}
+
+// entry that uses a service — R now includes Clock
+Running: {
+  entry: () =>
+    Effect.gen(function* () {
+      const clock = yield* Clock;
+      yield* Effect.log(`entered at ${yield* clock.now()}`);
+    }),
+},
+```
+
+```ts
+// provide the layer before running
+const actor = Effect.runSync(
+  machine.interpret().pipe(Effect.provide(Clock.Default)),
+);
+```
+
+<Aside type="note">
+When `R = never` (no services), `Effect.runSync(machine.interpret())` yields the actor synchronously. As soon as entry/exit effects require services, provide the corresponding `Layer` first.
+</Aside>
+
+## Errors go to `onError`
+
+If an entry or exit effect fails, the failure is reported through the `onError` callback you pass to `interpret`. It receives a `MachineEffectError`:
+
+```ts
+{
+  _tag: "MachineEffectError",
+  effectType: "entry" | "exit" | "run",
+  stateTag: string,          // which state's effect failed
+  cause: Cause.Cause<Err>,   // the underlying Effect cause
+}
+```
+
+```ts
+const actor = Effect.runSync(
+  machine.interpret({
+    onError: (err) => {
+      console.error(`${err.effectType} failed in ${err.stateTag}`, err.cause);
+    },
+  }),
+);
+```
+
+Without an `onError`, effect failures are `console.error`'d by default.
+
+## Interruption semantics
+
+Entry effects have a configurable relationship with transitions, set via `interpret({ interruptEntryOnTransition })`:
+
+- **`false`** (default) — an in-flight entry effect **runs to completion** even if the machine transitions away first. This is safe for setup and animations that should finish.
+- **`true`** — an in-flight entry effect is **interrupted** the moment the machine transitions away.
+
+```ts
+// interrupt entry work as soon as we leave the state
+const actor = Effect.runSync(
+  machine.interpret({ interruptEntryOnTransition: true }),
+);
+```
+
+Two rules are not configurable:
+
+- Entry effects are **always** interrupted on `stop()`.
+- Exit effects are **always fire-and-forget** — they are never interrupted (except by process end) and their result is not awaited.
+
+## Guaranteed cleanup with `acquireRelease`
+
+Because a non-interrupting entry effect may still be interrupted on `stop()`, pair every acquisition with its release using `Effect.acquireRelease`. The release runs whether the effect completes or is interrupted, giving you leak-free setup/teardown from a single `entry`.
+
+```ts
+Running: {
+  entry: () =>
+    Effect.acquireRelease(
+      Effect.sync(() => {
+        const onKey = () => console.log("key");
+        window.addEventListener("keydown", onKey);
+        return onKey;
+      }),
+      (onKey) => Effect.sync(() => window.removeEventListener("keydown", onKey)),
+    ),
+},
+```
+
+<Aside type="tip">
+For a bare log or fire-once side effect, a plain `Effect.log`/`Effect.sync` in `entry` is fine. Reach for `acquireRelease` whenever something must be torn down.
+</Aside>
+
+## Run streams are cancelled on exit
+
+Entry/exit are for point-in-time work on enter and leave. For a continuous source of events that lives *while* the machine is in a state — a timer, a subscription, a fetch — use a [run stream](/effstate/guides/run-streams/) instead. Run streams are always cancelled automatically when the state is exited.

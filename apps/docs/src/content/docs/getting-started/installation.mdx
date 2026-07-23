@@ -1,52 +1,67 @@
 ---
 title: Installation
-description: How to install effstate in your project
+description: Add effstate v4 and its peer dependencies, then configure TypeScript.
+sidebar:
+  order: 2
 ---
 
+import { Aside, LinkCard } from '@astrojs/starlight/components';
 
 ## Prerequisites
 
-effstate requires:
-- Node.js 18+
-- TypeScript 5.0+
-- Effect 3.0+
+- **Node.js** 18 or newer
+- **TypeScript** 5.0 or newer
+- **`effect`** `^3` — a peer dependency you install yourself
 
-## Install the Core Package
-
-```bash
-npm install effstate effect
-
-pnpm add effstate effect
-
-yarn add effstate effect
-```
-
-## React Integration (Optional)
-
-If you're using React, install the React integration package:
+## Install the core
 
 ```bash
-npm install @effstate/react @effect-atom/atom-react
-
-pnpm add @effstate/react @effect-atom/atom-react
-
-yarn add @effstate/react @effect-atom/atom-react
+npm install @handfish/effstate-v4 effect
 ```
 
-## TypeScript Configuration
+```bash
+pnpm add @handfish/effstate-v4 effect
+```
 
-effstate works best with strict TypeScript settings. We recommend:
+<Aside type="note">
+`effect` is a peer dependency, not bundled. Installing it explicitly lets you control the
+Effect version and share a single copy across your app.
+</Aside>
+
+## React bindings (optional)
+
+For the React hooks (`useActor`, `useActorBridge`, and friends), add the bindings package.
+It requires React 18+ alongside the core and `effect`.
+
+```bash
+npm install @handfish/effstate-react @handfish/effstate-v4 effect react
+```
+
+```bash
+pnpm add @handfish/effstate-react @handfish/effstate-v4 effect react
+```
+
+## TypeScript configuration
+
+effstate relies on strict inference. A minimal `tsconfig.json`:
 
 ```json
 {
   "compilerOptions": {
     "strict": true,
-    "exactOptionalPropertyTypes": true,
-    "noUncheckedIndexedAccess": true
+    "moduleResolution": "bundler",
+    "module": "ESNext",
+    "target": "ES2022"
   }
 }
 ```
 
-## Next Steps
+<Aside type="tip">
+`"moduleResolution": "bundler"` suits Vite, esbuild, and most modern bundlers. If you run
+directly under Node's ESM resolver, use `"nodenext"` instead (with a matching
+`"module": "nodenext"`).
+</Aside>
 
-Now that you have effstate installed, check out the [Quick Start](/getting-started/quick-start/) guide to build your first state machine.
+## Next steps
+
+<LinkCard title="Quick Start" href="/effstate/getting-started/quick-start/" description="Build the Stopwatch machine end to end." />

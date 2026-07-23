@@ -1,0 +1,207 @@
+---
+title: defineMachine
+description: Build a machine definition from states, context, events, and per-state config.
+sidebar:
+  order: 2
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+`defineMachine` assembles a `MachineDefinition` from a typed configuration. `define`
+is an alias.
+
+## defineMachine
+
+```ts
+// Direct: pass the config in one call (CI defaults to C)
+function defineMachine<S, C, E, R = never, Err = never, CI = C>(
+  config: MachineConfig<S, C, E, R, Err, CI>,
+): MachineDefinition<S, C, E, R, Err, CI>;
+
+// Curried: fix S/C/E, then pass the config — infers R/Err/CI from it
+function defineMachine<S, C, E>(): <R = never, Err = never, CI = C>(
+  config: MachineConfig<S, C, E, R, Err, CI>,
+) => MachineDefinition<S, C, E, R, Err, CI>;
+
+const define = defineMachine; // alias
+```
+
+**Generics**
+
+- `S` — the state union (a union of [`StateType`](/effstate/api/state/) members).
+- `C` — the context object type.
+- `E` — the event union.
+- `R` — Effect requirements needed by `entry` / `exit` / `run` (default `never`).
+- `Err` — the error channel of `entry` / `exit` / `run` effects (default `never`).
+- `CI` — the encoded type of the optional `context` schema (default `C`).
+
+**Returns** — a `MachineDefinition`; call [`.interpret()`](/effstate/api/interpret/) to run it.
+
+## MachineConfig
+
+```ts
+interface MachineConfig<S, C, E, R = never, Err = never, CI = C> {
+  id?: string;
+  context?: Schema.Schema<C, CI, never>;
+  initialContext: C;
+  initialState: S;
+  states: { [K in S["_tag"]]?: StateConfig<S, C, E, R, Err> };
+  global?: EventHandlers<S, C, E>;
+}
+```
+
+- `id?` — optional machine identifier.
+- `context?` — optional Schema for `C`, for serialization / validation. Its
+  encoded type is captured as `CI` and surfaced via
+  [`MachineContextEncoded`](/effstate/api/types/), so a transforming schema
+  (e.g. `Schema.DateFromString`, where `C` holds a `Date` but the encoded form
+  is a `string`) keeps full encoded-type information.
+- `initialContext` — **required** initial context value.
+- `initialState` — **required** initial state instance (e.g. `Idle.make()`).
+- `states` — per-state configuration, keyed by state tag.
+- `global?` — event handlers checked in *any* state, only when the current state's
+  own handler is absent or returns nothing.
+
+<Aside type="note" title="Transforming context schemas — use the curried form">
+A schema whose encoded type differs from `C` (a *transform*, like
+`Schema.DateFromString`, where `C` holds a `Date` but the encoded form is a
+`string`) is fully supported. TypeScript can't infer `CI` while you also specify
+`S` / `C` / `E` explicitly ([no partial type-argument
+inference](https://github.com/microsoft/TypeScript/issues/26242)), so for that
+case use the **curried form** — give the type args, then pass the config in a
+second call. `R` / `Err` / `CI` are then inferred from the config:
+
+```ts
+const machine = defineMachine<MyState, MyContext, MyEvent>()({
+  context: Schema.Struct({ since: Schema.DateFromString }), // CI inferred as { since: string }
+  initialState: Idle.make(),
+  initialContext: { since: new Date() },
+  states: { /* ... */ },
+});
+```
+
+A **non-transforming** context schema (encoded type equals `C`, the common case)
+needs nothing extra — the direct `defineMachine<S, C, E>({ … })` call works.
+</Aside>
+
+## StateConfig
+
+```ts
+interface StateConfig<S, C, E, R = never, Err = never> {
+  entry?: (snapshot: MachineSnapshot<S, C>) => Effect.Effect<void, Err, R>;
+  exit?: (snapshot: MachineSnapshot<S, C>) => Effect.Effect<void, Err, R>;
+  run?:
+    | Stream.Stream<E, Err, R>
+    | ((snapshot: MachineSnapshot<S, C>) => Stream.Stream<E, Err, R>);
+  on?: EventHandlers<S, C, E>;
+}
+```
+
+All fields are optional. `snapshot` is `{ state: S, context: C }`.
+
+- `entry?` — effect run on entering the state.
+- `exit?` — effect run on leaving the state (fire-and-forget).
+- `run?` — a Stream (or function returning one) that emits events while in the
+  state; auto-cancelled on exit.
+- `on?` — event handlers for this state.
+
+## Transition
+
+```ts
+type Transition<S, C> =
+  | { goto: S; update?: Partial<C>; actions?: TransitionAction[] }
+  | { update: Partial<C>; actions?: TransitionAction[] }
+  | { actions: TransitionAction[] }
+  | null;
+```
+
+The value an event handler returns:
+
+- `{ goto }` — transition to a new state (optionally patch context / run actions).
+- `{ update }` — stay, shallow-merge a `Partial<C>` into context.
+- `{ actions }` — stay, run fire-and-forget `() => void` actions (errors are caught/logged).
+- `null` — do nothing. This is how you express a **guard**: return the transition
+  when the condition holds, otherwise `null`.
+
+There is no `assign` and no separate guard function — conditionals are plain
+`if` / ternary inside the handler.
+
+## EventHandler / EventHandlers
+
+```ts
+type EventHandler<S, C, Ev extends E> = (ctx: C, event: Ev) => Transition<S, C>;
+
+type EventHandlers<S, C, E> = {
+  [K in E["_tag"]]?: EventHandler<S, C, EventByTag<E, K>>;
+};
+```
+
+A handler receives the current context and the (tag-narrowed) event, and returns
+a `Transition`.
+
+## MachineDefinition
+
+```ts
+interface MachineDefinition<S, C, E, R = never, Err = never> {
+  config: MachineConfig<S, C, E, R, Err>;
+  interpret(options?: InterpretOptions<S, C, Err>): Effect.Effect<MachineActor<S, C, E>, never, R>;
+}
+```
+
+- `.config` — the configuration this definition was built from.
+- `.interpret(options?)` — start the machine. See
+  [interpret & MachineActor](/effstate/api/interpret/) for options and the returned actor.
+
+## Example
+
+```ts
+import { State, Event, defineMachine } from "@handfish/effstate-v4";
+import type { StateType, EventType } from "@handfish/effstate-v4";
+import { Schema, Effect, Stream, Duration, Schedule } from "effect";
+
+const Idle = State("Idle", {});
+const Running = State("Running", { startedAt: Schema.DateFromSelf });
+type StopwatchState = StateType<typeof Idle> | StateType<typeof Running>;
+
+const Start = Event("Start", {});
+const Stop = Event("Stop", {});
+const Tick = Event("Tick", {});
+const Reset = Event("Reset", {});
+type StopwatchEvent =
+  | EventType<typeof Start>
+  | EventType<typeof Stop>
+  | EventType<typeof Tick>
+  | EventType<typeof Reset>;
+
+interface StopwatchContext {
+  readonly elapsed: number;
+}
+
+const ticks = Stream.fromSchedule(Schedule.spaced(Duration.seconds(1))).pipe(
+  Stream.map(() => Tick.make()),
+);
+
+export const stopwatch = defineMachine<StopwatchState, StopwatchContext, StopwatchEvent>({
+  id: "stopwatch",
+  initialState: Idle.make(),
+  initialContext: { elapsed: 0 },
+  states: {
+    Idle: {
+      on: {
+        Start: () => ({ goto: Running.make({ startedAt: new Date() }) }),
+      },
+    },
+    Running: {
+      entry: (snap) => Effect.log(`Started at ${snap.state.startedAt.toISOString()}`),
+      run: ticks,
+      on: {
+        Tick: (ctx) => ({ update: { elapsed: ctx.elapsed + 1 } }),
+        Stop: () => ({ goto: Idle.make() }),
+      },
+    },
+  },
+  global: {
+    Reset: () => ({ goto: Idle.make(), update: { elapsed: 0 } }),
+  },
+});
+```

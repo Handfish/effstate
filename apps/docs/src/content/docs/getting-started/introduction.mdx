@@ -1,153 +1,126 @@
 ---
 title: Introduction
-description: Learn about effstate - an Effect-first state machine library
+description: What effstate v4 is — lean, schema-first state machines built on Effect.
+sidebar:
+  order: 1
 ---
 
+import { Aside, Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
-**effstate** is a state machine library built on [Effect](https://effect.website), designed for TypeScript applications that need robust, type-safe state management.
+**effstate v4** is a lean library for building typed, schema-first state machines on top of
+[Effect](https://effect.website). States and events are declared once as discriminated
+unions with schemas; transitions patch a plain context object; and every side effect is a
+real `Effect` — with its full requirements (`R`) and error channel intact.
 
-## Why Effect.Service?
+## Philosophy
 
-The recommended pattern for using effstate is to wrap your machines in `Effect.Service`. This approach provides:
+<CardGrid>
+  <Card title="Schema-first" icon="document">
+    A single `State(...)` / `Event(...)` definition is the source of truth: it produces the
+    TypeScript type, a runtime constructor, a type guard, and an Effect `Schema` codec.
+  </Card>
+  <Card title="Effect-native" icon="rocket">
+    Entry/exit effects and run streams are ordinary `Effect`s and `Stream`s. Requirements
+    flow through `R` and are provided with layers; errors flow through a real error channel.
+  </Card>
+  <Card title="Honest errors" icon="warning">
+    Effect failures aren't swallowed. Supply `onError` at interpret time to observe every
+    entry/exit/run failure as a structured `MachineEffectError`.
+  </Card>
+  <Card title="Minimal" icon="star">
+    Roughly ~500 LOC with zero dependencies beyond Effect (`effect` is a peer dependency).
+    No hidden runtime, no bespoke DSL layered on top of Effect.
+  </Card>
+</CardGrid>
 
-- **Dependency Injection** - Your machine can access other services (API clients, databases, etc.)
-- **Testability** - Swap implementations by providing different layers in tests
-- **Composability** - Services automatically compose their dependency trees
-- **Type Safety** - Full inference for dependencies and effects
+## Core concepts
 
-```typescript
-import { createMachine, interpret, assign, effect, invoke } from "effstate";
-import { Data, Effect, Schema } from "effect";
+**States & Events** — declared with `State(tag, fields)` and `Event(tag, fields)` (`Event`
+is a semantic alias of `State`). Each returns a definition exposing `.make()`,
+`.safeMake()`, `.is()`, `.schema`, and `.tag`. A machine's state or event type is a plain
+union of these variant instances.
 
-// Define events
-class Connect extends Data.TaggedClass("CONNECT")<{}> {}
-class Disconnect extends Data.TaggedClass("DISCONNECT")<{}> {}
+**Context** — a plain immutable object carrying data that isn't part of the state's
+identity. Transitions patch it with a shallow `update`. Pass an optional `context` `Schema`
+when you need validation or serialization.
 
-type ConnectionEvent = Connect | Disconnect;
+**Transitions** — an `on` handler is `(ctx, event) => Transition`. It returns `{ goto }` to
+move states, `{ update }` to patch context, `{ actions }` for fire-and-forget sync work, any
+combination of `goto`/`update`/`actions`, or `null` to do nothing (which is also how you
+express a guard).
 
-// Define context schema
-const ContextSchema = Schema.Struct({
-  retryCount: Schema.Number,
-  status: Schema.String,
-});
+**Effects** — per-state `entry` and `exit` effects plus a `run` stream that emits events
+while the state is active and auto-cancels on exit. All are fully typed `Effect`s/`Stream`s.
 
-// Example dependency
-class ApiClient extends Effect.Service<ApiClient>()("ApiClient", {
-  succeed: {
-    connect: () => Effect.tryPromise(() => fetch("/api/connect")),
+**Actor** — the running instance produced by `interpret()`. It exposes `send`,
+`getSnapshot`, `subscribe`, and `stop`.
+
+## A taste
+
+```ts
+import { State, Event, defineMachine } from "@handfish/effstate-v4";
+import type { StateType, EventType } from "@handfish/effstate-v4";
+import { Schema, Effect, Stream, Duration, Schedule } from "effect";
+
+const Idle = State("Idle", {});
+const Running = State("Running", { startedAt: Schema.DateFromSelf });
+
+type StopwatchState = StateType<typeof Idle> | StateType<typeof Running>;
+
+const Start = Event("Start", {});
+const Stop = Event("Stop", {});
+const Tick = Event("Tick", {});
+const Reset = Event("Reset", {});
+
+type StopwatchEvent =
+  | EventType<typeof Start>
+  | EventType<typeof Stop>
+  | EventType<typeof Tick>
+  | EventType<typeof Reset>;
+
+interface StopwatchContext {
+  readonly elapsed: number;
+}
+
+// A run stream: one Tick per second, auto-cancelled when leaving Running
+const ticks = Stream.fromSchedule(Schedule.spaced(Duration.seconds(1))).pipe(
+  Stream.map(() => Tick.make()),
+);
+
+export const stopwatch = defineMachine<StopwatchState, StopwatchContext, StopwatchEvent>({
+  id: "stopwatch",
+  initialState: Idle.make(),
+  initialContext: { elapsed: 0 },
+  states: {
+    Idle: {
+      on: {
+        Start: () => ({ goto: Running.make({ startedAt: new Date() }) }),
+      },
+    },
+    Running: {
+      entry: (snap) => Effect.log(`Started at ${snap.state.startedAt.toISOString()}`),
+      run: ticks,
+      on: {
+        Tick: (ctx) => ({ update: { elapsed: ctx.elapsed + 1 } }),
+        Stop: () => ({ goto: Idle.make() }),
+      },
+    },
   },
-}) {}
-
-// Define your machine as a service
-export class ConnectionMachine extends Effect.Service<ConnectionMachine>()(
-  "ConnectionMachine",
-  {
-    effect: Effect.gen(function* () {
-      const api = yield* ApiClient; // Inject dependency
-
-      const machine = createMachine({
-        id: "connection",
-        initial: "disconnected",
-        context: ContextSchema,
-        initialContext: { retryCount: 0, status: "idle" },
-        states: {
-          disconnected: {
-            on: {
-              CONNECT: { target: "connecting" },
-            },
-          },
-          connecting: {
-            invoke: invoke({
-              src: () => api.connect(), // Use injected service
-              onSuccess: { target: "connected" },
-              onFailure: {
-                target: "disconnected",
-                actions: [
-                  assign(({ context }) => ({
-                    retryCount: context.retryCount + 1,
-                    status: "failed",
-                  })),
-                ],
-              },
-            }),
-          },
-          connected: {
-            entry: [assign({ status: "connected", retryCount: 0 })],
-            on: {
-              DISCONNECT: { target: "disconnected" },
-            },
-          },
-        },
-      });
-
-      return {
-        machine,
-        createActor: () => interpret(machine),
-      };
-    }),
-    dependencies: [ApiClient.Default],
-  }
-) {}
-```
-
-## Key Features
-
-### Effect-First Architecture
-Built on Effect for composable, type-safe side effects with proper error handling.
-
-### Schema-First Context
-Effect Schema is required for context - enabling automatic serialization, cross-tab sync, and validation out of the box.
-
-### Actor Model
-Parent-child machine composition with proper lifecycle management. Spawn, communicate with, and stop child machines.
-
-### React Integration
-First-class React support via `@effstate/react` with hooks and atoms.
-
-### Full Type Safety
-Compile-time guarantees for events, states, and context. Event handlers receive properly narrowed event types.
-
-## Core Concepts
-
-### Events
-Events trigger transitions. Define them using Effect's `Data.TaggedClass`:
-
-```typescript
-class Increment extends Data.TaggedClass("INCREMENT")<{ amount: number }> {}
-class Reset extends Data.TaggedClass("RESET")<{}> {}
-
-type CounterEvent = Increment | Reset;
-```
-
-### States
-States are string values representing the machine's current status. Each state can have:
-- **Entry actions** - Run when entering the state
-- **Exit actions** - Run when leaving the state
-- **Transitions** - Event handlers that move to other states
-- **Activities** - Long-running effects that run while in the state
-- **Invocations** - One-shot async operations
-
-### Context
-Context is the machine's extended state - data that persists across transitions. Define it with Effect Schema:
-
-```typescript
-const ContextSchema = Schema.Struct({
-  count: Schema.Number,
-  lastUpdated: Schema.DateFromString,
+  global: {
+    Reset: () => ({ goto: Idle.make(), update: { elapsed: 0 } }),
+  },
 });
 ```
 
-### Actions
-Actions are side effects that run during transitions:
-- `assign` - Update context
-- `effect` - Run an Effect
-- `raise` - Send an event to self
-- `sendTo` / `sendParent` - Communicate with other machines
-- `spawnChild` / `stopChild` - Manage child machines
+<Aside type="note">
+`effect` is a peer dependency — install it alongside the core package. `Schema`, `Effect`,
+`Stream`, and `Either` are re-exported from `@handfish/effstate-v4` for convenience, but
+utilities like `Duration`, `Schedule`, and `Layer` are imported from `"effect"` directly.
+</Aside>
 
-## Next Steps
+## Next steps
 
-- [Installation](/getting-started/installation/) - Get effstate set up
-- [Quick Start](/getting-started/quick-start/) - Build your first machine
-- [Actions Guide](/guides/actions/) - Learn all available actions
-- [Comparison](/getting-started/comparison/) - See how effstate compares to XState
+<CardGrid>
+  <LinkCard title="Installation" href="/effstate/getting-started/installation/" description="Add the packages and configure TypeScript." />
+  <LinkCard title="Quick Start" href="/effstate/getting-started/quick-start/" description="Build the Stopwatch end to end." />
+</CardGrid>
