@@ -38,6 +38,11 @@ export interface HamsterContext {
   readonly electricityLevel: number;
 }
 
+const HamsterContextSchema = Schema.Struct({
+  wheelRotation: Schema.Number,
+  electricityLevel: Schema.Number,
+});
+
 // ============================================================================
 // Events (Schema-First)
 // ============================================================================
@@ -63,6 +68,7 @@ const stopDelayStream = Stream.fromEffect(Effect.sleep(Duration.seconds(2))).pip
 
 export const hamsterWheelMachine = defineMachine<HamsterState, HamsterContext, HamsterEvent>({
   id: "hamsterWheel",
+  context: HamsterContextSchema,
   initialContext: { wheelRotation: 0, electricityLevel: 0 },
   initialState: Idle.make(),
 

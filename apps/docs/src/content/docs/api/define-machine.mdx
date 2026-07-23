@@ -5,6 +5,8 @@ sidebar:
   order: 2
 ---
 
+import { Aside } from '@astrojs/starlight/components';
+
 `defineMachine` assembles a `MachineDefinition` from a typed configuration. `define`
 is an alias.
 
@@ -25,15 +27,16 @@ const define = defineMachine; // alias
 - `E` — the event union.
 - `R` — Effect requirements needed by `entry` / `exit` / `run` (default `never`).
 - `Err` — the error channel of `entry` / `exit` / `run` effects (default `never`).
+- `CI` — the encoded type of the optional `context` schema (default `C`).
 
 **Returns** — a `MachineDefinition`; call [`.interpret()`](/effstate/api/interpret/) to run it.
 
 ## MachineConfig
 
 ```ts
-interface MachineConfig<S, C, E, R = never, Err = never> {
+interface MachineConfig<S, C, E, R = never, Err = never, CI = C> {
   id?: string;
-  context?: Schema.Schema<C, unknown, never>;
+  context?: Schema.Schema<C, CI, never>;
   initialContext: C;
   initialState: S;
   states: { [K in S["_tag"]]?: StateConfig<S, C, E, R, Err> };
@@ -42,12 +45,27 @@ interface MachineConfig<S, C, E, R = never, Err = never> {
 ```
 
 - `id?` — optional machine identifier.
-- `context?` — optional Schema for `C`, for serialization / validation.
+- `context?` — optional Schema for `C`, for serialization / validation. Its
+  encoded type is captured as `CI` and surfaced via
+  [`MachineContextEncoded`](/effstate/api/types/), so a transforming schema
+  (e.g. `Schema.DateFromString`, where `C` holds a `Date` but the encoded form
+  is a `string`) keeps full encoded-type information.
 - `initialContext` — **required** initial context value.
 - `initialState` — **required** initial state instance (e.g. `Idle.make()`).
 - `states` — per-state configuration, keyed by state tag.
 - `global?` — event handlers checked in *any* state, only when the current state's
   own handler is absent or returns nothing.
+
+<Aside type="note" title="Transforming context schemas">
+A schema whose encoded type differs from `C` (a *transform*, like
+`Schema.DateFromString`) is fully supported, but TypeScript can't infer `CI`
+while you also specify `S` / `C` / `E` explicitly ([no partial type-argument
+inference](https://github.com/microsoft/TypeScript/issues/26242)). For that case,
+pass all six type arguments —
+`defineMachine<S, C, E, never, never, EncodedContext>({ … })` — or let the whole
+call be inferred. A **non-transforming** context schema (encoded type equals `C`,
+the common case) needs nothing extra.
+</Aside>
 
 ## StateConfig
 

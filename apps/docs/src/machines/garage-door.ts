@@ -62,6 +62,22 @@ export interface DoorContext {
   readonly weather: WeatherStatus;
 }
 
+const DoorContextSchema = Schema.Struct({
+  position: Schema.Number,
+  isPowered: Schema.Boolean,
+  weather: Schema.Union(
+    Schema.Struct({ status: Schema.Literal("idle") }),
+    Schema.Struct({ status: Schema.Literal("loading") }),
+    Schema.Struct({
+      status: Schema.Literal("loaded"),
+      temp: Schema.Number,
+      desc: Schema.String,
+      icon: Schema.String,
+    }),
+    Schema.Struct({ status: Schema.Literal("error"), message: Schema.String }),
+  ),
+});
+
 // ============================================================================
 // Events (Schema-First)
 // ============================================================================
@@ -111,6 +127,7 @@ const weatherFetchStream: Stream.Stream<DoorEvent> = Stream.fromEffect(
 
 export const garageDoorMachine = defineMachine<DoorState, DoorContext, DoorEvent>({
   id: "garageDoor",
+  context: DoorContextSchema,
   initialContext: { position: 0, isPowered: false, weather: Weather.idle() },
   initialState: Closed.make(),
 

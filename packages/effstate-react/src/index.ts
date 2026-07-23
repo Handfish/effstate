@@ -78,8 +78,12 @@ export function useActor<
   S extends MachineState,
   C extends MachineContext,
   E extends MachineEvent,
+  CI = C,
 >(
-  definition: MachineDefinition<S, C, E>,
+  // `R`/`Err` are pinned to `never` (useActor runs the machine with runSync),
+  // but the context schema's encoded type `CI` is left free so machines built
+  // with a transforming context schema (CI !== C) are still accepted.
+  definition: MachineDefinition<S, C, E, never, never, CI>,
   options?: {
     initialSnapshot?: MachineSnapshot<S, C>;
   }

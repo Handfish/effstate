@@ -61,6 +61,7 @@ import type {
   MachineEventType,
   MachineRequirements,
   MachineError,
+  MachineContextEncoded,
 } from "@handfish/effstate-v4";
 
 type M = typeof stopwatch;
@@ -70,6 +71,7 @@ type C = MachineContextType<M>;  // StopwatchContext
 type E = MachineEventType<M>;    // StopwatchEvent
 type R = MachineRequirements<M>; // Effect requirements (never here)
 type Err = MachineError<M>;      // entry/exit/run error channel (never here)
+type CI = MachineContextEncoded<M>; // encoded type of the context schema
 ```
 
 - `MachineStateType<T>` — the state union `S`.
@@ -77,3 +79,4 @@ type Err = MachineError<M>;      // entry/exit/run error channel (never here)
 - `MachineEventType<T>` — the event union `E`.
 - `MachineRequirements<T>` — the Effect requirements `R`.
 - `MachineError<T>` — the error channel `Err`.
+- `MachineContextEncoded<T>` — the encoded type `CI` of the `context` schema (defaults to `C`).

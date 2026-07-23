@@ -76,6 +76,7 @@ export type {
   MachineEventType,
   MachineRequirements,
   MachineError,
+  MachineContextEncoded,
 } from "./types";
 
 // Machine

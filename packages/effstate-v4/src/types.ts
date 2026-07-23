@@ -114,12 +114,20 @@ export interface MachineConfig<
   E extends MachineEvent,
   R = never,
   Err = never,
+  CI = C,
 > {
   /** Machine identifier */
   readonly id?: string;
 
-  /** Context schema for validation */
-  readonly context?: Schema.Schema<C, unknown, never>;
+  /**
+   * Context schema for validation / serialization.
+   *
+   * `CI` is the schema's Encoded type; it defaults to `C` and is inferred from
+   * the schema you pass, so a transforming schema (e.g. `Schema.DateFromString`,
+   * where the in-memory type is `Date` and the encoded type is `string`) keeps
+   * full encoded-type information for downstream codecs.
+   */
+  readonly context?: Schema.Schema<C, CI, never>;
 
   /** Initial context value */
   readonly initialContext: C;
@@ -188,9 +196,10 @@ export interface MachineDefinition<
   E extends MachineEvent,
   R = never,
   Err = never,
+  CI = C,
 > {
-  /** Machine configuration */
-  readonly config: MachineConfig<S, C, E, R, Err>;
+  /** Machine configuration (retains the context schema's encoded type `CI`) */
+  readonly config: MachineConfig<S, C, E, R, Err, CI>;
 
   /**
    * Interpret the machine to create an actor.
@@ -210,16 +219,19 @@ export interface MachineDefinition<
 // ============================================================================
 
 /** Extract state type from a machine definition */
-export type MachineStateType<T> = T extends MachineDefinition<infer S, any, any, any, any> ? S : never;
+export type MachineStateType<T> = T extends MachineDefinition<infer S, any, any, any, any, any> ? S : never;
 
 /** Extract context type from a machine definition */
-export type MachineContextType<T> = T extends MachineDefinition<any, infer C, any, any, any> ? C : never;
+export type MachineContextType<T> = T extends MachineDefinition<any, infer C, any, any, any, any> ? C : never;
 
 /** Extract event type from a machine definition */
-export type MachineEventType<T> = T extends MachineDefinition<any, any, infer E, any, any> ? E : never;
+export type MachineEventType<T> = T extends MachineDefinition<any, any, infer E, any, any, any> ? E : never;
 
 /** Extract requirements type from a machine definition */
-export type MachineRequirements<T> = T extends MachineDefinition<any, any, any, infer R, any> ? R : never;
+export type MachineRequirements<T> = T extends MachineDefinition<any, any, any, infer R, any, any> ? R : never;
 
 /** Extract error type from a machine definition */
-export type MachineError<T> = T extends MachineDefinition<any, any, any, any, infer Err> ? Err : never;
+export type MachineError<T> = T extends MachineDefinition<any, any, any, any, infer Err, any> ? Err : never;
+
+/** Extract the context schema's encoded type from a machine definition */
+export type MachineContextEncoded<T> = T extends MachineDefinition<any, any, any, any, any, infer CI> ? CI : never;

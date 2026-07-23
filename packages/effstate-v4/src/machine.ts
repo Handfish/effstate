@@ -110,8 +110,9 @@ function interpret<
   E extends MachineEvent,
   R,
   Err,
+  CI,
 >(
-  config: MachineConfig<S, C, E, R, Err>,
+  config: MachineConfig<S, C, E, R, Err, CI>,
   options?: InterpretOptions<S, C, Err>
 ): Effect.Effect<MachineActor<S, C, E>, never, R> {
   return Effect.gen(function* () {
@@ -436,9 +437,10 @@ export function defineMachine<
   E extends MachineEvent,
   R = never,
   Err = never,
+  CI = C,
 >(
-  config: MachineConfig<S, C, E, R, Err>
-): MachineDefinition<S, C, E, R, Err> {
+  config: MachineConfig<S, C, E, R, Err, CI>
+): MachineDefinition<S, C, E, R, Err, CI> {
   return {
     config,
     interpret: (options) => interpret(config, options),
