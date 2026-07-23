@@ -1,6 +1,6 @@
 {
   "name": "@handfish/effstate-v4",
-  "version": "0.0.6",
+  "version": "1.0.0",
   "description": "Lean, schema-first state machines for Effect",
   "type": "module",
   "main": "./dist/index.cjs",
