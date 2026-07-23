@@ -39,6 +39,18 @@
 
 [See full comparison →](https://handfish.github.io/effstate/getting-started/comparison/)
 
+## Relationship to Effect's native `Machine`
+
+Effect is adding a first-party statechart engine — [`effect/unstable/machine`](https://github.com/Effect-TS/effect/pull/6429) (currently **unstable**, targeting Effect 4.0). It is a larger, XState-class engine: hierarchical and parallel states, invoked/spawned child machines, first-class snapshot encode/decode, and an [`AtomMachine`](https://github.com/Effect-TS/effect/pull/6429) reactive adapter (built on `effect-atom`) plus a `ClusterMachine` persistence adapter.
+
+**effstate is not a competitor in a separate ecosystem — it shares Effect's.** Both model states and events as Effect Schema tagged unions, and both run `entry` / `exit` / effect logic on the Effect runtime with the same `R` (requirements) and `Err` (error) channels. That makes them *interoperable* rather than mutually exclusive:
+
+- **Same wire format.** effstate snapshots encode through Effect Schema, so a persisted or synced snapshot is the same tagged-union shape a native `Machine` state schema decodes — no adapter or impedance layer.
+- **Same runtime & dependency injection.** `entry` / `exit` / `run` are plain `Effect` / `Stream`; they share `ServiceMap` layers, resource scopes, and the fiber runtime with any native `Machine`.
+- **Client/edge vs. server/cluster.** Run effstate at the React edge (synchronous `useActor`, no `AsyncResult` ceremony) while a server-authoritative native `Machine` owns hierarchy and clustering — and sync snapshots between them via schema encode/decode.
+
+**Choose effstate when** you want a lean, flat FSM that ships **today on `effect@^3`**, with first-class React hooks and Convex/persistence sync. **Reach for native `Machine` when** you need hierarchical/parallel states, child machines, or Effect Cluster persistence — and because both speak Effect + Schema, graduating a machine later is a projection, not a rewrite.
+
 ## Live Demo
 
 **[Try the Interactive Demo →](https://handfish.github.io/effstate/demo/)**

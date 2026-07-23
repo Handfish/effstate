@@ -13,9 +13,15 @@ is an alias.
 ## defineMachine
 
 ```ts
-function defineMachine<S, C, E, R = never, Err = never>(
-  config: MachineConfig<S, C, E, R, Err>,
-): MachineDefinition<S, C, E, R, Err>;
+// Direct: pass the config in one call (CI defaults to C)
+function defineMachine<S, C, E, R = never, Err = never, CI = C>(
+  config: MachineConfig<S, C, E, R, Err, CI>,
+): MachineDefinition<S, C, E, R, Err, CI>;
+
+// Curried: fix S/C/E, then pass the config — infers R/Err/CI from it
+function defineMachine<S, C, E>(): <R = never, Err = never, CI = C>(
+  config: MachineConfig<S, C, E, R, Err, CI>,
+) => MachineDefinition<S, C, E, R, Err, CI>;
 
 const define = defineMachine; // alias
 ```
@@ -56,15 +62,26 @@ interface MachineConfig<S, C, E, R = never, Err = never, CI = C> {
 - `global?` — event handlers checked in *any* state, only when the current state's
   own handler is absent or returns nothing.
 
-<Aside type="note" title="Transforming context schemas">
+<Aside type="note" title="Transforming context schemas — use the curried form">
 A schema whose encoded type differs from `C` (a *transform*, like
-`Schema.DateFromString`) is fully supported, but TypeScript can't infer `CI`
-while you also specify `S` / `C` / `E` explicitly ([no partial type-argument
-inference](https://github.com/microsoft/TypeScript/issues/26242)). For that case,
-pass all six type arguments —
-`defineMachine<S, C, E, never, never, EncodedContext>({ … })` — or let the whole
-call be inferred. A **non-transforming** context schema (encoded type equals `C`,
-the common case) needs nothing extra.
+`Schema.DateFromString`, where `C` holds a `Date` but the encoded form is a
+`string`) is fully supported. TypeScript can't infer `CI` while you also specify
+`S` / `C` / `E` explicitly ([no partial type-argument
+inference](https://github.com/microsoft/TypeScript/issues/26242)), so for that
+case use the **curried form** — give the type args, then pass the config in a
+second call. `R` / `Err` / `CI` are then inferred from the config:
+
+```ts
+const machine = defineMachine<MyState, MyContext, MyEvent>()({
+  context: Schema.Struct({ since: Schema.DateFromString }), // CI inferred as { since: string }
+  initialState: Idle.make(),
+  initialContext: { since: new Date() },
+  states: { /* ... */ },
+});
+```
+
+A **non-transforming** context schema (encoded type equals `C`, the common case)
+needs nothing extra — the direct `defineMachine<S, C, E>({ … })` call works.
 </Aside>
 
 ## StateConfig

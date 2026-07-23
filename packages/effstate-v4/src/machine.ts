@@ -405,31 +405,33 @@ function interpret<
 /**
  * Define a state machine.
  *
- * @example
- * ```ts
- * const machine = defineMachine<MyState, MyContext, MyEvent>({
- *   id: "myMachine",
- *   initialState: Idle.make(),
- *   initialContext: { count: 0 },
- *   states: {
- *     Idle: {
- *       on: {
- *         Start: () => ({ goto: Running.make({ startedAt: new Date() }) }),
- *       },
- *     },
- *     Running: {
- *       run: tickStream,
- *       on: {
- *         Stop: () => ({ goto: Idle.make() }),
- *       },
- *     },
- *   },
- * });
+ * Two call styles:
  *
- * // Interpret (returns Effect requiring R)
- * const actor = Effect.runSync(machine.interpret());
- * actor.send(Start.make());
- * ```
+ * 1. **Direct** — pass the config in one call. The context schema's encoded type
+ *    `CI` defaults to `C`, which covers any non-transforming schema:
+ *    ```ts
+ *    const machine = defineMachine<MyState, MyContext, MyEvent>({
+ *      initialState: Idle.make(),
+ *      initialContext: { count: 0 },
+ *      states: { Idle: { on: { Start: () => ({ goto: Running.make() }) } } },
+ *    });
+ *    ```
+ *
+ * 2. **Curried** — call with the state/context/event type args and no config to
+ *    get a builder, then pass the config. This form infers `R` / `Err` / `CI`
+ *    from the config even though `S` / `C` / `E` are explicit, so a *transforming*
+ *    context schema (e.g. `Schema.DateFromString`, where `C` holds a `Date` but
+ *    the encoded form is a `string`) keeps full encoded-type information:
+ *    ```ts
+ *    const machine = defineMachine<MyState, MyContext, MyEvent>()({
+ *      context: Schema.Struct({ since: Schema.DateFromString }), // CI inferred
+ *      initialState: Idle.make(),
+ *      initialContext: { since: new Date() },
+ *      states: { ... },
+ *    });
+ *    ```
+ *
+ * Both return a `MachineDefinition`; call `.interpret()` to run it.
  */
 export function defineMachine<
   S extends MachineState,
@@ -440,11 +442,26 @@ export function defineMachine<
   CI = C,
 >(
   config: MachineConfig<S, C, E, R, Err, CI>
-): MachineDefinition<S, C, E, R, Err, CI> {
-  return {
-    config,
-    interpret: (options) => interpret(config, options),
-  };
+): MachineDefinition<S, C, E, R, Err, CI>;
+export function defineMachine<
+  S extends MachineState,
+  C extends MachineContext,
+  E extends MachineEvent,
+>(): <R = never, Err = never, CI = C>(
+  config: MachineConfig<S, C, E, R, Err, CI>
+) => MachineDefinition<S, C, E, R, Err, CI>;
+export function defineMachine(
+  config?: MachineConfig<MachineState, MachineContext, MachineEvent, unknown, unknown, unknown>
+): unknown {
+  const build = (
+    cfg: MachineConfig<MachineState, MachineContext, MachineEvent, unknown, unknown, unknown>
+  ) => ({
+    config: cfg,
+    interpret: (options?: InterpretOptions<MachineState, MachineContext, unknown>) =>
+      interpret(cfg, options),
+  });
+  // No config → return the curried builder; otherwise build directly.
+  return config === undefined ? build : build(config);
 }
 
 /** Alias for defineMachine */

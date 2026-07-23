@@ -18,10 +18,14 @@ transforming schemas (e.g. `Schema.DateFromString`, where `C` holds a `Date` but
 encoded form is a `string`) round-trip with full type information.
 
 `CI` defaults to `C`, so existing `defineMachine<S, C, E>(…)` calls are unaffected.
-Note: because TypeScript can't infer `CI` while `S`/`C`/`E` are given explicitly, a
-*transforming* context schema needs all six type args
-(`defineMachine<S, C, E, never, never, EncodedContext>(…)`) or full inference; a
-non-transforming schema (encoded type equals `C`) needs nothing extra.
+
+`defineMachine` also gains a **curried** overload for transforming context schemas.
+Because TypeScript can't infer `CI` while `S`/`C`/`E` are given explicitly, calling
+`defineMachine<S, C, E>()(config)` (type args, then config in a second call) infers
+`R`/`Err`/`CI` from the config — so a transforming schema (e.g. `Schema.DateFromString`)
+keeps its encoded type with no extra type arguments. The direct
+`defineMachine<S, C, E>(config)` call is unchanged and remains the norm for
+non-transforming schemas.
 
 `@handfish/effstate-react`'s `useActor` now accepts machines regardless of their
 context-encoded type (`CI`), so a machine built with a transforming context schema
