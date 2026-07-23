@@ -17,6 +17,13 @@
 
 ---
 
+> [!IMPORTANT]
+> ## 🟢 Starting a new project? Use Effect's native `Machine`.
+>
+> **If you're greenfield, reach for [`effect/unstable/machine`](https://github.com/Effect-TS/effect/pull/6429) — the first-party Effect statechart engine — not effstate.** It's more capable (hierarchical & parallel states, child machines, cluster persistence) and it's where Effect's state-machine story is headed.
+>
+> **effstate is for teams who need a lean, flat FSM on `effect@^3` *today*, with synchronous React hooks and Convex/persistence sync** — before native `Machine` stabilizes on Effect 4.0. The two share the same Effect + Schema substrate, so effstate is designed to interoperate with (and graduate to) native `Machine` rather than lock you in. See [Relationship to Effect's native `Machine`](#relationship-to-effects-native-machine).
+
 **effstate** is a state machine library built on top of the [Effect](https://effect.website) ecosystem. The v4 API is schema-first: you define states and events once with [Effect Schema](https://effect.website/docs/schema/introduction/) and get constructors, type guards, discriminated-union types, and serialization for free. Entry/exit logic and long-running work are plain Effects and Streams, complete with the requirements (`R`) and error (`Err`) channels — so dependency injection, resource safety, and honest error handling come along for the ride.
 
 ## Features
