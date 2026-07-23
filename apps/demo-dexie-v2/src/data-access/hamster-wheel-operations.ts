@@ -13,7 +13,7 @@ import { Atom } from "@effect-atom/atom-react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { appRuntime } from "@/lib/app-runtime";
 import { Machine } from "effstate/v2";
-import type { MachineSnapshot, MachineActor, AnyMachineDefinition } from "effstate/v2";
+import type { MachineSnapshot, MachineActor, AnyMachineDefinition, MachineState, MachineContext, ChildrenConfig } from "effstate/v2";
 import {
   createUseMachineHook,
   createUseChildMachineHook,
@@ -254,7 +254,7 @@ export class HamsterWheelMachineService extends Effect.Service<HamsterWheelMachi
         definition: machine,
         /** Create a new actor instance */
         createActor: (): Effect.Effect<
-          MachineActor<HamsterWheelState, HamsterWheelContext, HamsterWheelEvent, any>,
+          MachineActor<HamsterWheelState, HamsterWheelContext, HamsterWheelEvent, ChildrenConfig>,
           never,
           Scope.Scope
         > => machine.interpret(),
@@ -302,7 +302,7 @@ const GarageDoorSnapshotSchema = Schema.Struct({
  * Save the actor state to IndexedDB via Dexie.
  */
 const saveStateToDexie = (
-  actor: MachineActor<HamsterWheelState, HamsterWheelContext, HamsterWheelEvent, any>
+  actor: MachineActor<HamsterWheelState, HamsterWheelContext, HamsterWheelEvent, ChildrenConfig>
 ): void => {
   const parentSnapshot = actor.getSnapshot();
   const leftChild = actor.children.get(GARAGE_DOOR_LEFT_ID);
@@ -368,7 +368,7 @@ const valueToGarageDoorState = (value: string): GarageDoorState => {
  * Load the actor state from IndexedDB via Dexie.
  */
 const loadStateFromDexie = (): Effect.Effect<
-  { snapshot: HamsterWheelSnapshot; childSnapshots: Map<string, MachineSnapshot<any, Record<string, unknown>>> } | null,
+  { snapshot: HamsterWheelSnapshot; childSnapshots: Map<string, MachineSnapshot<MachineState, MachineContext>> } | null,
   never,
   StatePersistence
 > =>
@@ -383,7 +383,7 @@ const loadStateFromDexie = (): Effect.Effect<
       event: null,
     };
 
-    const childSnapshots = new Map<string, MachineSnapshot<any, Record<string, unknown>>>();
+    const childSnapshots = new Map<string, MachineSnapshot<MachineState, MachineContext>>();
 
     if (state.children[GARAGE_DOOR_LEFT_ID]) {
       childSnapshots.set(GARAGE_DOOR_LEFT_ID, {
@@ -409,7 +409,7 @@ const loadStateFromDexie = (): Effect.Effect<
 // Cross-Tab Sync with Dexie
 // ============================================================================
 
-let currentActor: MachineActor<HamsterWheelState, HamsterWheelContext, HamsterWheelEvent, any> | null = null;
+let currentActor: MachineActor<HamsterWheelState, HamsterWheelContext, HamsterWheelEvent, ChildrenConfig> | null = null;
 
 // Cross-tab sync - leader writes to Dexie, followers react via liveQuery
 const crossTabSync = createCrossTabSync({
@@ -525,6 +525,7 @@ const useDexieCrossTabSync = () => {
   // Sync when state changes and we're not the leader
   useEffect(() => {
     if (!persistedState || !currentActor || crossTabSync.isLeader()) return;
+    const actor = currentActor;
 
     // Reconstruct the state from the persisted row
     try {
@@ -556,7 +557,7 @@ const useDexieCrossTabSync = () => {
         event: null,
       };
 
-      const childSnapshots = new Map<string, MachineSnapshot<any, Record<string, unknown>>>();
+      const childSnapshots = new Map<string, MachineSnapshot<MachineState, MachineContext>>();
 
       if (decoded.children.garageDoorLeft) {
         childSnapshots.set(GARAGE_DOOR_LEFT_ID, {
@@ -575,7 +576,7 @@ const useDexieCrossTabSync = () => {
       }
 
       console.log("[Dexie liveQuery] Syncing from other tab:", stateTagToValue(snapshot.state));
-      (currentActor as any)._syncSnapshot(snapshot, childSnapshots);
+      actor._syncSnapshot(snapshot, childSnapshots);
     } catch (e) {
       console.warn("[Dexie liveQuery] Failed to decode persisted state:", e);
     }
